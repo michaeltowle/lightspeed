@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<!--
+  Quiz / practice runner (WIREFRAME — plain; final design via Claude Design).
+
+  Reached from index.html as /quiz?timed=0|1&ids=1,2,3
+    timed=1 -> "Quiz" (timer runs, finish time saved)
+    timed=0 -> "Practice" (untimed; no timer persisted)
+
+  Flow:
+    - On load: fetch the chosen problems, shuffle, create a ProblemList row
+      (its id is the "#N" in the header), start timer if timed.
+    - Problems shown in random order; answers hidden.
+    - Each row has a "?" button (always active, even before reveal) that toggles
+      the problem's `problematic` flag in the DB — for marking a problem that
+      looks wrong/broken so it can be reviewed later.
+    - "Stop & reveal" stops the timer and reveals each answer in its cell.
+    - Each answer cell self-grades by click cycle:
+        neutral (ungraded) -> green (correct) -> red (incorrect) -> neutral.
+    - "Finalize" (enabled once >=1 graded) saves Attempt rows + list timing/counts.
+-->
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Lightspeed — Quiz</title>
+  <script>
+    MathJax = { tex: { inlineMath: [["\\(", "\\)"]], displayMath: [["$$", "$$"]] } };
+  </script>
+  <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js" async></script>
+  <style>
+    /* Deliberately monochrome wireframe styling (grade colors excepted). */
+    body { font-family: system-ui, sans-serif; max-width: 860px; margin: 2rem auto; padding: 0 1rem; color: #000; }
+    .bar { position: sticky; top: 0; background: #fff; border-bottom: 1px solid #000; padding: .6rem 0; display: flex; gap: 1rem; align-items: center; }
+    h1 { font-size: 1.2rem; margin: 0; }
+    .timer { font-variant-numeric: tabular-nums; font-size: 1.1rem; }
+    .spacer { margin-left: auto; }
+    button { font-family: inherit; font-size: .9rem; padding: .35rem .9rem; border: 1px solid #000; background: #fff; color: #000; cursor: pointer; }
+    button:disabled { color: #999; border-color: #999; cursor: not-allowed; }
+    table { border-collapse: collapse; width: 100%; margin: 1.2rem 0; }
+    td { border: 1px solid #888; padding: .55rem .7rem; vertical-align: middle; }
+    td.num { width: 2rem; text-align: right; color: #555; }
+    td.ans { width: 42%; cursor: default; }
+    td.ans.gradable { cursor: pointer; }
+    td.ans.correct { background: #cdebcd; }
+    td.ans.incorrect { background: #f3cccc; }
+    td.flag { width: 2.2rem; text-align: center; }
+    button.flag-btn { padding: .1rem .45rem; font-weight: 700; line-height: 1; border-radius: 999px; }
+    button.flag-btn.on { background: #000; color: #fff; }
+    .hint { color: #777; font-size: .9rem; }
+    #msg { margin: 1rem 0; font-size: .95rem; }
+  </style>
+</head>
+<body>
+  <div class="bar">
+    <h1 id="title">Quiz</h1>
+    <span class="timer" id="timer" hidden>0:00</span>
+    <span class="spacer"></span>
+    <button id="stopBtn" disabled>Stop &amp; reveal</button>
+    <button id="finalizeBtn" disabled>Finalize</button>
+  </div>
+
+  <p class="hint" id="hint">Answers hidden. Work them out, then Stop &amp; reveal.</p>
+  <table id="grid"><tbody></tbody></table>
+  <p id="msg" hidden></p>
+
+<script>
+const params = new URLSearchParams(location.search);
+const timed = params.get("timed") === "1";
+const ids = (params.get("ids") || "").split(",").map(s => s.trim()).filter(Boolean);
+
+let listId = null;
+let problems = [];
+let revealed = false;
+const grade = {};           // problem_id -> true | false | undefined
+let t0 = null, tick = null, finishSecs = null;
+
+async function api(path, opts) {
+  const res = await fetch(path, opts);
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+const post = (obj) => ({ method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(obj || {}) });
+const shuffle = (a) => { for (let i = a.length - 1; i > 0; i--) { const j = Math.random() * (i + 1) | 0; [a[i], a[j]] = [a[j], a[i]]; } return a; };
+
+async function start() {
+  if (ids.length === 0) { fail("No problems selected. Go back to the bank and pick some."); return; }
+  problems = shuffle(await api(`/api/problems?ids=${ids.join(",")}`));
+  if (problems.length === 0) { fail("Those problems weren't found."); return; }
+
+  const { id } = await api("/api/problem-lists", post({ is_timed: timed }));
+  listId = id;
+  document.getElementById("title").textContent = `${timed ? "Quiz" : "Practice"} #${id}`;
+
+  renderGrid();
+  document.getElementById("stopBtn").disabled = false;
+  if (timed) startTimer();
+}
+
+function renderGrid() {
+  const tb = document.querySelector("#grid tbody");
+  tb.innerHTML = "";
+  problems.forEach((p, i) => {
+    const tr = document.createElement("tr");
+    tr.innerHTML = `<td class="num">${i + 1}.</td>
+                    <td class="pq">\\(${p.latex_problem_text}\\)</td>
+                    <td class="ans" data-pid="${p.id}"></td>
+                    <td class="flag"></td>`;
+    const btn = document.createElement("button");
+    btn.className = "flag-btn" + (p.problematic ? " on" : "");
+    btn.textContent = "?";
+    btn.title = "flag this problem as problematic";
+    btn.onclick = () => toggleFlag(btn, p);
+    tr.querySelector("td.flag").appendChild(btn);
+    tb.appendChild(tr);
+  });
+  if (window.MathJax?.typesetPromise) MathJax.typesetPromise([document.getElementById("grid")]);
+}
+
+async function toggleFlag(btn, p) {
+  const next = !(p.problematic);                 // optimistic toggle
+  btn.classList.toggle("on", next);
+  btn.disabled = true;
+  try {
+    await api(`/api/problems/${p.id}/problematic`, post({ problematic: next }));
+    p.problematic = next ? 1 : 0;
+  } catch (e) {
+    btn.classList.toggle("on", !!p.problematic); // revert on failure
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function startTimer() {
+  const el = document.getElementById("timer");
+  el.hidden = false;
+  t0 = Date.now();
+  const fmt = (s) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+  tick = setInterval(() => { el.textContent = fmt(Math.floor((Date.now() - t0) / 1000)); }, 250);
+}
+
+function stopAndReveal() {
+  revealed = true;
+  if (tick) { clearInterval(tick); tick = null; }
+  document.getElementById("stopBtn").disabled = true;
+  document.getElementById("hint").textContent =
+    "Click an answer cell to grade: green = correct, red = incorrect, click again to clear.";
+
+  document.querySelectorAll("#grid td.ans").forEach(cell => {
+    const pid = +cell.dataset.pid;
+    const p = problems.find(x => x.id === pid);
+    cell.innerHTML = `\\(${p.latex_answer_text}\\)`;
+    cell.classList.add("gradable");
+    cell.onclick = () => cycleGrade(cell, pid);
+  });
+  if (window.MathJax?.typesetPromise) MathJax.typesetPromise([document.getElementById("grid")]);
+}
+
+function cycleGrade(cell, pid) {
+  // neutral -> correct -> incorrect -> neutral
+  if (grade[pid] === undefined) { grade[pid] = true; cell.className = "ans gradable correct"; }
+  else if (grade[pid] === true) { grade[pid] = false; cell.className = "ans gradable incorrect"; }
+  else { delete grade[pid]; cell.className = "ans gradable"; }
+  const anyGraded = Object.keys(grade).length > 0;
+  document.getElementById("finalizeBtn").disabled = !anyGraded;
+}
+
+async function finalize() {
+  const graded = Object.keys(grade);                 // only graded problems become attempts
+  const attempts = graded.map(pid => ({ problem_id: +pid, answered_correctly: grade[pid] }));
+  const body = { problem_list_id: listId, attempts };
+  if (timed && finishSecs !== null) {
+    body.finish_time = finishSecs;
+    body.time_per_problem = problems.length ? finishSecs / problems.length : null;
+  }
+  await api("/api/attempts", post(body));
+  document.getElementById("finalizeBtn").disabled = true;
+  const correct = attempts.filter(a => a.answered_correctly).length;
+  done(`Saved ${attempts.length} attempt(s) — ${correct} correct — as ${timed ? "Quiz" : "Practice"} #${listId}. `);
+}
+
+function fail(text) { document.getElementById("hint").textContent = text; }
+function done(text) {
+  const m = document.getElementById("msg");
+  m.hidden = false;
+  m.innerHTML = text + `<a href="/">Back to bank</a>`;
+}
+
+document.getElementById("stopBtn").onclick = () => {
+  finishSecs = t0 ? Math.floor((Date.now() - t0) / 1000) : null;
+  stopAndReveal();
+};
+document.getElementById("finalizeBtn").onclick = finalize;
+
+start();
+</script>
+</body>
+</html>
