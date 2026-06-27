@@ -470,6 +470,7 @@ function renderBatch(batch) {
       const nAdded     = batch.problems.length - batchRejected.length;
       const nDiscarded = batchRejected.length;
 
+      approveBtn.textContent = 'approved';
       body.hidden = true;
       body.classList.remove('collapsed');
       strip.hidden = false;

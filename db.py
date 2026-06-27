@@ -191,10 +191,12 @@ def batch_tags(conn, batch_id):
 def list_tags(conn):
     rows = conn.execute(
         """SELECT t.id, t.display_text,
-                  COUNT(CASE WHEN p.status = 'approved' THEN 1 END) AS problem_count
+                  COUNT(DISTINCT CASE WHEN p.status = 'approved' THEN p.id END)          AS problem_count,
+                  COUNT(DISTINCT CASE WHEN p.status = 'approved' THEN a.problem_id END)  AS attempted_count
            FROM tag t
            LEFT JOIN problem_tag pt ON pt.tag_id = t.id
-           LEFT JOIN problem p ON p.id = pt.problem_id
+           LEFT JOIN problem p      ON p.id  = pt.problem_id
+           LEFT JOIN attempt a      ON a.problem_id = p.id
            GROUP BY t.id, t.display_text
            ORDER BY t.display_text"""
     ).fetchall()
