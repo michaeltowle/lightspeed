@@ -19,8 +19,9 @@ Every graded rep must be against a **verifiably correct** answer. Answers are
 - Every answer must be independently verified before staging. Accepted methods:
   sympy differentiation check (`diff(answer) == integrand`), FTC cross-check
   for definite integrals, numeric cross-check at concrete parameter values
-  (mpmath quadrature or direct truncated sum). `answer_verified_by` records
-  which method confirmed the answer.
+  (mpmath quadrature or direct truncated sum). `answer_verified_by` is set (to
+  `'sympy'`) only when one of these confirms the answer; the method used per
+  problem type is registered in `TYPES.md`.
 - Answers that cannot be reliably verified leave `answer_verified_by = NULL`
   and are never staged. If a requested type can't be verified, Claude says so
   up front instead of guessing.
@@ -34,7 +35,7 @@ The system is deliberately split into a **generation phase** (Claude + sympy, in
 a chat session) and a **practice phase** (the browser app). Correctness lives
 entirely in generation, so the practice pages can never serve a wrong answer.
 
-### Step 1 — Generate & verify  *(in a Claude Code session, `generate.py`)*
+### Step 1 — Generate & verify  *(in a Claude Code session, `problem_types.py`)*
 **What:** The creator describes a batch in chat ("IBP definite integrals, no
 trig"). Claude picks the concrete problems (~50 per batch) and calls
 `derivative()`, `integral()`, `definite_integral()`, or `expectation()` /
@@ -133,8 +134,11 @@ silently keep answering with old code.
 ## Files
 
 - `db.py` — SQLite schema + all data access (stdlib `sqlite3`). Owns migrations.
-- `generate.py` — sympy compute+verify helpers and `stage()` (dedup + staging).
-  Used only from Claude Code sessions.
+- `problem_types.py` — sympy compute+verify generators, one function per problem
+  type (`derivative`, `integral`, `definite_integral`, `expectation`,
+  `variance`). The type registry is `TYPES.md`. Used from Claude Code sessions.
+- `generate.py` — `stage()` (dedup + staging); re-exports the `problem_types`
+  generators so a session needs only `from generate import ...`.
 - `server.py` — local server: serves pages + JSON API. No sympy/LLM at runtime.
 - `add-problems.html` — review/approve/star surface for staged problems.
 - `index.html` / `quiz.html` — browse-and-build / timed practice (to be wired).

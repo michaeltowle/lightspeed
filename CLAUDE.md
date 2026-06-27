@@ -7,17 +7,23 @@ recency / weak spots. Single user (the repo owner).
 ## Golden rules
 
 1. **Answers are never LLM-guessed.** Claude picks the problem; **sympy** computes
-   AND verifies the answer (`generate.py`). `answer_verified_by = 'sympy'` only when
-   sympy confirms it (`diff(answer) == integrand`; FTC cross-check for definite
-   integrals; special functions / unevaluated integrals are left NULL).
-   If sympy can't reliably do a requested type, say so — don't guess.
+   AND independently verifies the answer (`problem_types.py`). `answer_verified_by
+   = 'sympy'` only when a check confirms it (`diff(answer) == integrand`; FTC
+   cross-check for definite integrals; numeric cross-check for LOTUS; special
+   functions / unevaluated integrals are left NULL). Each type's verification
+   method is registered in `TYPES.md`. If sympy can't reliably do a requested
+   type, say so — don't guess.
 2. **Update `schema.md` whenever the DB schema changes.** Any new table, column,
    constraint, enum value, or migration in `db.py` MUST be mirrored in
    `schema.md` in the same change. The owner relies on `schema.md` as the
    canonical, always-current picture of the data model. Don't let it drift.
-3. **Update `README.md` when behavior/flow changes**, and this file when a rule
+3. **Update `TYPES.md` whenever a problem type changes.** Any new generator in
+   `problem_types.py`, or a change to a type's presentation style or verification
+   method, MUST be mirrored in `TYPES.md` in the same change. It's the canonical
+   registry of problem types — don't let it drift.
+4. **Update `README.md` when behavior/flow changes**, and this file when a rule
    or convention changes.
-4. **Only ever run ONE server on :8000.** A stale process silently answers with
+5. **Only ever run ONE server on :8000.** A stale process silently answers with
    old code (we've been bitten by this). Kill existing listeners before
    restarting.
 
@@ -46,7 +52,10 @@ Zero-install: Python stdlib + sympy only. No API key, no Node.
 ## Files
 
 - `db.py` — SQLite schema + all data access (owns migrations).
-- `generate.py` — sympy compute/verify helpers + `stage()` (dedup + staging).
+- `problem_types.py` — sympy compute+verify generators (one function per problem
+  type). Registered in `TYPES.md`.
+- `generate.py` — `stage()` (dedup + staging); re-exports the `problem_types`
+  generators so a session needs only one import.
 - `server.py` — local server: pages + JSON API.
 - `add-problems.html` — review/approve/reject/star surface (interim UI).
 - `index.html` — browse bank by tag, select, launch quiz/practice (wireframe).
@@ -56,6 +65,8 @@ Zero-install: Python stdlib + sympy only. No API key, no Node.
 ## Docs
 
 - `schema.md` — canonical data model (keep current — rule #2).
+- `TYPES.md` — canonical problem-type registry: presentation style + verification
+  method per type (keep current — rule #3).
 - `README.md` — full pipeline, rationale, run instructions.
 - `add-problems-ui-brief.md` — design brief for the add-problems screen
   (visual design is done separately in Claude Design).
