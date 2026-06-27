@@ -66,6 +66,14 @@ def _parse(expr_str):
     return parse_expr(expr_str, transformations=_TRANSFORMS, evaluate=True)
 
 
+def _latex(expr):
+    """sympy LaTeX with our house conventions. ln_notation=True renders natural
+    log as \\ln, never \\log (sympy's default). This is a calculus app — the only
+    log that ever appears is the natural log (even base-b logs come back as a
+    ratio of \\ln), so every log should read as \\ln."""
+    return sp.latex(expr, ln_notation=True)
+
+
 def _present(answer, x):
     """Human-readable form of a result.
 
@@ -88,10 +96,10 @@ def derivative(expr_str, var="x"):
     x = sp.Symbol(var)
     expr = _parse(expr_str)
     answer = sp.diff(expr, x)
-    problem_latex = r"\frac{d}{d%s}\left(%s\right)" % (var, sp.latex(expr))
+    problem_latex = r"\frac{d}{d%s}\left(%s\right)" % (var, _latex(expr))
     return Item(
         latex_problem_text=problem_latex,
-        latex_answer_text=sp.latex(_present(answer, x)),
+        latex_answer_text=_latex(_present(answer, x)),
         answer_verified_by="sympy",
     )
 
@@ -116,8 +124,8 @@ def integral(expr_str, var="x"):
         verified = sp.simplify(sp.diff(answer, x) - expr) == 0
         note = "" if verified else "d/dx(answer) did not simplify to the integrand"
 
-    problem_latex = r"\int %s \, d%s" % (sp.latex(expr), var)
-    answer_latex = sp.latex(answer) + " + C"
+    problem_latex = r"\int %s \, d%s" % (_latex(expr), var)
+    answer_latex = _latex(answer) + " + C"
     return Item(
         latex_problem_text=problem_latex,
         latex_answer_text=answer_latex,
@@ -151,9 +159,9 @@ def definite_integral(expr_str, a, b, var="x"):
         note = "" if verified else "derivative/FTC cross-check failed"
 
     problem_latex = r"\int_{%s}^{%s} %s \, d%s" % (
-        sp.latex(A), sp.latex(B), sp.latex(expr), var
+        _latex(A), _latex(B), _latex(expr), var
     )
-    answer_latex = sp.latex(sp.simplify(value))
+    answer_latex = _latex(sp.simplify(value))
     return Item(
         latex_problem_text=problem_latex,
         latex_answer_text=answer_latex,
@@ -285,7 +293,7 @@ def expectation(dist, g, g_latex):
     val, verified, note = _expect(dist, g)
     return Item(
         latex_problem_text=_prob_problem_latex(dist, r"\mathbb{E}[%s]" % g_latex),
-        latex_answer_text=sp.latex(_pretty(val)),
+        latex_answer_text=_latex(_pretty(val)),
         answer_verified_by="sympy" if verified else None,
         answer_source="sympy",
         note=note,
@@ -302,7 +310,7 @@ def variance(dist):
     note = "" if verified else ("; ".join(n for n in (n1, n2) if n) or "unverified")
     return Item(
         latex_problem_text=_prob_problem_latex(dist, r"\operatorname{Var}(X)"),
-        latex_answer_text=sp.latex(_pretty(value)),
+        latex_answer_text=_latex(_pretty(value)),
         answer_verified_by="sympy" if verified else None,
         answer_source="sympy",
         note=note,
