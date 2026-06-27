@@ -38,6 +38,7 @@
     ol.problems li.prow.selected { background: #ececec; border-color: #000; border-left-width: 4px; }
     ol.problems .empty { list-style: none; margin-left: -1.3rem; color: #777; font-style: italic; }
     .pq { display: block; }
+    .pq .pqline + .pqline { margin-top: 2px; }
     .stats { display: block; margin-top: .15rem; }
     .muted { color: #777; font-size: .85rem; }
   </style>
@@ -59,6 +60,9 @@
 <script>
 const selected = new Set();          // global selection of problem ids
 const problemCache = {};             // tag_id -> problems[]
+
+// Problem text may be multi-line (\n-separated); render one math block per line.
+const pqLines = (tex) => tex.split("\n").map((s) => `<div class="pqline">\\(${s.trim()}\\)</div>`).join("");
 
 async function api(path) {
   const res = await fetch(path);
@@ -112,7 +116,7 @@ function renderProblems(ol, problems) {
 
     const pq = document.createElement("span");
     pq.className = "pq";
-    pq.innerHTML = `\\(${p.latex_problem_text}\\)`;
+    pq.innerHTML = pqLines(p.latex_problem_text);
 
     const stats = document.createElement("span");
     stats.className = "stats muted";

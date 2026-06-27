@@ -54,7 +54,7 @@
 
     /* ---- layout ---- */
     .content {
-      max-width: 820px;
+      max-width: 1100px;
       margin: 0 auto;
       padding: 28px 18px 80px;
     }
@@ -199,18 +199,27 @@
     .problem-row.starred  .prob-index { color: #444; font-weight: 500; }
     .problem-row.rejected .prob-index { color: #e08080; }
 
-    .prob-question { flex: 1; }
+    .prob-question { flex: 0 0 200px; }
+    /* dist+ask lines: each its own left-aligned block, tightly stacked. */
+    .prob-question .katex-display { text-align: left; margin: 0; }
+    .prob-question .katex-display > .katex { text-align: left; }
+    .prob-question .katex-display + .katex-display { margin-top: 3px; }
+
+    .prob-pdf { flex: 1; padding: 0 8px; }
+    /* pdf/pmf: left-aligned block, same override as question */
+    .prob-pdf .katex-display { text-align: left; margin: 0; }
+    .prob-pdf .katex-display > .katex { text-align: left; }
 
     .prob-answer {
       flex: 0 0 240px;
       padding-right: 5px;
       text-align: right;
     }
-    /* right-align KaTeX display blocks in the answer column */
-    .prob-answer .katex-display {
-      text-align: right;
-      margin: 0;
-    }
+    /* right-align answers to a common right edge. The inner .katex defaults to
+       text-align:center (KaTeX), so right-aligning the wrapper alone is not
+       enough — override the inner block as well. */
+    .prob-answer .katex-display { text-align: right; margin: 0; }
+    .prob-answer .katex-display > .katex { text-align: right; }
 
     /* ---- approved strip ---- */
     .approved-strip {
@@ -275,6 +284,23 @@ let   allBatches   = [];
 // ---- helpers --------------------------------------------------------------
 function math(tex) {
   return katex.renderToString(tex, { throwOnError: false, displayMode: true });
+}
+
+// Split a problem's stored LaTeX into [questionHtml, pdfHtml] for the two
+// content columns. Probability problems are 3 \n-separated lines:
+//   line 0 = distribution  →  question col (with period)
+//   line 1 = pdf/pmf       →  pdf col
+//   line 2 = the ask       →  question col (capitalised, with period)
+// All other problems (1 line) go entirely in the question col; pdf col is empty.
+function renderProblemCols(tex) {
+  const lines = tex.split('\n');
+  if (lines.length === 3) {
+    const distLine = lines[0].trim() + '.';
+    const pdfLine  = lines[1].trim();
+    const askLine  = lines[2].trim().replace(/\\text\{f/, '\\text{F') + '.';
+    return [math(distLine) + math(askLine), math(pdfLine)];
+  }
+  return [math(lines[0].trim()), ''];
 }
 
 function esc(s) {
@@ -398,10 +424,12 @@ function renderBatch(batch) {
     if (rejected.has(p.id)) row.classList.add('rejected');
 
     const idx = String(i + 1).padStart(2, '0');
+    const [qHtml, pdfHtml] = renderProblemCols(p.latex_problem_text);
     row.innerHTML = `
       <span class="prob-star">&#9733;</span>
       <span class="prob-index">${idx}</span>
-      <span class="prob-question">${math(p.latex_problem_text)}</span>
+      <span class="prob-question">${qHtml}</span>
+      <span class="prob-pdf">${pdfHtml}</span>
       <span class="prob-answer">${math(p.latex_answer_text)}</span>`;
 
     row.onclick = () => cycleRow(p.id, batch.id, row);

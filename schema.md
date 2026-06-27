@@ -7,7 +7,7 @@
 > column, constraint, enum value, or migration) MUST be reflected here in the
 > same change. See CLAUDE.md.
 
-_Last updated: 2026-06-26._
+_Last updated: 2026-06-27._
 
 ---
 
@@ -29,7 +29,7 @@ A single problem. Belongs to a batch; lifecycle controlled by `status`.
 |--------------------|------|----------------------------------------------------|
 | id                 | INTEGER PK | |
 | batch_id           | INTEGER FK → batch(id) | |
-| latex_problem_text | TEXT NOT NULL | raw TeX, no surrounding `$` |
+| latex_problem_text | TEXT NOT NULL | raw TeX, no surrounding `$`. May contain `\n` to mark line breaks (e.g. probability problems render as 3 lines); each renderer splits on `\n` into one math block per line. |
 | latex_answer_text  | TEXT NOT NULL | raw TeX; sympy output |
 | answer_verified_by | TEXT | `NULL` = unverified; `'sympy'` = sympy-confirmed |
 | problem_source     | TEXT NOT NULL | e.g. `claude` |

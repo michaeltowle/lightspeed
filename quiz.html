@@ -38,6 +38,7 @@
     table { border-collapse: collapse; width: 100%; margin: 1.2rem 0; }
     td { border: 1px solid #888; padding: .55rem .7rem; vertical-align: middle; }
     td.num { width: 2rem; text-align: right; color: #555; }
+    td.pq .pqline + .pqline { margin-top: 2px; }
     td.ans { width: 42%; cursor: default; }
     td.ans.gradable { cursor: pointer; }
     td.ans.correct { background: #cdebcd; }
@@ -80,6 +81,8 @@ async function api(path, opts) {
 }
 const post = (obj) => ({ method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(obj || {}) });
 const shuffle = (a) => { for (let i = a.length - 1; i > 0; i--) { const j = Math.random() * (i + 1) | 0; [a[i], a[j]] = [a[j], a[i]]; } return a; };
+// Problem text may be multi-line (\n-separated); render one math block per line.
+const pqLines = (tex) => tex.split("\n").map((s) => `<div class="pqline">\\(${s.trim()}\\)</div>`).join("");
 
 async function start() {
   if (ids.length === 0) { fail("No problems selected. Go back to the bank and pick some."); return; }
@@ -101,7 +104,7 @@ function renderGrid() {
   problems.forEach((p, i) => {
     const tr = document.createElement("tr");
     tr.innerHTML = `<td class="num">${i + 1}.</td>
-                    <td class="pq">\\(${p.latex_problem_text}\\)</td>
+                    <td class="pq">${pqLines(p.latex_problem_text)}</td>
                     <td class="ans" data-pid="${p.id}"></td>
                     <td class="flag"></td>`;
     const btn = document.createElement("button");
