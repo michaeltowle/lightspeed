@@ -24,6 +24,8 @@ Two orthogonal axes:
 | Definite integral | `definite_integral(expr, a, b, var="x")` | single-expression | antiderivative re-differentiation **and** FTC cross-check `F(b) − F(a) ==` sympy's direct `∫ₐᵇ` | No — NULL on an unevaluated integral or special function |
 | Expectation (LOTUS) | `expectation(dist, g, g_latex)` | three-line | (1) density/mass totals 1, (2) sympy returns a closed form, (3) **independent numeric cross-check** at concrete params (mpmath quadrature / truncated sum) | No — NULL if any of the three fails |
 | Variance (LOTUS) | `variance(dist)` | three-line | both E[X] and E[X²] pass the expectation check, then `Var = E[X²] − E[X]²` | No — NULL if either moment fails |
+| Local extrema | `min_max(expr, var="x")` | single-expression | f'(cp) = 0 at each reported critical point (sympy `simplify` check); f'' ≠ 0 required (second derivative test must be conclusive) | No — NULL if any CP fails the f'=0 check; inconclusive CPs (f''=0) are silently excluded |
+| MLE | `mle(dist_latex, log_lik, param, param_hat_latex, answer_latex=None)` | single-expression | score equation `d ell / d param = 0` holds exactly at the candidate MLE (sympy `simplify` check); concavity follows from exponential family structure | No — NULL if score equation can't be solved or doesn't simplify to 0 |
 
 `answer_verified_by` stores the verification *tool* — currently always `'sympy'`
 when the check passes, NULL when it doesn't. The *method* (the column above) is a
@@ -63,6 +65,13 @@ confirms it. The methods in use, weakest to strongest guarantee:
   compared against an independent numeric evaluation at concrete parameter values
   (mpmath quadrature for continuous, truncated sum for discrete); the density /
   mass must also total 1. The symbolic engine never grades itself.
+- **critical-point check** *(local extrema)* — verifies f'(cp) = 0 at each
+  reported critical point via `simplify`. The second derivative test classifies
+  (local min / local max); points where f'' = 0 are inconclusive and excluded.
+- **score equation check** *(MLE)* — differentiates the log-likelihood and
+  verifies that the candidate MLE satisfies `d ell / d param = 0` exactly via
+  `simplify`. Concavity (confirming it's a maximum, not a minimum) follows from
+  the exponential family structure and is not separately checked.
 
 When a check can't be satisfied — special functions (`erf`, `Ei`, `gamma`, …),
 unevaluated integrals/sums, or a density that doesn't total 1 —
@@ -73,8 +82,6 @@ unevaluated integrals/sums, or a density that doesn't total 1 —
 1. Write the generator in `problem_types.py`. It must compute the answer with a
    reliable tool **and** independently verify it, returning an `Item` whose
    `answer_verified_by` is set only when the check passes.
-2. Re-export it from `generate.py` (the `from problem_types import …` list and
-   `__all__`).
-3. Add a row here: its presentation style and verification method.
-4. If it introduces a new presentation style, also wire the renderers
+2. Add a row here: its presentation style and verification method.
+3. If it introduces a new presentation style, also wire the renderers
    (`add-problems.html`, `quiz.html`, `index.html`).

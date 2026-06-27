@@ -314,3 +314,100 @@ def variance(dist):
         answer_source="sympy",
         note=note,
     )
+
+
+# --- local extrema -----------------------------------------------------------
+
+def min_max(expr_str, var="x"):
+    """Find local minima and maxima via the second derivative test.
+
+    Presentation: single-expression ("f(x) = …, find local extrema").
+    Verification: f'(cp) = 0 at every reported critical point (sympy check).
+    Points where f'' = 0 at the critical point are inconclusive and excluded.
+    """
+    x = sp.Symbol(var)
+    expr = _parse(expr_str)
+    f1 = sp.diff(expr, x)
+    f2 = sp.diff(f1, x)
+
+    crit = sp.solve(f1, x)
+    real_crit = sorted(
+        [c for c in crit if c.is_real],
+        key=lambda c: float(c.evalf()),
+    )
+
+    classified = []
+    all_verified = True
+    for cp in real_crit:
+        if sp.simplify(f1.subs(x, cp)) != 0:
+            all_verified = False
+            break
+        fpp = sp.simplify(f2.subs(x, cp))
+        fval = sp.simplify(expr.subs(x, cp))
+        if fpp.is_negative:
+            kind = r"\text{local max}"
+        elif fpp.is_positive:
+            kind = r"\text{local min}"
+        else:
+            continue  # f''(cp) = 0: inconclusive via 2nd derivative test
+
+        classified.append((cp, kind, fval))
+
+    problem_latex = r"f(x) = %s, \quad \text{find local extrema}" % _latex(expr)
+
+    if not classified or not all_verified:
+        note = ("no classifiable extrema via second derivative test"
+                if not classified else "critical point check failed")
+        return Item(latex_problem_text=problem_latex, latex_answer_text="",
+                    answer_verified_by=None, note=note)
+
+    parts = [r"x = %s:\ %s,\ f = %s" % (_latex(cp), kind, _latex(fval))
+             for cp, kind, fval in classified]
+    answer_latex = (parts[0] if len(parts) == 1
+                    else r"\begin{array}{l}" + r" \\[3pt] ".join(parts) + r"\end{array}")
+
+    return Item(
+        latex_problem_text=problem_latex,
+        latex_answer_text=answer_latex,
+        answer_verified_by="sympy" if all_verified else None,
+    )
+
+
+# --- maximum likelihood estimation -------------------------------------------
+
+def mle(dist_latex, log_lik, param, param_hat_latex, answer_latex=None):
+    """MLE: find the value of `param` that maximises `log_lik`.
+
+    `log_lik` is a sympy expression in `param` and symbolic sufficient
+    statistics (declared positive by the caller). `answer_latex`, if given,
+    overrides the display form with nicer notation (e.g. 1/x̄); the
+    computation and verification still use the sympy result.
+
+    Presentation: single-expression ("X₁,…,Xₙ ~ …; find MLE").
+    Verification: score equation d ell / d param = 0 holds exactly at the
+    candidate MLE (algebraic check via sympy simplify). All classical
+    exponential-family MLEs satisfy this; concavity follows from the family.
+    """
+    score = sp.diff(log_lik, param)
+    solutions = sp.solve(score, param)
+
+    problem_latex = (
+        r"X_1, \ldots, X_n \overset{\text{iid}}{\sim} %s;"
+        r" \quad \text{find } \hat{%s}_{\text{MLE}}" % (dist_latex, param_hat_latex)
+    )
+
+    if not solutions:
+        return Item(latex_problem_text=problem_latex, latex_answer_text="",
+                    answer_verified_by=None, note="could not solve score equation")
+
+    mle_val = solutions[0]
+    score_ok = sp.simplify(score.subs(param, mle_val)) == 0
+    display = (answer_latex if answer_latex
+               else r"\hat{%s} = %s" % (param_hat_latex, _latex(mle_val)))
+
+    return Item(
+        latex_problem_text=problem_latex,
+        latex_answer_text=display,
+        answer_verified_by="sympy" if score_ok else None,
+        note="" if score_ok else "score equation did not simplify to 0",
+    )
