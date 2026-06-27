@@ -137,8 +137,7 @@ silently keep answering with old code.
 - `problem_types.py` — sympy compute+verify generators, one function per problem
   type (`derivative`, `integral`, `definite_integral`, `expectation`,
   `variance`). The type registry is `TYPES.md`. Used from Claude Code sessions.
-- `generate.py` — `stage()` (dedup + staging); re-exports the `problem_types`
-  generators so a session needs only `from generate import ...`.
+- `generate.py` — `stage()` (dedup + staging).
 - `server.py` — local server: serves pages + JSON API. No sympy/LLM at runtime.
 - `add-problems.html` — review/approve/star surface for staged problems.
 - `index.html` / `quiz.html` — browse-and-build / timed practice (to be wired).

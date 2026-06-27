@@ -1,10 +1,10 @@
 """Staging for Lightspeed: dedup + write generated problems into SQLite.
 
-The problem-type generators (derivative, integral, definite_integral,
-expectation, variance, plus the Dist/Item dataclasses) live in problem_types.py
-and are re-exported here, so a session can still do everything from one import:
+Typical session usage:
 
-    from generate import derivative, integral, stage
+    from problem_types import derivative, integral, definite_integral, Dist, expectation
+    from generate import stage
+
     items = [
         derivative("x**3 * sin(x)"),
         integral("x * exp(x)"),
@@ -20,26 +20,6 @@ TYPES.md for the presentation style and verification method of each type.
 """
 
 import db
-from problem_types import (  # re-exported for one-import session ergonomics
-    Dist,
-    Item,
-    definite_integral,
-    derivative,
-    expectation,
-    integral,
-    variance,
-)
-
-__all__ = [
-    "Dist",
-    "Item",
-    "definite_integral",
-    "derivative",
-    "expectation",
-    "integral",
-    "variance",
-    "stage",
-]
 
 
 def _report_skipped(skipped):

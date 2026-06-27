@@ -54,8 +54,7 @@ Zero-install: Python stdlib + sympy only. No API key, no Node.
 - `db.py` — SQLite schema + all data access (owns migrations).
 - `problem_types.py` — sympy compute+verify generators (one function per problem
   type). Registered in `TYPES.md`.
-- `generate.py` — `stage()` (dedup + staging); re-exports the `problem_types`
-  generators so a session needs only one import.
+- `generate.py` — `stage()` (dedup + staging).
 - `server.py` — local server: pages + JSON API.
 - `add-problems.html` — review/approve/reject/star surface (interim UI).
 - `index.html` — browse bank by tag, select, launch quiz/practice (wireframe).
