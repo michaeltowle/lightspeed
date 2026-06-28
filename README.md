@@ -79,14 +79,18 @@ the `batch` row preserves provenance and groups the set for review.
 **What:** Each batch is **monotype** — `stage(prompt, items, type="derivative")`
 applies one registered type to every problem in the batch. A type is bound to its
 generator and a canonical instruction (the `problem_types.TYPES` registry) and is
-seeded into the `type` table on use.
+seeded into the `type` table on use. An optional **subtype**
+(`stage(..., subtype="integration_by_parts")`) labels a method/variant within the
+type — so you can later drill one technique or the whole type; reuse existing
+subtype names (`db.subtypes_by_type`) so they don't drift. Instructive traps are
+flagged with the `gotcha()` wrapper, setting `problem.gotcha` for due weight.
 **Why:** types are Claude's responsibility, applied per-prompt (not per-problem),
 and the registry is the guardrail: one type → one generator → one display shape,
 so changes to rendering have predictable effects. *(Implication: keep each prompt
 to a single technique.)*
 
-### Step 5 — Review the batch  *(`add-problems.html` at `/add-problems`)*
-**What:** The creator opens `/add-problems`, sees staged problems grouped by
+### Step 5 — Review the batch  *(`staged.html` at `/staged`)*
+**What:** The creator opens `/staged`, sees staged problems grouped by
 prompt. The batch type is shown read-only with a live count:
 `{type}: {already-in-bank} + {active} = {new-total}`. Clicking a row cycles its
 state: **normal → rejected → normal**. **Approve is batch-level**: one "Approve"
@@ -99,10 +103,12 @@ this page has a confirmed answer — no badge needed. There is **no type-picking
 here** (the batch's type is set at generation).
 
 ### Step 6 — Browse & build a set  *(`index.html`)*
-**What:** Browse the bank by type (with counts). Each problem row shows its
-attempt stats — total attempts, percent correct, and average time. Click a row to
-select/deselect it (selection is global across types); "start set" enables once
->1 is selected → hands the selected ids to the run page via `/set?ids=...`.
+**What:** Browse the bank by type (with counts). Within a type, problems group by
+**subtype** — click a subtype header to select that whole technique. Each problem
+row shows its attempt stats — total attempts, percent correct, and average time —
+and a **gotcha** badge if it's a trap. Click a row to select/deselect it
+(selection is global across types); "start set" enables once >1 is selected →
+hands the selected ids to the run page via `/set?ids=...`.
 **Why:** turn the curated bank into a targeted set, informed by where reps,
 accuracy, and speed are weak.
 *Status: functional wireframe (plain styling; final design via Claude Design).*
@@ -132,7 +138,7 @@ python server.py          # serves pages + JSON API at http://localhost:8000/
 
 `server.py` is a stdlib `http.server`; it owns the SQLite DB and exposes a small
 JSON API (`/api/staged`, `/api/types`, `/api/batches/{id}/approve`, per-problem
-reject, problems, problem-sets, attempts). Pages: `/` (index), `/add-problems`,
+reject, problems, problem-sets, attempts). Pages: `/` (index), `/staged`,
 `/set`. Only ever one instance on :8000 — a stale process will silently keep
 answering with old code.
 
@@ -146,7 +152,7 @@ answering with old code.
   from Claude Code sessions.
 - `generate.py` — `stage()` (dedup + staging; monotype, one `type=` per batch).
 - `server.py` — local server: serves pages + JSON API. No sympy/LLM at runtime.
-- `add-problems.html` — review/approve surface for staged problems.
+- `staged.html` — review/approve surface for staged problems.
 - `index.html` / `set.html` — browse-and-build / one-at-a-time timed runner.
 - `lightspeed.db` — created on first run; disposable (recreated automatically).
 

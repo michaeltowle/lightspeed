@@ -16,6 +16,19 @@ Two orthogonal axes:
   LLM-guessed). `answer_verified_by` is non-NULL only when the check passes;
   otherwise `stage()` reports and drops the item.
 
+Two finer signals live on the problem, not the type:
+
+- **Subtype** — a depth-1 label *within* a type for a method/variant (e.g.
+  `integration_by_parts` / `u_substitution` under `integral`). All problems of a
+  type share generator + verification + instructions + layout; the subtype only
+  records *how you'd solve it*, so you can drill one technique or the whole type.
+  Pass `stage(..., subtype="...")`; **check `db.subtypes_by_type` first** so names
+  don't drift. We generate monotype batches, so one subtype per batch.
+- **Gotcha** — an instructive trap, flagged with the `gotcha()` wrapper at
+  generation time (`gotcha(determinant([[1, 2, 3], [4, 5, 6]]))`). Sets
+  `problem.gotcha` so traps get due weight; shown as a badge everywhere except
+  while solving (so the trap survives).
+
 ## Registry
 
 | Type | Generator | Presentation | Verification method | Always verifiable? |
@@ -153,4 +166,4 @@ unevaluated integrals/sums, or a density that doesn't total 1 —
 3. Add it to the `TYPES` registry in `problem_types.py` (name → generator →
    default_instruction); staging seeds the `type` table from there.
 4. If it introduces a new presentation style, also wire the renderers
-   (`add-problems.html`, `set.html`, `index.html`).
+   (`staged.html`, `set.html`, `index.html`).

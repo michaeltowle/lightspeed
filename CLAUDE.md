@@ -39,11 +39,16 @@ Zero-install: Python stdlib + sympy only. No API key, no Node.
 ## Conventions
 
 - **Generation → staging → review.** Generated problems are `staged`; the owner
-  reviews at `/add-problems`. **Approve is batch-level** (one button per batch);
+  reviews at `/staged`. **Approve is batch-level** (one button per batch);
   **reject is per-problem**. No type-picking in the UI.
 - **Types are batch-level and Claude-assigned** at generation time (one type per
   batch — batches are monotype). A type binds its generator + canonical
   instruction (`problem_types.TYPES`); the owner does not hand-maintain them.
+- **Subtypes** are an optional depth-1 label *within* a type (method/variant, e.g.
+  `integration_by_parts`). Before coining one, **check existing subtypes for that
+  type** (`db.subtypes_by_type`) so names don't drift. **Gotchas** (instructive
+  traps) are flagged with the `gotcha()` wrapper at generation so they get due
+  weight.
 - **Batch size ~50 problems** per prompt. Keep prompts homogeneous (one technique
   per prompt) so the batch's single type stays meaningful.
 - **Dedup at generation time** on the decomposed statement fields (`instructions`
@@ -57,7 +62,7 @@ Zero-install: Python stdlib + sympy only. No API key, no Node.
   type) + the `TYPES` registry. Registered in `TYPES.md`.
 - `generate.py` — `stage()` (dedup + staging; one `type=` per batch).
 - `server.py` — local server: pages + JSON API.
-- `add-problems.html` — review/approve/reject surface (interim UI).
+- `staged.html` — review/approve/reject surface (interim UI).
 - `index.html` — browse bank by type, select, start a set (wireframe).
 - `set.html` — one-at-a-time timed run + click-to-grade + finalize (wireframe).
 - `lightspeed.db` — created on first run; disposable.
@@ -72,5 +77,5 @@ Zero-install: Python stdlib + sympy only. No API key, no Node.
 ## Status
 
 All three pages are functional as plain wireframes (final visual design comes
-from Claude Design): `add-problems.html` (review/approve), `index.html` (browse +
+from Claude Design): `staged.html` (review/approve), `index.html` (browse +
 build set), `set.html` (run + grade + finalize). The full loop works end to end.

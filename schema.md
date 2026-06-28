@@ -44,6 +44,7 @@ not displayed.
 | problem_source     | TEXT NOT NULL | e.g. `claude` |
 | answer_source      | TEXT NOT NULL | e.g. `sympy` |
 | status             | TEXT NOT NULL DEFAULT 'staged' | enum: `staged` \| `approved` \| `rejected` |
+| gotcha             | INTEGER NOT NULL DEFAULT 0 | `0/1`; instructive trap, set when curating a batch; weighted in drilling |
 | created_at         | TEXT NOT NULL | ISO-8601 UTC |
 | approved_at        | TEXT | set when status → approved; else NULL |
 
@@ -69,6 +70,28 @@ practice this is one type per problem, but the relation is M:N for flexibility.
 | problem_id | INTEGER FK → problem(id) | part of composite PK |
 | type_id    | INTEGER FK → type(id)    | part of composite PK |
 | _PK_       | (problem_id, type_id) | |
+
+### `subtype`
+A depth-1 label scoped **within a type** — a method/variant (e.g.
+`integration_by_parts` under `integral`). Names are unique per type, so the same
+name may recur under different types. Generation reuses existing subtypes
+(`db.subtypes_by_type`) instead of coining drift variants.
+
+| column  | type | notes |
+|---------|------|-------|
+| id      | INTEGER PK | |
+| type_id | INTEGER FK → type(id) | the type this subtype refines |
+| name    | TEXT NOT NULL | e.g. `integration_by_parts`; UNIQUE per `(type_id, name)` |
+
+### `problem_subtype`
+Join table: which subtypes apply to which problems. Applied **per batch** (the
+batch's subtype, if any). M:N, so a problem can carry more than one (e.g. IBP+trig).
+
+| column     | type | notes |
+|------------|------|-------|
+| problem_id | INTEGER FK → problem(id) | part of composite PK |
+| subtype_id | INTEGER FK → subtype(id) | part of composite PK |
+| _PK_       | (problem_id, subtype_id) | |
 
 ### `problem_set`
 A set of problems run together. Every problem is timed (no timed/untimed split).
@@ -102,6 +125,7 @@ in the set (each carries its own time), graded or not.
 
 ```
 batch 1──* problem *──* type        (via problem_type; applied batch-level, monotype)
+type  1──* subtype *──* problem     (subtype scoped to a type; via problem_subtype)
 problem 1──* attempt
 problem_set 1──* attempt
 ```
@@ -109,6 +133,8 @@ problem_set 1──* attempt
 - A **batch** has many **problems**; a problem belongs to exactly one batch.
 - A **problem** has many **types** and a **type** has many problems (M:N via
   `problem_type`). In practice the batch is monotype, so it is one type per problem.
+- A **type** has many **subtypes**; a **subtype** belongs to one type and labels
+  problems (M:N via `problem_subtype`, optional and applied per batch).
 - A **problem_set** has many **attempts**; each **attempt** also points at the
   single **problem** it recorded.
 
