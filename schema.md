@@ -45,6 +45,10 @@ not displayed.
 | answer_source      | TEXT NOT NULL | e.g. `sympy` |
 | status             | TEXT NOT NULL DEFAULT 'staged' | enum: `staged` \| `approved` \| `rejected` |
 | gotcha             | INTEGER NOT NULL DEFAULT 0 | `0/1`; instructive trap, set when curating a batch; weighted in drilling |
+| difficulty         | TEXT NOT NULL DEFAULT 'medium' | `easy` \| `medium` \| `hard` (curated) |
+| has_e              | INTEGER NOT NULL DEFAULT 0 | `0/1`; involves Euler's e / exp (auto-detected from LaTeX) |
+| has_ln             | INTEGER NOT NULL DEFAULT 0 | `0/1`; involves natural log (auto-detected) |
+| has_trig           | INTEGER NOT NULL DEFAULT 0 | `0/1`; involves sine/cosine (auto-detected) |
 | created_at         | TEXT NOT NULL | ISO-8601 UTC |
 | approved_at        | TEXT | set when status → approved; else NULL |
 

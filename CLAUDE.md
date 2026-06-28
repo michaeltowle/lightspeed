@@ -51,7 +51,13 @@ Zero-install: Python stdlib + sympy only. No API key, no Node.
   `integration_by_parts`). Before coining one, **check existing subtypes for that
   type** (`db.subtypes_by_type`) so names don't drift. **Gotchas** (instructive
   traps) are flagged with the `gotcha()` wrapper at generation so they get due
-  weight.
+  weight — a gotcha is anything not literally doable (det of a non-square matrix),
+  atypical in an interesting way (a definite integral that's 0), or where a
+  general rule is violated (∫xⁿ vs n=−1 → ln).
+- **Difficulty** (`easy`/`medium`/`hard`) is curated: `stage(difficulty=...)` sets
+  the batch default, per-item `easy()`/`hard()` wrappers override. The **content
+  flags** `has_e` / `has_ln` / `has_trig` are auto-detected from each problem's
+  LaTeX (no curation).
 - **Batch size ~50 problems** per prompt. Keep prompts homogeneous (one technique
   per prompt) so the batch's single type stays meaningful.
 - **Dedup at generation time** on the decomposed statement fields (`instructions`

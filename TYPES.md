@@ -27,7 +27,11 @@ Two finer signals live on the problem, not the type:
 - **Gotcha** — an instructive trap, flagged with the `gotcha()` wrapper at
   generation time (`gotcha(determinant([[1, 2, 3], [4, 5, 6]]))`). Sets
   `problem.gotcha` so traps get due weight; shown as a badge everywhere except
-  while solving (so the trap survives).
+  while solving (so the trap survives). A gotcha is anything not literally doable,
+  atypical in an interesting way, or where a general rule is violated.
+- **Difficulty & content flags** — `difficulty` (easy/medium/hard) is curated via
+  `stage(difficulty=...)` or per-item `easy()`/`hard()`; the content flags
+  `has_e` / `has_ln` / `has_trig` are auto-detected from the LaTeX.
 
 Every type carries a canonical **default_instruction** — the imperative shown as
 the type's name in the UI (`summation` → *evaluate the sum*). It is the single
