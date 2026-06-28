@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<!--
+  Type catalog (read-only reference). Lists every registered problem type — its
+  canonical instruction, its subtypes, and how many problems are in the bank.
+  Data: /api/types (db.list_types), seeded from problem_types.TYPES so every type
+  appears even before it has problems.
+-->
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>lightspeed — types</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Spectral:ital,wght@0,400;0,500;0,600;1,400&display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+    html { text-transform: lowercase; }
+    body { margin: 0; background: #f7f7f7; font-family: 'Spectral', Georgia, serif; color: #111; }
+
+    .nav {
+      background: #111; padding: 10px 20px; font-family: 'IBM Plex Mono', monospace;
+      font-size: 11px; display: flex; align-items: center; gap: 8px;
+    }
+    .nav a { color: #999; text-decoration: none; }
+    .nav a:hover { color: #fff; }
+    .nav-sep { color: #555; }
+    .nav-title { color: #fff; font-weight: 500; letter-spacing: 0.3px; }
+
+    .content { max-width: 820px; margin: 0 auto; padding: 26px 18px 80px; }
+    .head { display: flex; align-items: baseline; gap: 10px; margin: 0 0 4px; }
+    .head h1 { font-size: 18px; font-weight: 600; margin: 0; }
+    .head .sub { font-size: 13px; color: #888; }
+
+    .card { background: #fff; border-radius: 5px; box-shadow: 0 1px 5px rgba(0,0,0,.09), 0 0 0 1px rgba(0,0,0,.04); overflow: hidden; margin-top: 16px; }
+
+    .type-row {
+      display: flex; align-items: baseline; gap: 14px;
+      padding: 13px 18px; border-bottom: 1px solid #eee;
+    }
+    .type-row:last-child { border-bottom: none; }
+    .type-main { flex: 1; min-width: 0; }
+    .instr { font-size: 15.5px; font-weight: 500; color: #111; }
+    .instr .none { color: #bbb; font-style: italic; font-weight: 400; }
+    .type-id { font-family: 'IBM Plex Mono', monospace; font-size: 10.5px; color: #aaa; margin-top: 2px; }
+    .subtypes { margin-top: 6px; display: flex; flex-wrap: wrap; gap: 6px; }
+    .subtype {
+      font-family: 'IBM Plex Mono', monospace; font-size: 10.5px; color: #555;
+      background: #f1f1f1; border: 1px solid #e2e2e2; border-radius: 999px; padding: 1px 8px;
+    }
+    .count {
+      flex: 0 0 78px; text-align: right; font-family: 'IBM Plex Mono', monospace;
+      font-size: 11px; color: #aaa; font-variant-numeric: tabular-nums;
+    }
+    .count.has { color: #555; }
+    .gen { color: #c4c4c4; font-family: 'IBM Plex Mono', monospace; font-size: 10px; margin-left: 6px; }
+    #msg { padding: 20px; color: #888; font-size: 14px; }
+  </style>
+</head>
+<body>
+
+<nav class="nav">
+  <a href="/">← bank</a>
+  <span class="nav-sep">|</span>
+  <span class="nav-title">types</span>
+</nav>
+
+<div class="content">
+  <div class="head">
+    <h1>problem types</h1>
+    <span class="sub" id="sub"></span>
+  </div>
+  <div class="card" id="card"><div id="msg">loading…</div></div>
+</div>
+
+<script>
+'use strict';
+
+function esc(s) {
+  return String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+}
+
+async function load() {
+  let types;
+  try {
+    const res = await fetch('/api/types');
+    if (!res.ok) throw new Error(await res.text());
+    types = await res.json();
+  } catch (e) {
+    document.getElementById('msg').textContent = 'error loading — is the server running?';
+    return;
+  }
+
+  const card = document.getElementById('card');
+  const nSub = types.reduce((s, t) => s + t.subtypes.length, 0);
+  document.getElementById('sub').textContent =
+    `${types.length} types · ${nSub} subtypes`;
+
+  card.innerHTML = types.map(t => {
+    const instr = t.default_instruction
+      ? esc(t.default_instruction)
+      : '<span class="none">— (theme; per-problem instruction)</span>';
+    const subs = t.subtypes.length
+      ? `<div class="subtypes">${t.subtypes.map(s => `<span class="subtype">${esc(s)}</span>`).join('')}</div>`
+      : '';
+    const n = t.problem_count;
+    return `
+      <div class="type-row">
+        <div class="type-main">
+          <div class="instr">${instr}</div>
+          <div class="type-id">${esc(t.name)}<span class="gen"> · ${esc(t.generator || '')}()</span></div>
+          ${subs}
+        </div>
+        <div class="count ${n ? 'has' : ''}">${n} in bank</div>
+      </div>`;
+  }).join('');
+}
+
+load();
+</script>
+</body>
+</html>

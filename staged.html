@@ -403,7 +403,7 @@ function renderBatch(batch) {
     : batch.types.map(type => {
         const db = type.db_count || 0;
         return `<div class="type-row">
-          <span class="type-name">${esc(type.name)}:</span>
+          <span class="type-name">${esc(type.default_instruction || type.name)}:</span>
           <span class="type-db">${db}</span>
           <span class="type-sep">+</span>
           <span class="type-active">${ac}</span>
