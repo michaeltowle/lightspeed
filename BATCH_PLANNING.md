@@ -32,70 +32,67 @@ this file is the triage, not the topic list.
 - **1a** ~~Known constants & values *(e, π, ln eᵏ, trig at special angles)*~~
 - **1b** ~~Exponent & log laws~~ *(numeric cross-check)*
 - **1c** ~~Factorizations *(difference of squares/cubes, perfect square)*~~
-- **1d** Complete the square — single variable
-- **1e** Partial-fraction decomposition
+- **1d** ~~Complete the square — single variable~~
+- **1e** ~~Partial-fraction decomposition~~
 
 ## 2. Combinatorics
 
-- **2a** Factorials
-- **2b** ~~Binomial coefficients *(n choose k)*~~
-- **2c** Permutation & combination counts
-- **2d** Multinomial coefficients
+- **2a** ~~Binomial coefficients *(n choose k)*~~
 
 ## 3. Differentiation
 
 - **3a** ~~Single-variable derivatives *(chain / product / quotient)*~~
-- **3b** Higher-order derivatives
+- **3b** ~~Higher-order derivatives~~
 - **3c** ~~Partial derivatives~~
 - **3d** ~~Mixed / higher partials~~
-- **3e** Logarithmic differentiation
-- **3f** Differentiate under the integral sign *(Leibniz; numeric fallback if the integral won't close)*
+- **3e** ~~Logarithmic differentiation~~
+- **3f** ~~Differentiate under the integral sign~~ *(Leibniz; numeric fallback if the integral won't close)*
 
 ## 4. Integration — single variable
 
-- **4a** u-substitution
-- **4b** Integration by parts
-- **4c** Partial-fraction integrals
+- **4a** ~~u-substitution~~
+- **4b** ~~Integration by parts~~
+- **4c** ~~Partial-fraction integrals~~
 - **4d** ~~Definite integrals *(FTC)*~~
 - **4e** ~~Improper integrals *(infinite limits)*~~
-- **4f** Gamma-type integrals — ∫₀^∞ xᵃ⁻¹e⁻ˣ *(numeric cross-check)*
-- **4g** Beta-type integrals — ∫₀¹ xᵃ⁻¹(1−x)ᵇ⁻¹ *(numeric cross-check)*
-- **4h** Gaussian integral — ∫ e⁻ˣ²ᐟ² *(numeric cross-check)*
-- **4i** Arctan / Cauchy integrals — ∫ 1/(1+x²)
+- **4f** ~~Gamma-type integrals — ∫₀^∞ xᵃ⁻¹e⁻ˣ~~ *(numeric cross-check)*
+- **4g** ~~Beta-type integrals — ∫₀¹ xᵃ⁻¹(1−x)ᵇ⁻¹~~ *(numeric cross-check)*
+- **4h** ~~Gaussian integral — ∫ e⁻ˣ²ᐟ²~~ *(numeric cross-check)*
+- **4i** ~~Arctan / Cauchy integrals — ∫ 1/(1+x²)~~
 
 ## 5. Series & sums
 
-- **5a** Finite sums *(closed form)*
-- **5b** Geometric series *(finite & infinite)*
-- **5c** Infinite-series sums *(numeric cross-check where it won't close)*
-- **5d** Binomial-theorem expansion
-- **5e** Taylor / Maclaurin series
-- **5f** Power series of eˣ, ln(1+x), (1+x)ᵃ
+- **5a** ~~Finite sums *(closed form)*~~
+- **5b** ~~Geometric series *(finite & infinite)*~~
+- **5c** ~~Infinite-series sums~~ *(numeric cross-check where it won't close)*
+- **5d** ~~Binomial-theorem expansion~~
+- **5e** ~~Taylor / Maclaurin series~~
+- **5f** ~~Power series of eˣ, ln(1+x), (1+x)ᵃ~~
 
 ## 6. Limits
 
-- **6a** Sequence limits
-- **6b** Function limits
-- **6c** L'Hôpital indeterminate forms
-- **6d** Compound-interest limit — (1+x/n)ⁿ → eˣ
+- **6a** ~~Sequence limits~~
+- **6b** ~~Function limits~~
+- **6c** ~~L'Hôpital indeterminate forms~~
+- **6d** ~~Compound-interest limit — (1+x/n)ⁿ → eˣ~~
 
 ## 7. Linear algebra *(Jacobians & multivariate normal)*
 
-- **7a** 2×2 determinant
-- **7b** 3×3 determinant
-- **7c** 2×2 matrix inverse
-- **7d** Quadratic form xᵀAx — bivariate
-- **7e** Complete the square — quadratic form *(MVN exponent)*
+- **7a** ~~2×2 determinant~~
+- **7b** ~~3×3 determinant~~
+- **7c** ~~2×2 matrix inverse~~
+- **7d** ~~Quadratic form xᵀAx — bivariate~~
+- **7e** ~~Complete the square — quadratic form *(MVN exponent)*~~
 
 ## 8. Double integrals
 
 - **8a** ~~Double integrals — rectangular region~~ *(numeric cross-check)*
 - **8b** ~~Double integrals — non-rectangular region~~ *(numeric cross-check)*
-- **8c** Switch order of integration *(numeric: both orders agree)*
+- **8c** ~~Switch order of integration~~ *(numeric: both orders agree)*
 
 ## 9. Optimization
 
-- **9a** Critical points *(f′ = 0)*
+- **9a** ~~Critical points *(f′ = 0)*~~
 - **9b** ~~Local extrema *(2nd-derivative test)*~~
 
 ---

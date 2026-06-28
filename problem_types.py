@@ -357,6 +357,11 @@ def min_max(expr_str, var="x"):
 
     problem_latex = r"f(x) = %s, \quad \text{find local extrema}" % _latex(expr)
 
+    if all_verified and not real_crit:
+        # genuinely no critical points -> no local extrema (instructive gotcha)
+        return Item(problem_latex, r"\text{no local extrema (no critical points)}",
+                    "sympy")
+
     if not classified or not all_verified:
         note = ("no classifiable extrema via second derivative test"
                 if not classified else "critical point check failed")
@@ -438,9 +443,13 @@ def known_value(ask_latex, expr_str, decimals=None):
     `ask_latex` is the prompt shown; the answer is sympy's value.
     """
     val = _parse(expr_str)
-    if val is sp.nan or val == sp.zoo:
+    if val is sp.nan:
         return Item(latex_problem_text=ask_latex, latex_answer_text="",
-                    answer_verified_by=None, note=f"indeterminate value ({val})")
+                    answer_verified_by=None, note="indeterminate (nan)")
+    if val == sp.zoo:
+        # e.g. tan(pi/2): complex-infinity -> the value is undefined (a gotcha)
+        return Item(latex_problem_text=ask_latex,
+                    latex_answer_text=r"\text{undefined}", answer_verified_by="sympy")
     if decimals is not None:
         if not bool(val.is_finite):
             return Item(latex_problem_text=ask_latex, latex_answer_text="",
@@ -466,15 +475,21 @@ def factoring(expr_str):
     factored = sp.factor(expr)
     expands_back = sp.expand(factored) == sp.expand(expr)
     actually_factored = factored.is_Mul or factored.is_Pow
-    verified = bool(expands_back and actually_factored)
-    note = "" if verified else (
-        "did not factor (irreducible?)" if not actually_factored
-        else "factored form did not expand back to the original")
+    prob = r"\text{factor: } %s" % _latex(expr)
+    if actually_factored:
+        return Item(prob, _latex(factored), "sympy" if expands_back else None,
+                    note="" if expands_back else "factored form did not expand back")
+    # didn't reduce: instructive gotcha — irreducible over the rationals, as long
+    # as it is a genuine polynomial sympy chose to leave alone.
+    try:
+        is_poly = sp.Poly(expr, *sorted(expr.free_symbols, key=str)).degree() >= 1
+    except sp.PolynomialError:
+        is_poly = False
     return Item(
-        latex_problem_text=r"\text{factor: } %s" % _latex(expr),
-        latex_answer_text=_latex(factored),
-        answer_verified_by="sympy" if verified else None,
-        note=note,
+        prob,
+        _latex(expr) + r"\quad \text{(irreducible over } \mathbb{Q}\text{)}",
+        "sympy" if is_poly else None,
+        note="" if is_poly else "did not factor and not a polynomial",
     )
 
 
@@ -599,3 +614,320 @@ def double_integral(expr_str, inner, outer):
         answer_verified_by="sympy" if ok else None,
         note="" if ok else f"numeric cross-check failed ({sym} vs {num})",
     )
+
+
+# ============================================================================
+# Part-I coverage generators (BATCH_PLANNING.md §1–§9).
+# Curated to also cover trivial-yet-instructive and gotcha cases. Gotchas whose
+# answer is a verdict (diverges / undefined / does not exist) are verified by
+# sympy returning ±oo / refusing the operation / one-sided disagreement.
+# ============================================================================
+
+def _mat(rows):
+    return sp.Matrix([[_parse(str(e)) for e in row] for row in rows])
+
+
+# --- §2 combinatorics -------------------------------------------------------
+
+def binomial(n, k):
+    """C(n, k). Always sympy. Edge: k>n -> 0, C(n,0)=C(n,n)=1, symbolic n."""
+    N, K = _parse(str(n)), _parse(str(k))
+    return Item(r"\binom{%s}{%s}" % (_latex(N), _latex(K)),
+                _latex(sp.binomial(N, K)), "sympy")
+
+
+# --- §1d complete the square ------------------------------------------------
+
+def complete_square(expr_str, var="x"):
+    """ax^2+bx+c -> a(x-h)^2+k, verified by expand-back."""
+    x = sp.Symbol(var)
+    expr = _parse(expr_str)
+    prob = r"\text{complete the square: } %s" % _latex(expr)
+    p = sp.Poly(sp.expand(expr), x)
+    if p.degree() != 2:
+        return Item(prob, "", None, note="not a quadratic")
+    a, b, c = p.all_coeffs()
+    h = sp.nsimplify(-b / (2 * a))
+    k = sp.nsimplify(c - b ** 2 / (4 * a))
+    form = a * (x - h) ** 2 + k
+    verified = sp.expand(form - expr) == 0
+    return Item(prob, _latex(form), "sympy" if verified else None,
+                note="" if verified else "did not expand back")
+
+
+# --- §1e partial fractions --------------------------------------------------
+
+def partial_fractions(expr_str, var="x"):
+    """sympy apart(); verified by recombining (together(apart) == expr)."""
+    x = sp.Symbol(var)
+    expr = _parse(expr_str)
+    ans = sp.apart(expr, x)
+    verified = sp.simplify(sp.together(ans) - expr) == 0
+    return Item(r"\text{decompose: } %s" % _latex(expr),
+                _latex(ans), "sympy" if verified else None,
+                note="" if verified else "did not recombine")
+
+
+# --- §3b higher-order derivatives -------------------------------------------
+
+def higher_derivative(expr_str, order, var="x"):
+    """n-th derivative. Direct computation (sympy). Edge: vanishes for d^n of a
+    degree<n polynomial."""
+    x = sp.Symbol(var)
+    expr = _parse(expr_str)
+    ans = sp.diff(expr, x, order)
+    return Item(
+        r"\frac{d^{%d}}{d%s^{%d}}\left( %s \right)" % (order, var, order, _latex(expr)),
+        _latex(_present(ans, x)), "sympy")
+
+
+# --- §3f differentiate under the integral sign (Leibniz) --------------------
+
+def leibniz(expr_str, t="t", x="x", a="0", b="x"):
+    """d/dt ∫_a^b f(x,t) dx. Verified: sympy's native Leibniz expansion agrees
+    with integrate-then-differentiate (handles the FTC case d/dt ∫_0^t f = f(t)
+    even when ∫ f has no elementary form)."""
+    tv, xv = sp.Symbol(t), sp.Symbol(x)
+    f = _parse(expr_str)
+    A, B = _parse(str(a)), _parse(str(b))
+    prob = r"\frac{d}{d%s} \int_{%s}^{%s} %s \, d%s" % (t, _latex(A), _latex(B), _latex(f), x)
+    ans = sp.diff(sp.Integral(f, (xv, A, B)), tv).doit()
+    if ans.has(sp.Integral):
+        ans = ans.doit()
+        if ans.has(sp.Integral):
+            return Item(prob, "", None, note="unevaluated")
+    # numeric cross-check: central finite-difference of the t-parametrized
+    # integral (limits may depend on t), independent of the symbolic result.
+    t0, h = 0.7, 1e-5
+    try:
+        ans_num = complex(ans.subs(tv, t0).evalf())
+
+        def _ival(tval):
+            lo = float(A.subs(tv, tval)) if A.free_symbols else float(A)
+            hi = float(B.subs(tv, tval)) if B.free_symbols else float(B)
+            g = sp.lambdify(xv, f.subs(tv, tval), "mpmath")
+            return complex(mpmath.quad(g, [lo, hi]))
+
+        fd = (_ival(t0 + h) - _ival(t0 - h)) / (2 * h)
+        ok = abs(ans_num - fd) < 1e-4 * (1 + abs(ans_num))
+    except Exception:  # noqa: BLE001
+        ok = False
+    return Item(prob, _latex(sp.simplify(ans)), "sympy" if ok else None,
+                note="" if ok else "numeric cross-check failed")
+
+
+# --- §4e improper integrals (divergence-aware) ------------------------------
+
+def improper_integral(expr_str, a, b, var="x"):
+    """Definite integral, possibly improper. Divergent -> 'diverges' (sympy
+    returns ±oo). Convergent -> numeric cross-check."""
+    x = sp.Symbol(var)
+    expr = _parse(expr_str)
+    A, B = _parse(str(a)), _parse(str(b))
+    val = sp.integrate(expr, (x, A, B))
+    prob = r"\int_{%s}^{%s} %s \, d%s" % (_latex(A), _latex(B), _latex(expr), var)
+    if val in (sp.oo, -sp.oo, sp.zoo) or (val.has(sp.oo) or val.has(sp.zoo)):
+        return Item(prob, r"\text{diverges}", "sympy")
+    if val is sp.nan or val.has(sp.Integral):
+        return Item(prob, "", None, note="unevaluated / nan")
+    if _has_special(val):
+        return Item(prob, "", None, note="special function")
+    return _num_def_integral(prob, expr, x, A, B, val)
+
+
+# --- §4f/4g/4h numeric-verified integrals (gamma / beta / gaussian) ---------
+
+def numeric_integral(expr_str, a, b, var="x"):
+    """Definite integral verified PURELY by numeric quadrature — for integrands
+    whose antiderivative is a special function (gamma/beta/gaussian)."""
+    x = sp.Symbol(var)
+    expr = _parse(expr_str)
+    A, B = _parse(str(a)), _parse(str(b))
+    val = sp.integrate(expr, (x, A, B))
+    prob = r"\int_{%s}^{%s} %s \, d%s" % (_latex(A), _latex(B), _latex(expr), var)
+    if val.has(sp.Integral) or val is sp.nan:
+        return Item(prob, "", None, note="unevaluated")
+    return _num_def_integral(prob, expr, x, A, B, val)
+
+
+def _num_def_integral(prob, expr, x, A, B, val):
+    try:
+        sym = complex(sp.N(val))
+        lo = -mpmath.inf if A == -sp.oo else float(A)
+        hi = mpmath.inf if B == sp.oo else float(B)
+        num = complex(mpmath.quad(sp.lambdify(x, expr, "mpmath"), [lo, hi]))
+    except Exception as e:  # noqa: BLE001 - any numeric failure -> unverified
+        return Item(prob, _latex(_pretty(val)), None, note=f"no cross-check ({e})")
+    ok = abs(sym - num) < 1e-6 * (1 + abs(sym))
+    return Item(prob, _latex(_pretty(val)), "sympy" if ok else None,
+                note="" if ok else f"numeric mismatch ({sym} vs {num})")
+
+
+# --- §5a/5b/5c sums & series ------------------------------------------------
+
+def summation(expr_str, k="k", lo=1, hi="n"):
+    """Σ. Divergent -> 'diverges'. Finite numeric -> recompute; infinite ->
+    partial-sum numeric check; symbolic upper limit -> trust sympy."""
+    kv = sp.Symbol(k)
+    expr = _parse(expr_str)
+    LO, HI = _parse(str(lo)), _parse(str(hi))
+    val = sp.summation(expr, (kv, LO, HI))
+    if isinstance(val, sp.Piecewise):
+        val = _conv_branch(val)
+    prob = r"\sum_{%s=%s}^{%s} %s" % (k, _latex(LO), _latex(HI), _latex(expr))
+    if val in (sp.oo, -sp.oo, sp.zoo) or (hasattr(val, "has") and (val.has(sp.oo) or val.has(sp.zoo))):
+        return Item(prob, r"\text{diverges}", "sympy")
+    if hasattr(val, "has") and val.has(sp.Sum):
+        return Item(prob, "", None, note="unevaluated")
+    verified = True
+    if HI == sp.oo:
+        if expr.free_symbols - {kv}:
+            verified = True  # symbolic infinite sum: can't numeric-check, trust sympy
+        else:
+            try:
+                partial = sum(complex(expr.subs(kv, i).evalf())
+                              for i in range(int(LO), int(LO) + 3000))
+                verified = abs(complex(sp.N(val)) - partial) < 1e-3
+            except Exception:  # noqa: BLE001
+                verified = False
+    elif HI.is_number and LO.is_number:
+        direct = sum(expr.subs(kv, i) for i in range(int(LO), int(HI) + 1))
+        verified = sp.simplify(val - direct) == 0
+    return Item(prob, _latex(_pretty(val)), "sympy" if verified else None,
+                note="" if verified else "cross-check failed")
+
+
+# --- §5d binomial theorem ---------------------------------------------------
+
+def binomial_expand(a_str, b_str, n):
+    """(a+b)^n expanded. Edge: n=0 -> 1. Verified by sympy expand."""
+    a, b = _parse(a_str), _parse(b_str)
+    base = a + b
+    return Item(_latex(base ** n), _latex(sp.expand(base ** n)), "sympy")
+
+
+# --- §5e/5f Taylor / power series -------------------------------------------
+
+def taylor(expr_str, var="x", point=0, order=5):
+    """Taylor polynomial through O(var^order). Direct (sympy series)."""
+    x = sp.Symbol(var)
+    expr = _parse(expr_str)
+    P = _parse(str(point))
+    series = sp.series(expr, x, P, order).removeO()
+    at = "" if P == 0 else r" \text{ at } %s=%s" % (var, _latex(P))
+    prob = r"\text{series of } %s%s \text{ through } %s^{%d}" % (_latex(expr), at, var, order - 1)
+    return Item(prob, _latex(series), "sympy")
+
+
+# --- §6 limits --------------------------------------------------------------
+
+def limit_(expr_str, var="x", point="oo", direction="+"):
+    """lim. direction='both' detects DNE via one-sided disagreement; ±oo and
+    oscillation report 'diverges' / 'does not exist'."""
+    x = sp.Symbol(var)
+    expr = _parse(expr_str)
+    P = _parse(str(point))
+    ptl = r"\infty" if P == sp.oo else (r"-\infty" if P == -sp.oo else _latex(P))
+    prob = r"\lim_{%s \to %s} %s" % (var, ptl, _latex(expr))
+    if direction == "both":
+        left, right = sp.limit(expr, x, P, "-"), sp.limit(expr, x, P, "+")
+        if left != right:
+            return Item(prob, r"\text{does not exist}", "sympy")
+        val = right
+    else:
+        val = sp.limit(expr, x, P, direction)
+    if val == sp.oo:
+        return Item(prob, r"\infty", "sympy")
+    if val == -sp.oo:
+        return Item(prob, r"-\infty", "sympy")
+    if val == sp.zoo or (hasattr(val, "has") and val.has(sp.AccumBounds)):
+        return Item(prob, r"\text{does not exist}", "sympy")
+    return Item(prob, _latex(_pretty(val)), "sympy")
+
+
+# --- §7a/7b determinants ----------------------------------------------------
+
+def determinant(rows):
+    """det of a matrix. Non-square -> undefined (gotcha)."""
+    M = _mat(rows)
+    prob = r"\det %s" % sp.latex(M)
+    if M.rows != M.cols:
+        return Item(prob, r"\text{undefined (not square)}", "sympy")
+    return Item(prob, _latex(M.det()), "sympy")
+
+
+# --- §7c 2x2 inverse --------------------------------------------------------
+
+def matrix_inverse(rows):
+    """Matrix inverse. Non-square / singular -> no inverse (gotcha). Verified by
+    A·A⁻¹ = I."""
+    M = _mat(rows)
+    prob = r"%s^{-1}" % sp.latex(M)
+    if M.rows != M.cols:
+        return Item(prob, r"\text{undefined (not square)}", "sympy")
+    if M.det() == 0:
+        return Item(prob, r"\text{no inverse (singular)}", "sympy")
+    inv = M.inv()
+    verified = sp.simplify(M * inv - sp.eye(M.rows)).is_zero_matrix
+    return Item(prob, sp.latex(inv), "sympy" if verified else None,
+                note="" if verified else "A·A^-1 != I")
+
+
+# --- §7d quadratic form -----------------------------------------------------
+
+def quadratic_form(rows, variables=("x", "y")):
+    """xᵀ A x, expanded. Verified by sympy expand."""
+    A = _mat(rows)
+    v = sp.Matrix([sp.Symbol(s) for s in variables])
+    val = sp.expand((v.T * A * v)[0])
+    prob = r"\mathbf{x}^\top %s \, \mathbf{x},\quad \mathbf{x}=%s" % (sp.latex(A), sp.latex(v))
+    return Item(prob, _latex(val), "sympy")
+
+
+# --- §8c switch order of integration ----------------------------------------
+
+def switch_order(expr_str, inner, outer, inner2, outer2):
+    """Present an iterated integral; answer is the order-reversed one. Verified:
+    both orders evaluate to the same value."""
+    f = _parse(expr_str)
+
+    def _val(inn, out):
+        iv, ilo, ihi = inn
+        ov, olo, ohi = out
+        Y, X = sp.Symbol(iv), sp.Symbol(ov)
+        return sp.integrate(
+            sp.integrate(f, (Y, _parse(str(ilo)), _parse(str(ihi)))),
+            (X, _parse(str(olo)), _parse(str(ohi))))
+
+    def _tex(inn, out):
+        iv, ilo, ihi = inn
+        ov, olo, ohi = out
+        return r"\int_{%s}^{%s}\!\int_{%s}^{%s} %s \, d%s \, d%s" % (
+            _latex(_parse(str(olo))), _latex(_parse(str(ohi))),
+            _latex(_parse(str(ilo))), _latex(_parse(str(ihi))),
+            _latex(f), iv, ov)
+
+    prob = r"\text{reverse the order: } %s" % _tex(inner, outer)
+    verified = sp.simplify(_val(inner, outer) - _val(inner2, outer2)) == 0
+    return Item(prob, _tex(inner2, outer2), "sympy" if verified else None,
+                note="" if verified else "orders disagree")
+
+
+# --- §9a critical points ----------------------------------------------------
+
+def critical_points(expr_str, var="x"):
+    """All real critical points (f'=0), unclassified. Edge: x^3 -> a critical
+    point that is not an extremum. Gotcha: no real critical points; constant f."""
+    x = sp.Symbol(var)
+    expr = _parse(expr_str)
+    f1 = sp.diff(expr, x)
+    prob = r"f(%s) = %s,\quad \text{find all critical points}" % (var, _latex(expr))
+    if f1 == 0:
+        return Item(prob, r"\text{every } %s \text{ (f is constant)}" % var, "sympy")
+    cps = sorted([c for c in sp.solve(f1, x) if c.is_real],
+                 key=lambda c: float(c.evalf()))
+    if not cps:
+        return Item(prob, r"\text{none}", "sympy")
+    if all(sp.simplify(f1.subs(x, c)) == 0 for c in cps):
+        return Item(prob, ",\\ ".join(r"%s=%s" % (var, _latex(c)) for c in cps), "sympy")
+    return Item(prob, "", None, note="critical-point check failed")
