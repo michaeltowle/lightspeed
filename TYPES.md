@@ -25,17 +25,26 @@ Two orthogonal axes:
 | Expectation (LOTUS) | `expectation(dist, g, g_latex)` | three-line | (1) density/mass totals 1, (2) sympy returns a closed form, (3) **independent numeric cross-check** at concrete params (mpmath quadrature / truncated sum) | No — NULL if any of the three fails |
 | Variance (LOTUS) | `variance(dist)` | three-line | both E[X] and E[X²] pass the expectation check, then `Var = E[X²] − E[X]²` | No — NULL if either moment fails |
 | Local extrema | `min_max(expr, var="x")` | single-expression | f'(cp) = 0 at each reported critical point (sympy `simplify` check); f'' ≠ 0 required (second derivative test must be conclusive) | No — NULL if any CP fails the f'=0 check; inconclusive CPs (f''=0) are silently excluded |
-| MLE | `mle(dist_latex, log_lik, param, param_hat_latex, answer_latex=None)` | single-expression | score equation `d ell / d param = 0` holds exactly at the candidate MLE (sympy `simplify` check); concavity follows from exponential family structure | No — NULL if score equation can't be solved or doesn't simplify to 0 |
+| Known value | `known_value(ask_latex, expr, decimals=None)` | single-expression | sympy **evaluates** the expression; the determinate result is the answer. `decimals=n` presents an n-place approximation (e, π) | No — NULL on an indeterminate form (`nan`, or complex-infinity `zoo` from a bare `log(0)` — use a one-sided limit instead) |
+| Factorization | `factoring(expr)` | single-expression | **expand-back**: `expand(factored) == expand(expr)` **and** the result is genuinely factored (a product or power, not the input echoed) | No — NULL if the expression is irreducible |
+| Algebraic law | `identity(prompt_latex, lhs, rhs)` | single-expression | **numeric cross-check**: lhs and rhs agree at three concrete positive points for every free symbol | No — NULL if the two sides disagree numerically |
 
 `answer_verified_by` stores the verification *tool* — currently always `'sympy'`
 when the check passes, NULL when it doesn't. The *method* (the column above) is a
 property of the **type**, recorded here rather than per problem row.
 
+Some batches are **themes** that span several types, unified by a batch-level
+tag rather than one generator. The **need-to-know** batch (recall facts you
+should know cold — constant/trig/log values, exponent & log laws, Pythagorean
+identities, standard factorizations, core derivatives & integrals) draws on
+`known_value`, `factoring`, and `identity` alongside the reused `derivative` /
+`integral` generators. Such themes are expected to grow.
+
 ## Presentation styles
 
 - **single-expression** — one line, no `\n`; the whole problem is a single LaTeX
   expression rendered as one math block. *(derivative, integral,
-  definite_integral)*
+  definite_integral, min_max, mle, known_value, factoring, identity)*
 - **three-line** — three `\n`-separated lines: `X ∼ Dist` / density + support /
   the ask. `add-problems` and `quiz` lay these out as three columns
   (distribution + ask · density · answer); `index` renders one block per line.
@@ -61,10 +70,22 @@ confirms it. The methods in use, weakest to strongest guarantee:
   *computing* the integral was hard.
 - **FTC cross-check** *(definite integral)* — in addition to re-differentiating
   the antiderivative, `F(b) − F(a)` must equal sympy's direct definite integral.
-- **numeric cross-check** *(LOTUS expectation/variance)* — the symbolic value is
-  compared against an independent numeric evaluation at concrete parameter values
-  (mpmath quadrature for continuous, truncated sum for discrete); the density /
-  mass must also total 1. The symbolic engine never grades itself.
+- **numeric cross-check** *(LOTUS expectation/variance; algebraic laws)* — a
+  symbolic claim is compared against an independent numeric evaluation. For LOTUS
+  the symbolic value is checked at concrete parameter values (mpmath quadrature
+  for continuous, truncated sum for discrete) and the density / mass must total
+  1. For `identity`, the two sides are evaluated at three concrete positive
+  points per free symbol (positivity keeps log / fractional-power domains valid).
+  The symbolic engine never grades itself.
+- **direct evaluation** *(known values)* — sympy evaluates the expression
+  (`sin(pi/2)`, `log(E**2)`, a one-sided `limit` for `\ln 0^+`) and the
+  determinate result is the answer; indeterminate forms (`nan`, `zoo`) are
+  refused. The weakest guarantee — it trusts sympy's evaluation — but these are
+  closed-form constants sympy computes exactly.
+- **expand-back** *(factorization)* — the factored form is multiplied out and
+  must equal the original (`expand(factored) == expand(expr)`), and must be a
+  genuine product/power so an irreducible input isn't echoed as its own
+  "factorization."
 - **critical-point check** *(local extrema)* — verifies f'(cp) = 0 at each
   reported critical point via `simplify`. The second derivative test classifies
   (local min / local max); points where f'' = 0 are inconclusive and excluded.

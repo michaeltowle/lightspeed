@@ -11,9 +11,10 @@ independent computational check confirms it (see each function's docstring and
 TYPES.md for the method). If the check can't be satisfied, answer_verified_by is
 None and stage() refuses to stage the item.
 
-These functions are re-exported from generate.py, so a session can still do:
+A session imports the generators here plus stage() from generate.py:
 
-    from generate import derivative, integral, stage
+    from problem_types import derivative, integral, definite_integral
+    from generate import stage
     items = [
         derivative("x**3 * sin(x)"),
         integral("x * exp(x)"),
@@ -410,4 +411,96 @@ def mle(dist_latex, log_lik, param, param_hat_latex, answer_latex=None):
         latex_answer_text=display,
         answer_verified_by="sympy" if score_ok else None,
         note="" if score_ok else "score equation did not simplify to 0",
+    )
+
+
+# --- need-to-know recall facts -----------------------------------------------
+#
+# Flashcard-style facts to know cold: constant/trig/log values, standard
+# factorizations, and exponent/log laws. (Known derivatives and integrals reuse
+# derivative()/integral() above — they already compute+verify exactly.) Each
+# fact is still independently sympy-verified; nothing is asserted by hand.
+# Presentation: single-expression (the prompt is the thing to recall; the hidden
+# answer is what you must produce).
+
+
+def known_value(ask_latex, expr_str, decimals=None):
+    r"""Recall a constant or exact value, e.g. \sin(\pi/2)=1 or \ln(e^2)=2.
+
+    sympy evaluates `expr_str` and the result IS the answer (never asserted):
+      - decimals=None: the value must be determinate — an explicit number or
+        \pm\infty. An indeterminate form (nan, or sympy's complex-infinity zoo
+        from a bare log(0)) is refused; for a one-sided infinity pass a limit,
+        e.g. "limit(log(x), x, 0)" for \ln 0^+ (sympy's default dir is '+').
+      - decimals=n: present a numeric approximation to n decimal places (e, \pi).
+
+    `ask_latex` is the prompt shown; the answer is sympy's value.
+    """
+    val = _parse(expr_str)
+    if val is sp.nan or val == sp.zoo:
+        return Item(latex_problem_text=ask_latex, latex_answer_text="",
+                    answer_verified_by=None, note=f"indeterminate value ({val})")
+    if decimals is not None:
+        if not bool(val.is_finite):
+            return Item(latex_problem_text=ask_latex, latex_answer_text="",
+                        answer_verified_by=None,
+                        note="non-finite value cannot be approximated")
+        approx = float(sp.N(val, decimals + 10))
+        answer_latex = r"\approx %s" % (f"%.{decimals}f" % approx)
+    else:
+        answer_latex = _latex(val)
+    return Item(latex_problem_text=ask_latex, latex_answer_text=answer_latex,
+                answer_verified_by="sympy")
+
+
+def factoring(expr_str):
+    r"""Recall a standard factorization, e.g. b^3 - a^3 -> (b-a)(b^2+ab+a^2).
+
+    sympy factors; verified two ways: the factored form expands back to the
+    original (expand(factored) == expand(expr)) AND it is genuinely factored —
+    a product or power, not the input echoed back unchanged. Multi-variable is
+    fine; the variables are whatever symbols appear in `expr_str`.
+    """
+    expr = _parse(expr_str)
+    factored = sp.factor(expr)
+    expands_back = sp.expand(factored) == sp.expand(expr)
+    actually_factored = factored.is_Mul or factored.is_Pow
+    verified = bool(expands_back and actually_factored)
+    note = "" if verified else (
+        "did not factor (irreducible?)" if not actually_factored
+        else "factored form did not expand back to the original")
+    return Item(
+        latex_problem_text=r"\text{factor: } %s" % _latex(expr),
+        latex_answer_text=_latex(factored),
+        answer_verified_by="sympy" if verified else None,
+        note=note,
+    )
+
+
+def identity(prompt_latex, lhs_str, rhs_str):
+    r"""Recall an algebraic law, e.g. 2^a 2^b = 2^{a+b} or \ln(ab)=\ln a+\ln b.
+
+    `prompt_latex` is the displayed left side, written by hand so sympy can't
+    fold it into the answer; `lhs_str`/`rhs_str` are the sympy forms checked for
+    equality. Verified by an INDEPENDENT numeric cross-check: both sides are
+    evaluated at three concrete positive points for every free symbol and must
+    agree. Positivity keeps log / fractional-power domains valid, sidestepping
+    the assumptions symbolic simplification would otherwise need. The answer is
+    sympy's rendering of the right side.
+    """
+    lhs, rhs = _parse(lhs_str), _parse(rhs_str)
+    syms = sorted(lhs.free_symbols | rhs.free_symbols, key=lambda s: s.name)
+    ok = True
+    for i in range(3):
+        pt = {s: sp.Rational(7, 3) + i + j for j, s in enumerate(syms)}
+        lv = complex(lhs.subs(pt).evalf())
+        rv = complex(rhs.subs(pt).evalf())
+        if abs(lv - rv) > 1e-9:
+            ok = False
+            break
+    return Item(
+        latex_problem_text=prompt_latex,
+        latex_answer_text=_latex(rhs),
+        answer_verified_by="sympy" if ok else None,
+        note="" if ok else "numeric cross-check failed",
     )

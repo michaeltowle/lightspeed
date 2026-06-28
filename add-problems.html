@@ -142,6 +142,21 @@
       align-self: stretch;
     }
 
+    .btn-reject-all {
+      font-family: 'Spectral', Georgia, serif;
+      font-size: 13.5px;
+      font-weight: 600;
+      color: #888;
+      background: #fff;
+      border: 1px solid #ccc;
+      padding: 7px 18px;
+      border-radius: 5px;
+      margin-right: 8px;
+      cursor: pointer;
+    }
+    .btn-reject-all:hover:not(:disabled) { background: #f4f4f4; border-color: #999; color: #555; }
+    .btn-reject-all:disabled { opacity: 0.5; cursor: not-allowed; }
+
     .btn-approve {
       font-family: 'Spectral', Georgia, serif;
       font-size: 13.5px;
@@ -277,7 +292,7 @@
 const rejected     = new Set();  // problem IDs
 const starred      = new Set();  // problem IDs
 const collapsed    = new Set();  // batch IDs (all start collapsed)
-const approved     = new Set();  // batch IDs
+const resolved     = new Set();  // batch IDs: approved or fully-rejected (gone from staging)
 const flashTimers  = new Map();  // batchId -> timeoutId
 let   allBatches   = [];
 
@@ -314,12 +329,12 @@ function activeCount(batch) {
 
 function updateCardTitle() {
   const total = allBatches
-    .filter(b => !approved.has(b.id))
+    .filter(b => !resolved.has(b.id))
     .reduce((s, b) => s + b.problems.length, 0);
   document.getElementById('card-title').textContent =
     total > 0
       ? `${total} new problem${total === 1 ? '' : 's'} staged for approval`
-      : 'all batches approved';
+      : 'all batches resolved';
 }
 
 function updateTagCounts(batchId) {
@@ -410,6 +425,7 @@ function renderBatch(batch) {
       <div class="tag-counts">${tagCountsHtml}</div>
     </div>
     <div class="batch-right">
+      <button class="btn-reject-all">reject all</button>
       <button class="btn-approve">approve</button>
     </div>`;
 
@@ -420,6 +436,7 @@ function renderBatch(batch) {
   batch.problems.forEach((p, i) => {
     const row = document.createElement('div');
     row.className = 'problem-row';
+    row.dataset.pid = p.id;
     if (starred.has(p.id))  row.classList.add('starred');
     if (rejected.has(p.id)) row.classList.add('rejected');
 
@@ -436,7 +453,7 @@ function renderBatch(batch) {
     body.appendChild(row);
   });
 
-  // approved strip (hidden until approve)
+  // resolution strip (hidden until approve or reject-all)
   const strip = document.createElement('div');
   strip.className = 'approved-strip';
   strip.hidden = true;
@@ -453,11 +470,63 @@ function renderBatch(batch) {
     }
   };
 
+  const rejectAllBtn = header.querySelector('.btn-reject-all');
+  const approveBtn   = header.querySelector('.btn-approve');
+
+  // reject-all button: reject every problem and remove the batch from staging.
+  rejectAllBtn.onclick = async e => {
+    e.stopPropagation();
+    rejectAllBtn.disabled = true;
+    approveBtn.disabled   = true;
+    rejectAllBtn.textContent = 'rejecting…';
+    try {
+      for (const p of batch.problems) {
+        starred.delete(p.id);
+        rejected.add(p.id);
+        await api(`/api/problems/${p.id}/reject`, post());
+      }
+      resolved.add(batch.id);
+
+      rejectAllBtn.textContent = 'all rejected';
+      body.hidden = true;
+      body.classList.remove('collapsed');
+      strip.hidden = false;
+      strip.innerHTML = `
+        <span>&#10007; all rejected &middot; ${batch.problems.length} discarded</span>
+        <span class="undo-link">undo</span>`;
+
+      strip.querySelector('.undo-link').onclick = async () => {
+        await api(`/api/batches/${batch.id}/undo-approve`, post());
+        resolved.delete(batch.id);
+        batch.problems.forEach(p => {
+          rejected.delete(p.id);
+          const row = body.querySelector(`.problem-row[data-pid="${p.id}"]`);
+          if (row) row.classList.remove('rejected');
+        });
+        body.hidden = false;
+        strip.hidden = true;
+        rejectAllBtn.disabled = false;
+        approveBtn.disabled   = false;
+        rejectAllBtn.textContent = 'reject all';
+        updateTagCounts(batch.id);
+        updateCardTitle();
+      };
+
+      updateTagCounts(batch.id);
+      updateCardTitle();
+    } catch (err) {
+      rejectAllBtn.disabled = false;
+      approveBtn.disabled   = false;
+      rejectAllBtn.textContent = 'reject all';
+      console.error('reject all failed:', err);
+    }
+  };
+
   // approve button
-  const approveBtn = header.querySelector('.btn-approve');
   approveBtn.onclick = async e => {
     e.stopPropagation();
-    approveBtn.disabled = true;
+    approveBtn.disabled   = true;
+    rejectAllBtn.disabled = true;
     approveBtn.textContent = 'approving…';
     try {
       const batchRejected = batch.problems.filter(p => rejected.has(p.id));
@@ -466,7 +535,7 @@ function renderBatch(batch) {
       for (const p of batchStarred)  await api(`/api/problems/${p.id}/star`, post({ starred: true }));
       await api(`/api/batches/${batch.id}/approve`, post());
 
-      approved.add(batch.id);
+      resolved.add(batch.id);
       const nAdded     = batch.problems.length - batchRejected.length;
       const nDiscarded = batchRejected.length;
 
@@ -480,17 +549,19 @@ function renderBatch(batch) {
 
       strip.querySelector('.undo-link').onclick = async () => {
         await api(`/api/batches/${batch.id}/undo-approve`, post());
-        approved.delete(batch.id);
+        resolved.delete(batch.id);
         body.hidden = false;
         strip.hidden = true;
-        approveBtn.disabled = false;
+        approveBtn.disabled   = false;
+        rejectAllBtn.disabled = false;
         approveBtn.textContent = 'approve';
         updateCardTitle();
       };
 
       updateCardTitle();
     } catch (err) {
-      approveBtn.disabled = false;
+      approveBtn.disabled   = false;
+      rejectAllBtn.disabled = false;
       approveBtn.textContent = 'approve';
       console.error('approve failed:', err);
     }

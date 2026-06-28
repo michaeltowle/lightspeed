@@ -228,7 +228,7 @@ let listId = null;
 let problems = [];
 let revealed = false;
 const grade  = {};           // problem_id -> true | false | undefined
-let t0 = null, tick = null, finishSecs = null;
+let t0 = null, tick = null, finishSecs = null, finishMs = null;
 
 async function api(path, opts) {
   const res = await fetch(path, opts);
@@ -336,6 +336,15 @@ function startTimer() {
 function stopAndReveal() {
   revealed = true;
   if (tick) { clearInterval(tick); tick = null; }
+
+  if (timed && finishMs !== null && problems.length > 0) {
+    const fmt    = s => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+    const perQ   = finishMs / 1000 / problems.length;
+    const perQStr = `${Math.floor(perQ / 60)}:${(perQ % 60).toFixed(1).padStart(4, "0")}`;
+    document.getElementById("timer").textContent =
+      `${fmt(finishSecs)} (${perQStr} per question)`;
+  }
+
   document.getElementById("stopBtn").disabled = true;
   document.getElementById("hint").textContent =
     "click an answer to grade: green = correct, red = incorrect, click again to clear.";
@@ -378,7 +387,8 @@ function done(text) {
 }
 
 document.getElementById("stopBtn").onclick = () => {
-  finishSecs = t0 ? Math.floor((Date.now() - t0) / 1000) : null;
+  finishMs   = t0 ? Date.now() - t0 : null;
+  finishSecs = finishMs !== null ? Math.floor(finishMs / 1000) : null;
   stopAndReveal();
 };
 document.getElementById("finalizeBtn").onclick = finalize;

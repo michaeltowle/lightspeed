@@ -67,8 +67,6 @@ Zero-install: Python stdlib + sympy only. No API key, no Node.
 - `TYPES.md` — canonical problem-type registry: presentation style + verification
   method per type (keep current — rule #3).
 - `README.md` — full pipeline, rationale, run instructions.
-- `add-problems-ui-brief.md` — design brief for the add-problems screen
-  (visual design is done separately in Claude Design).
 
 ## Status
 
