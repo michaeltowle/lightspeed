@@ -28,6 +28,8 @@ Two orthogonal axes:
 | Known value | `known_value(ask_latex, expr, decimals=None)` | single-expression | sympy **evaluates** the expression; the determinate result is the answer. `decimals=n` presents an n-place approximation (e, π) | No — NULL on an indeterminate form (`nan`, or complex-infinity `zoo` from a bare `log(0)` — use a one-sided limit instead) |
 | Factorization | `factoring(expr)` | single-expression | **expand-back**: `expand(factored) == expand(expr)` **and** the result is genuinely factored (a product or power, not the input echoed) | No — NULL if the expression is irreducible |
 | Algebraic law | `identity(prompt_latex, lhs, rhs)` | single-expression | **numeric cross-check**: lhs and rhs agree at three concrete positive points for every free symbol | No — NULL if the two sides disagree numerically |
+| Partial derivative | `partial(expr, wrt)` | single-expression | sympy computes the partial directly (`wrt` = a variable, or a list like `["x","y"]` for higher / mixed partials) — like `derivative`, the engine is the source of truth, no independent cross-check | **Yes** |
+| Double integral | `double_integral(expr, inner, outer)` | single-expression | symbolic iterated integration yields a closed form **and** an independent **nested mpmath quadrature** over the region agrees (inner integral re-evaluated at each outer sample, so variable inner limits work) | No — NULL on an unevaluated integral or special function |
 
 `answer_verified_by` stores the verification *tool* — currently always `'sympy'`
 when the check passes, NULL when it doesn't. The *method* (the column above) is a
@@ -44,7 +46,8 @@ identities, standard factorizations, core derivatives & integrals) draws on
 
 - **single-expression** — one line, no `\n`; the whole problem is a single LaTeX
   expression rendered as one math block. *(derivative, integral,
-  definite_integral, min_max, mle, known_value, factoring, identity)*
+  definite_integral, min_max, mle, known_value, factoring, identity, partial,
+  double_integral)*
 - **three-line** — three `\n`-separated lines: `X ∼ Dist` / density + support /
   the ask. `add-problems` and `quiz` lay these out as three columns
   (distribution + ask · density · answer); `index` renders one block per line.
@@ -61,7 +64,8 @@ identities, standard factorizations, core derivatives & integrals) draws on
 Per golden rule #1, an answer is never LLM-guessed — a computational check
 confirms it. The methods in use, weakest to strongest guarantee:
 
-- **direct computation** *(derivative)* — sympy differentiates and the result is
+- **direct computation** *(derivative, partial)* — sympy differentiates (a single
+  variable, or several in sequence for higher / mixed partials) and the result is
   the answer. The weakest guarantee here: it trusts sympy's `diff`, which is
   reliable for the elementary functions this app uses. No independent
   cross-check, because differentiation has no cheap inverse to test against.
@@ -70,13 +74,16 @@ confirms it. The methods in use, weakest to strongest guarantee:
   *computing* the integral was hard.
 - **FTC cross-check** *(definite integral)* — in addition to re-differentiating
   the antiderivative, `F(b) − F(a)` must equal sympy's direct definite integral.
-- **numeric cross-check** *(LOTUS expectation/variance; algebraic laws)* — a
-  symbolic claim is compared against an independent numeric evaluation. For LOTUS
-  the symbolic value is checked at concrete parameter values (mpmath quadrature
-  for continuous, truncated sum for discrete) and the density / mass must total
-  1. For `identity`, the two sides are evaluated at three concrete positive
-  points per free symbol (positivity keeps log / fractional-power domains valid).
-  The symbolic engine never grades itself.
+- **numeric cross-check** *(LOTUS expectation/variance; algebraic laws; double
+  integrals)* — a symbolic claim is compared against an independent numeric
+  evaluation. For LOTUS the symbolic value is checked at concrete parameter
+  values (mpmath quadrature for continuous, truncated sum for discrete) and the
+  density / mass must total 1. For `identity`, the two sides are evaluated at
+  three concrete positive points per free symbol (positivity keeps log /
+  fractional-power domains valid). For `double_integral`, nested mpmath
+  quadrature re-integrates the inner variable at each outer sample — so variable
+  inner limits (triangular regions) work — and must match the symbolically
+  iterated value. The symbolic engine never grades itself.
 - **direct evaluation** *(known values)* — sympy evaluates the expression
   (`sin(pi/2)`, `log(E**2)`, a one-sided `limit` for `\ln 0^+`) and the
   determinate result is the answer; indeterminate forms (`nan`, `zoo`) are

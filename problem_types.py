@@ -28,6 +28,7 @@ expectation()/variance() helpers; see their docstrings below.
 
 from dataclasses import dataclass
 
+import mpmath
 import sympy as sp
 from sympy.parsing.sympy_parser import (
     parse_expr,
@@ -503,4 +504,98 @@ def identity(prompt_latex, lhs_str, rhs_str):
         latex_answer_text=_latex(rhs),
         answer_verified_by="sympy" if ok else None,
         note="" if ok else "numeric cross-check failed",
+    )
+
+
+# --- multivariable: partial derivatives & double integrals -------------------
+
+def _partial_op_latex(seq):
+    r"""LaTeX for the partial-derivative operator from the variable sequence:
+    ["x"] -> ∂/∂x ; ["x","x"] -> ∂²/∂x² ; ["x","y"] -> ∂²/∂x∂y."""
+    n = len(seq)
+    num = r"\partial" if n == 1 else r"\partial^%d" % n
+    if len(set(seq)) == 1:
+        v = seq[0]
+        den = r"\partial %s" % v if n == 1 else r"\partial %s^%d" % (v, n)
+    else:
+        den = r"\,".join(r"\partial %s" % v for v in seq)
+    return r"\frac{%s}{%s}" % (num, den)
+
+
+def partial(expr_str, wrt):
+    """Partial derivative of a multivariable function.
+
+    `wrt` is a variable name ("x") for a first partial, or a list applied left
+    to right for higher / mixed partials (["x","x"] -> ∂²/∂x²; ["x","y"] ->
+    ∂²/∂x∂y). Direct computation: sympy's diff is the source of truth, exactly
+    as in derivative() — differentiation has no cheap inverse to cross-check, so
+    this type is always verifiable.
+    """
+    seq = [wrt] if isinstance(wrt, str) else list(wrt)
+    expr = _parse(expr_str)
+    answer = expr
+    for v in seq:
+        answer = sp.diff(answer, sp.Symbol(v))
+    problem_latex = r"%s\left( %s \right)" % (_partial_op_latex(seq), _latex(expr))
+    return Item(
+        latex_problem_text=problem_latex,
+        latex_answer_text=_latex(_present(answer, sp.Symbol(seq[-1]))),
+        answer_verified_by="sympy",
+    )
+
+
+def double_integral(expr_str, inner, outer):
+    r"""Definite double integral ∫∫ f dA, inner integral evaluated first.
+
+    inner = (var, lo, hi): integrated first; its limits may be expressions in
+            the outer variable (non-rectangular regions) or constants.
+    outer = (var, lo, hi): constant limits.
+
+    Verification: symbolic iterated integration must yield a closed form (no
+    unevaluated Integral, no special function) AND an INDEPENDENT numeric
+    cross-check — nested mpmath quadrature over the region (the inner integral
+    re-evaluated at each outer sample, so variable limits are handled) — must
+    agree. The symbolic integrator never grades itself, as with single integrals
+    / LOTUS.
+    """
+    iv, ilo, ihi = inner
+    ov, olo, ohi = outer
+    yv, xv = sp.Symbol(iv), sp.Symbol(ov)
+    f = _parse(expr_str)
+    ilo_e, ihi_e = _parse(str(ilo)), _parse(str(ihi))
+    olo_e, ohi_e = _parse(str(olo)), _parse(str(ohi))
+
+    problem_latex = r"\int_{%s}^{%s}\!\int_{%s}^{%s} %s \, d%s \, d%s" % (
+        _latex(olo_e), _latex(ohi_e), _latex(ilo_e), _latex(ihi_e),
+        _latex(f), iv, ov,
+    )
+
+    inner_val = sp.integrate(f, (yv, ilo_e, ihi_e))
+    value = sp.integrate(inner_val, (xv, olo_e, ohi_e))
+
+    if inner_val.has(sp.Integral) or value.has(sp.Integral):
+        return Item(problem_latex, "", None,
+                    note="sympy returned an unevaluated integral")
+    if _has_special(inner_val) or _has_special(value):
+        return Item(problem_latex, "", None,
+                    note="answer involves a special function")
+
+    try:
+        sym = complex(sp.N(value))
+        f_fn = sp.lambdify((xv, yv), f, "mpmath")
+        ilo_fn = sp.lambdify(xv, ilo_e, "mpmath")
+        ihi_fn = sp.lambdify(xv, ihi_e, "mpmath")
+        inner_q = lambda xval: mpmath.quad(
+            lambda yval: f_fn(xval, yval), [ilo_fn(xval), ihi_fn(xval)])
+        num = complex(mpmath.quad(inner_q, [float(olo_e), float(ohi_e)]))
+    except (TypeError, ValueError) as e:
+        return Item(problem_latex, _latex(_pretty(value)), None,
+                    note=f"could not numerically cross-check ({e})")
+
+    ok = abs(sym - num) < 1e-6 * (1 + abs(sym))
+    return Item(
+        latex_problem_text=problem_latex,
+        latex_answer_text=_latex(_pretty(value)),
+        answer_verified_by="sympy" if ok else None,
+        note="" if ok else f"numeric cross-check failed ({sym} vs {num})",
     )

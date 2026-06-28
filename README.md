@@ -40,8 +40,9 @@ entirely in generation, so the practice pages can never serve a wrong answer.
 trig"). Claude picks the concrete problems (~50 per batch) and calls the matching
 generator in `problem_types.py` (`derivative()`, `integral()`,
 `definite_integral()`, the LOTUS `expectation()` / `variance()`, `min_max()`,
-`mle()`, the need-to-know recall generators, …; the full set with each method is
-in `TYPES.md`), which run sympy to **compute and verify** each answer. If sympy
+`mle()`, the multivariable `partial()` / `double_integral()`, the need-to-know
+recall generators, …; the full set with each method is in `TYPES.md`), which run
+sympy to **compute and verify** each answer. If sympy
 cannot confirm an answer (special functions, unevaluated integrals), Claude says
 so up front — those items are never staged.
 
@@ -138,8 +139,9 @@ silently keep answering with old code.
 - `db.py` — SQLite schema + all data access (stdlib `sqlite3`). Owns migrations.
 - `problem_types.py` — sympy compute+verify generators, one function per problem
   type (`derivative`, `integral`, `definite_integral`, `expectation`,
-  `variance`, `min_max`, `mle`, `known_value`, `factoring`, `identity`, …). The
-  canonical registry is `TYPES.md`. Used from Claude Code sessions.
+  `variance`, `min_max`, `mle`, `known_value`, `factoring`, `identity`,
+  `partial`, `double_integral`, …). The canonical registry is `TYPES.md`. Used
+  from Claude Code sessions.
 - `generate.py` — `stage()` (dedup + staging).
 - `server.py` — local server: serves pages + JSON API. No sympy/LLM at runtime.
 - `add-problems.html` — review/approve/star surface for staged problems.
