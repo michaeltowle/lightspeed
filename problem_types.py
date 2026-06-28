@@ -87,6 +87,10 @@ class Item:
     expression_2: str | None = None
     expression_3: str | None = None
     gotcha: bool = False  # instructive trap; set via the gotcha() wrapper
+    # By default stage() stamps the canonical instruction from the type registry
+    # (single source). A generator that builds a per-problem instruction (e.g.
+    # taylor encodes the point/order) sets this True to keep its own.
+    instructions_specialized: bool = False
     problem_source: str = "claude"
     answer_source: str = "sympy"
     note: str = ""  # e.g. why an item could not be verified
@@ -922,6 +926,7 @@ def taylor(expr_str, var="x", point=0, order=5):
     at = "" if P == 0 else r" at %s=%s" % (var, _latex(P))
     return Item(
         instructions=r"find the Taylor series%s through %s^{%d}" % (at, var, order - 1),
+        instructions_specialized=True,  # encodes point/order; keep over the type default
         expression_1=_latex(expr),
         answer=_latex(series), answer_verified_by="sympy")
 
@@ -1069,32 +1074,32 @@ def critical_points(expr_str, var="x"):
 
 TYPES = [
     ProblemType("derivative", "derivative", "differentiate"),
-    ProblemType("integral", "integral", "integrate"),
-    ProblemType("definite_integral", "definite_integral", "evaluate"),
+    ProblemType("integral", "integral", "find the indefinite integral"),
+    ProblemType("definite_integral", "definite_integral", "evaluate the definite integral"),
     ProblemType("expectation", "expectation", "find the expected value"),
     ProblemType("variance", "variance", "find the variance"),
     ProblemType("min_max", "min_max", "find the local extrema"),
     ProblemType("mle", "mle", "find the MLE"),
-    ProblemType("known_value", "known_value", "evaluate"),
+    ProblemType("known_value", "known_value", "give the exact value"),
     ProblemType("factoring", "factoring", "factor"),
     ProblemType("identity", "identity", "simplify"),
     ProblemType("partial", "partial", "find the partial derivative"),
-    ProblemType("double_integral", "double_integral", "evaluate"),
-    ProblemType("binomial", "binomial", "evaluate"),
+    ProblemType("double_integral", "double_integral", "evaluate the double integral"),
+    ProblemType("binomial", "binomial", "evaluate the binomial coefficient"),
     ProblemType("complete_square", "complete_square", "complete the square"),
     ProblemType("partial_fractions", "partial_fractions",
                 "decompose into partial fractions"),
     ProblemType("higher_derivative", "higher_derivative",
                 "find the higher-order derivative"),
     ProblemType("leibniz", "leibniz", "differentiate under the integral sign"),
-    ProblemType("improper_integral", "improper_integral", "evaluate"),
-    ProblemType("numeric_integral", "numeric_integral", "evaluate"),
-    ProblemType("summation", "summation", "evaluate"),
-    ProblemType("binomial_expand", "binomial_expand", "expand"),
+    ProblemType("improper_integral", "improper_integral", "evaluate the improper integral"),
+    ProblemType("numeric_integral", "numeric_integral", "evaluate the integral"),
+    ProblemType("summation", "summation", "evaluate the sum"),
+    ProblemType("binomial_expand", "binomial_expand", "expand the binomial"),
     ProblemType("taylor", "taylor", "find the Taylor series"),
     ProblemType("limit", "limit_", "evaluate the limit"),
     ProblemType("determinant", "determinant", "evaluate the determinant"),
-    ProblemType("matrix_inverse", "matrix_inverse", "find the inverse"),
+    ProblemType("matrix_inverse", "matrix_inverse", "find the matrix inverse"),
     ProblemType("quadratic_form", "quadratic_form", "expand the quadratic form"),
     ProblemType("switch_order", "switch_order", "reverse the order of integration"),
     ProblemType("critical_points", "critical_points", "find all critical points"),

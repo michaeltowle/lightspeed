@@ -65,6 +65,8 @@ def stage(prompt, items, type, subtype=None, problem_source=None, answer_source=
     db.init_db()
     conn = db.connect()
     try:
+        # keep the full type registry in the DB so /types lists every type
+        db.seed_types(conn, [(t.name, t.generator, t.default_instruction) for t in TYPES])
         existing = db.existing_problem_keys(conn)  # dedup vs. whole bank
         seen = set()
         fresh, skipped, unverified_filtered = [], [], []
@@ -90,6 +92,10 @@ def stage(prompt, items, type, subtype=None, problem_source=None, answer_source=
         ids = []
         for it in fresh:
             p = {f: getattr(it, f) for f in db.PROBLEM_FIELDS}
+            # canonical instruction comes from the type registry (single source);
+            # a generator that specialized its instruction keeps it.
+            if not it.instructions_specialized:
+                p["instructions"] = ptype.default_instruction
             p["answer"] = it.answer
             p["answer_verified_by"] = it.answer_verified_by
             p["problem_source"] = problem_source or it.problem_source

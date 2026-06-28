@@ -237,17 +237,25 @@ def batch_types(conn, batch_id):
 
 def list_types(conn):
     rows = conn.execute(
-        """SELECT t.id, t.name, t.default_instruction,
+        """SELECT t.id, t.name, t.generator, t.default_instruction,
+                  (SELECT group_concat(s.name, '|') FROM subtype s
+                   WHERE s.type_id = t.id) AS subtype_names,
                   COUNT(DISTINCT CASE WHEN p.status = 'approved' THEN p.id END)          AS problem_count,
                   COUNT(DISTINCT CASE WHEN p.status = 'approved' THEN a.problem_id END)  AS attempted_count
            FROM type t
            LEFT JOIN problem_type pt ON pt.type_id = t.id
            LEFT JOIN problem p       ON p.id  = pt.problem_id
            LEFT JOIN attempt a       ON a.problem_id = p.id
-           GROUP BY t.id, t.name, t.default_instruction
+           GROUP BY t.id, t.name, t.generator, t.default_instruction
            ORDER BY t.name"""
     ).fetchall()
-    return [dict(r) for r in rows]
+    out = []
+    for r in rows:
+        d = dict(r)
+        names = d.pop("subtype_names")
+        d["subtypes"] = names.split("|") if names else []
+        out.append(d)
+    return out
 
 
 def problems_by_type(conn, type_id):
@@ -326,6 +334,13 @@ def get_or_create_type(conn, name, generator=None, default_instruction=None):
         (name, generator, default_instruction),
     )
     return cur.lastrowid
+
+
+def seed_types(conn, rows):
+    """Upsert the whole type registry so the catalog (/types) lists every type
+    even before it has problems. `rows`: (name, generator, default_instruction)."""
+    for name, generator, default_instruction in rows:
+        get_or_create_type(conn, name, generator, default_instruction)
 
 
 def apply_type_to_batch(conn, batch_id, type_id):

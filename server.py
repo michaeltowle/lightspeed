@@ -19,6 +19,7 @@ PAGES = {
     "/": "index.html",
     "/staged": "staged.html",
     "/set": "set.html",
+    "/types": "types.html",
 }
 
 
