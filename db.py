@@ -6,7 +6,7 @@ runtime. The database file lives next to this module as lightspeed.db.
 
 Problem lifecycle:  staged -> approved | rejected
   - Generation (in a Claude Code session) inserts problems as 'staged'.
-  - add-problems.html surfaces staged problems for review.
+  - staged.html surfaces staged problems for review.
   - Approving flips status to 'approved'  (approved == the bank).
   - Rejecting flips status to 'rejected'.
 
@@ -56,6 +56,7 @@ CREATE TABLE IF NOT EXISTS problem (
     problem_source      TEXT NOT NULL,
     answer_source       TEXT NOT NULL,
     status              TEXT NOT NULL DEFAULT 'staged', -- staged|approved|rejected
+    gotcha              INTEGER NOT NULL DEFAULT 0,     -- instructive trap; weighted in drilling
     created_at          TEXT NOT NULL,
     approved_at         TEXT
 );
@@ -71,6 +72,19 @@ CREATE TABLE IF NOT EXISTS problem_type (
     problem_id INTEGER NOT NULL REFERENCES problem(id),
     type_id    INTEGER NOT NULL REFERENCES type(id),
     PRIMARY KEY (problem_id, type_id)
+);
+
+CREATE TABLE IF NOT EXISTS subtype (
+    id        INTEGER PRIMARY KEY,
+    type_id   INTEGER NOT NULL REFERENCES type(id),   -- subtypes are scoped to a type
+    name      TEXT NOT NULL,                          -- e.g. 'integration_by_parts'
+    UNIQUE (type_id, name)
+);
+
+CREATE TABLE IF NOT EXISTS problem_subtype (
+    problem_id INTEGER NOT NULL REFERENCES problem(id),
+    subtype_id INTEGER NOT NULL REFERENCES subtype(id),
+    PRIMARY KEY (problem_id, subtype_id)
 );
 
 CREATE TABLE IF NOT EXISTS problem_set (
@@ -145,13 +159,13 @@ def create_batch(conn, prompt):
 
 def insert_staged_problem(conn, batch_id, problem):
     """problem: dict with the PROBLEM_FIELDS plus answer, answer_verified_by
-    (str|None), problem_source, answer_source."""
+    (str|None), problem_source, answer_source, and optional gotcha (bool)."""
     cur = conn.execute(
         """INSERT INTO problem
            (batch_id, instructions, formula_1, formula_2, formula_3,
             expression_1, expression_2, expression_3, answer, answer_verified_by,
-            problem_source, answer_source, status, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'staged', ?)""",
+            problem_source, answer_source, gotcha, status, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'staged', ?)""",
         (
             batch_id,
             problem["instructions"],
@@ -165,6 +179,7 @@ def insert_staged_problem(conn, batch_id, problem):
             problem["answer_verified_by"],
             problem["problem_source"],
             problem["answer_source"],
+            1 if problem.get("gotcha") else 0,
             now(),
         ),
     )
@@ -196,6 +211,7 @@ def staged_batches(conn):
                 "prompt": b["prompt"],
                 "created_at": b["created_at"],
                 "types": batch_types(conn, b["id"]),
+                "subtypes": batch_subtypes(conn, b["id"]),
                 "problems": [dict(p) for p in problems],
             }
         )
@@ -242,6 +258,9 @@ def problems_by_type(conn, type_id):
     per-problem time (None if never timed)."""
     rows = conn.execute(
         """SELECT p.*,
+               (SELECT group_concat(s.name)
+                  FROM problem_subtype ps JOIN subtype s ON s.id = ps.subtype_id
+                  WHERE ps.problem_id = p.id) AS subtype_names,
                COUNT(a.id) AS total_attempts,
                COALESCE(SUM(CASE WHEN a.answered_correctly IS NOT NULL
                             THEN 1 ELSE 0 END), 0) AS graded_total,
@@ -264,6 +283,8 @@ def problems_by_type(conn, type_id):
         d["pct_total"] = round(100 * correct / graded) if graded else None
         if d.get("avg_seconds") is not None:
             d["avg_seconds"] = round(d["avg_seconds"], 1)
+        names = d.pop("subtype_names")
+        d["subtypes"] = names.split(",") if names else []
         out.append(d)
     return out
 
@@ -320,6 +341,62 @@ def apply_type_to_batch(conn, batch_id, type_id):
             "INSERT OR IGNORE INTO problem_type (problem_id, type_id) VALUES (?, ?)",
             (pid, type_id),
         )
+
+
+def get_or_create_subtype(conn, type_id, name):
+    """Upsert a subtype scoped to a type (depth-1 label, e.g. method)."""
+    name = name.strip()
+    row = conn.execute(
+        "SELECT id FROM subtype WHERE type_id = ? AND name = ?", (type_id, name)
+    ).fetchone()
+    if row:
+        return row["id"]
+    cur = conn.execute(
+        "INSERT INTO subtype (type_id, name) VALUES (?, ?)", (type_id, name)
+    )
+    return cur.lastrowid
+
+
+def apply_subtype_to_batch(conn, batch_id, subtype_id):
+    """Subtypes are batch-level: apply to every problem in the batch."""
+    pids = [
+        r["id"]
+        for r in conn.execute(
+            "SELECT id FROM problem WHERE batch_id = ?", (batch_id,)
+        )
+    ]
+    for pid in pids:
+        conn.execute(
+            "INSERT OR IGNORE INTO problem_subtype (problem_id, subtype_id) VALUES (?, ?)",
+            (pid, subtype_id),
+        )
+
+
+def subtypes_by_type(conn):
+    """Map of type name -> sorted list of its existing subtype names. Surfaced so
+    generation reuses existing subtypes instead of coining drift variants."""
+    out = {}
+    for r in conn.execute(
+        """SELECT t.name AS type_name, s.name AS subtype_name
+           FROM subtype s JOIN type t ON t.id = s.type_id
+           ORDER BY t.name, s.name"""
+    ):
+        out.setdefault(r["type_name"], []).append(r["subtype_name"])
+    return out
+
+
+def batch_subtypes(conn, batch_id):
+    """Distinct subtype names attached to a batch's problems."""
+    rows = conn.execute(
+        """SELECT DISTINCT s.name
+           FROM subtype s
+           JOIN problem_subtype ps ON ps.subtype_id = s.id
+           JOIN problem p ON p.id = ps.problem_id
+           WHERE p.batch_id = ?
+           ORDER BY s.name""",
+        (batch_id,),
+    ).fetchall()
+    return [r["name"] for r in rows]
 
 
 def reject_problem(conn, problem_id):

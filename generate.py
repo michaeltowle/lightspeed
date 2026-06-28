@@ -44,13 +44,17 @@ def _report_unverified(items):
             print(f"    {_ident(it)}  -- {it.note}")
 
 
-def stage(prompt, items, type, problem_source=None, answer_source=None):
+def stage(prompt, items, type, subtype=None, problem_source=None, answer_source=None):
     """Persist a batch of generated Items as 'staged' problems for approval.
 
     type: the single registered problem-type name applied to EVERY problem in
-    the batch (batches are monotype). Must be in problem_types.TYPES. Returns
-    (batch_id, [problem_ids]). Prints a summary including any items that could
-    not be verified, so they are never silently treated as graded.
+    the batch (batches are monotype). Must be in problem_types.TYPES.
+    subtype: optional depth-1 label within the type (e.g. a method like
+    "integration_by_parts"), applied to every problem in the batch. CHECK
+    existing subtypes first (`db.subtypes_by_type`) so names don't drift.
+    Items flagged with the gotcha() wrapper carry `gotcha = 1`. Returns
+    (batch_id, [problem_ids]) and prints a summary including any items that
+    could not be verified, so they are never silently treated as graded.
     """
     if type not in _REGISTRY:
         raise ValueError(
@@ -90,18 +94,24 @@ def stage(prompt, items, type, problem_source=None, answer_source=None):
             p["answer_verified_by"] = it.answer_verified_by
             p["problem_source"] = problem_source or it.problem_source
             p["answer_source"] = answer_source or it.answer_source
+            p["gotcha"] = it.gotcha
             ids.append(db.insert_staged_problem(conn, batch_id, p))
 
         type_id = db.get_or_create_type(
             conn, ptype.name, ptype.generator, ptype.default_instruction
         )
         db.apply_type_to_batch(conn, batch_id, type_id)
+        if subtype:
+            subtype_id = db.get_or_create_subtype(conn, type_id, subtype)
+            db.apply_subtype_to_batch(conn, batch_id, subtype_id)
         conn.commit()
     finally:
         conn.close()
 
+    n_gotcha = sum(1 for it in fresh if it.gotcha)
+    label = f"  type: {ptype.name}" + (f" / {subtype}" if subtype else "")
     print(f"Staged batch {batch_id}: {len(ids)} problems for prompt {prompt!r}")
-    print(f"  type: {ptype.name}")
+    print(label + (f"  ({n_gotcha} gotcha)" if n_gotcha else ""))
     _report_skipped(skipped)
     _report_unverified(unverified_filtered)
     return batch_id, ids

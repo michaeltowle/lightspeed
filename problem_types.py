@@ -86,6 +86,7 @@ class Item:
     expression_1: str | None = None
     expression_2: str | None = None
     expression_3: str | None = None
+    gotcha: bool = False  # instructive trap; set via the gotcha() wrapper
     problem_source: str = "claude"
     answer_source: str = "sympy"
     note: str = ""  # e.g. why an item could not be verified
@@ -100,6 +101,17 @@ class ProblemType:
     name: str
     generator: str            # function name in this module
     default_instruction: str | None
+
+
+def gotcha(item):
+    """Flag an item as an instructive trap (sets `problem.gotcha`), so it gets
+    due weight in drilling. Wrap any generator call when curating a batch:
+
+        gotcha(determinant([[1, 2, 3], [4, 5, 6]]))   # non-square -> undefined
+        gotcha(critical_points("x**3"))               # CP that isn't an extremum
+    """
+    item.gotcha = True
+    return item
 
 
 def _parse(expr_str):
