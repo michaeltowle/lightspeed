@@ -1,0 +1,394 @@
+<!DOCTYPE html>
+<!--
+  Problem-set runner.  Reached from index.html as /set?ids=1,2,3
+
+  Flow:
+    - On load: fetch the chosen problems, shuffle, create a ProblemSet row
+      (its id is the "#N" in the nav).
+    - ONE problem at a time, answer hidden. No timer is shown while solving.
+    - "next" records that problem's elapsed time (silently) and advances.
+    - After "next" on the LAST problem, ALL questions + ALL answers are shown.
+    - On that review screen each answer self-grades by click cycle:
+        neutral (ungraded) -> green (correct) -> red (incorrect) -> neutral.
+    - "finalize" saves an Attempt per problem (its duration + grade) and the
+      set's total / average timing.
+    - Every formula/expression has a copy button (raw LaTeX -> Desmos, etc.).
+-->
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>lightspeed — set</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Spectral:ital,wght@0,400;0,500;0,600;1,400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+
+    html { text-transform: lowercase; }
+
+    .katex, .katex * { text-transform: none; }
+    .katex { font-size: 1.05em; }
+
+    body {
+      margin: 0;
+      background: #f7f7f7;
+      font-family: 'Spectral', Georgia, serif;
+      color: #111;
+    }
+
+    /* ---- nav ---- */
+    .nav {
+      background: #111;
+      padding: 10px 20px;
+      font-family: 'IBM Plex Mono', monospace;
+      font-size: 11px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .nav a { color: #999; text-decoration: none; }
+    .nav a:hover { color: #fff; }
+    .nav-sep { color: #555; }
+    .nav-title { color: #fff; font-weight: 500; letter-spacing: 0.3px; }
+
+    /* ---- layout ---- */
+    .content {
+      max-width: 1100px;
+      margin: 0 auto;
+      padding: 28px 18px 80px;
+    }
+
+    .card {
+      background: #fff;
+      border-radius: 5px;
+      box-shadow: 0 1px 5px rgba(0,0,0,.09), 0 0 0 1px rgba(0,0,0,.04);
+      overflow: hidden;
+    }
+
+    /* ---- buttons ---- */
+    button {
+      font-family: 'Spectral', Georgia, serif;
+      font-size: 13.5px;
+      font-weight: 600;
+      padding: 7px 16px;
+      border-radius: 5px;
+      border: 1px solid #bbb;
+      background: #fff;
+      color: #444;
+      cursor: pointer;
+    }
+    button:hover:not(:disabled) { background: #f4f4f4; border-color: #999; }
+    button:disabled { opacity: 0.4; cursor: not-allowed; }
+
+    .btn-primary {
+      background: #222;
+      color: #fff;
+      border-color: #222;
+    }
+    .btn-primary:hover:not(:disabled) { background: #111; border-color: #111; }
+
+    /* ---- copy button on each formula/expression ---- */
+    button.copy-btn {
+      font-family: 'IBM Plex Mono', monospace;
+      font-size: 10px;
+      font-weight: 500;
+      padding: 2px 8px;
+      border-radius: 999px;
+      border: 1px solid #ddd;
+      background: #fff;
+      color: #aaa;
+    }
+    button.copy-btn:hover { border-color: #888; color: #555; background: #fff; }
+    button.copy-btn.copied { background: #111; color: #fff; border-color: #111; }
+
+    /* ---- solving (one at a time) ---- */
+    .solve { padding: 40px 36px 32px; }
+    .progress {
+      font-family: 'IBM Plex Mono', monospace;
+      font-size: 11px;
+      color: #aaa;
+      letter-spacing: 0.4px;
+      margin-bottom: 22px;
+    }
+    .statement .instr {
+      font-family: 'IBM Plex Mono', monospace;
+      font-size: 12.5px;
+      color: #888;
+      margin-bottom: 14px;
+    }
+    .mrow {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin: 8px 0;
+    }
+    .mrow .mblock { min-width: 0; }
+    .mrow .katex-display { text-align: left; margin: 0; }
+    .mrow .katex-display > .katex { text-align: left; }
+    .solve .mrow { font-size: 1.15em; }
+    .solve-foot { margin-top: 30px; }
+
+    /* ---- review (all answers) ---- */
+    .review-head, .review-foot {
+      padding: 14px 18px;
+      font-size: 14px;
+      color: #555;
+      border-bottom: 1px solid #eee;
+    }
+    .review-foot { border-bottom: none; border-top: 1px solid #eee; display: flex; align-items: center; gap: 14px; }
+
+    .review-row {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 8px 18px;
+      min-height: 64px;
+      border-bottom: 1px dashed #ddd;
+    }
+    .review-row:last-child { border-bottom: none; }
+
+    .prob-index {
+      flex: 0 0 30px;
+      font-family: 'IBM Plex Mono', monospace;
+      font-size: 12px;
+      color: #bbb;
+    }
+    .prob-statement {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      min-width: 0;
+    }
+    .prob-statement .instr {
+      font-family: 'IBM Plex Mono', monospace;
+      font-size: 10.5px;
+      color: #999;
+    }
+    .prob-time {
+      flex: 0 0 64px;
+      text-align: right;
+      font-family: 'IBM Plex Mono', monospace;
+      font-size: 11px;
+      color: #bbb;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .prob-answer {
+      flex: 0 0 260px;
+      padding: 10px 12px;
+      border-radius: 4px;
+      background: #f7f7f7;
+      text-align: right;
+      transition: background 0.1s;
+    }
+    .prob-answer .katex-display { text-align: right; margin: 0; }
+    .prob-answer .katex-display > .katex { text-align: right; }
+    .prob-answer.gradable { cursor: pointer; background: #fff; }
+    .prob-answer.correct { background: #cdebcd; cursor: pointer; }
+    .prob-answer.incorrect { background: #f3cccc; cursor: pointer; }
+
+    #msg { font-size: 14px; color: #444; }
+    #msg a {
+      font-family: 'IBM Plex Mono', monospace;
+      font-size: 11px;
+      color: #888;
+      text-decoration: underline;
+      margin-left: 10px;
+    }
+    #msg a:hover { color: #333; }
+
+    #fail { padding: 28px; color: #666; font-size: 15px; }
+  </style>
+</head>
+<body>
+
+<nav class="nav">
+  <a href="/">← bank</a>
+  <span class="nav-sep">|</span>
+  <span class="nav-title" id="nav-title">loading…</span>
+</nav>
+
+<div class="content">
+  <div class="card" id="card">
+    <div id="fail" hidden></div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
+<script>
+'use strict';
+
+const params = new URLSearchParams(location.search);
+const ids = (params.get("ids") || "").split(",").map(s => s.trim()).filter(Boolean);
+
+const FORMULAS    = ["formula_1", "formula_2", "formula_3"];
+const EXPRESSIONS = ["expression_1", "expression_2", "expression_3"];
+
+let setId = null;
+let problems = [];
+let currentIndex = 0;
+let problemStart = null;
+const durations = {};        // problem_id -> seconds
+const grade = {};            // problem_id -> true | false | undefined
+
+const card = document.getElementById("card");
+
+async function api(path, opts) {
+  const res = await fetch(path, opts);
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+const post = obj => ({ method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(obj || {}) });
+const shuffle = a => { for (let i = a.length - 1; i > 0; i--) { const j = Math.random() * (i + 1) | 0; [a[i], a[j]] = [a[j], a[i]]; } return a; };
+
+function math(tex) {
+  return katex.renderToString(tex, { throwOnError: false, displayMode: true });
+}
+
+function esc(s) {
+  return String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+}
+
+function fmtTime(s) {
+  if (s == null) return "—";
+  if (s < 60) return `${s.toFixed(1)}s`;
+  return `${Math.floor(s / 60)}:${String(Math.round(s % 60)).padStart(2, "0")}`;
+}
+
+// One formula/expression as a math block + a copy-LaTeX button.
+function fieldRow(tex) {
+  return `<div class="mrow">
+    <span class="mblock">${math(tex)}</span>
+    <button class="copy-btn" data-tex="${esc(tex)}" title="copy LaTeX">copy</button>
+  </div>`;
+}
+
+// A problem's decomposed statement: prose instruction, then each non-empty
+// formula (givens) and expression (operand). The answer is NOT included here.
+function renderStatement(p) {
+  let html = "";
+  if (p.instructions) html += `<div class="instr">${esc(p.instructions)}</div>`;
+  for (const f of FORMULAS)    if (p[f]) html += fieldRow(p[f]);
+  for (const e of EXPRESSIONS) if (p[e]) html += fieldRow(p[e]);
+  return html;
+}
+
+// ---- copy buttons (event-delegated) ---------------------------------------
+document.addEventListener("click", async (e) => {
+  const btn = e.target.closest(".copy-btn");
+  if (!btn) return;
+  e.stopPropagation();                       // don't trigger answer grading
+  try {
+    await navigator.clipboard.writeText(btn.dataset.tex);
+    btn.textContent = "copied";
+    btn.classList.add("copied");
+    setTimeout(() => { btn.textContent = "copy"; btn.classList.remove("copied"); }, 900);
+  } catch {
+    btn.textContent = "!";
+  }
+});
+
+// ---- flow -----------------------------------------------------------------
+async function start() {
+  if (ids.length === 0) { fail("no problems selected. go back to the bank and pick some."); return; }
+  problems = shuffle(await api(`/api/problems?ids=${ids.join(",")}`));
+  if (problems.length === 0) { fail("those problems weren't found."); return; }
+
+  const { id } = await api("/api/problem-sets", post({}));
+  setId = id;
+  document.getElementById("nav-title").textContent = `set #${id}`;
+
+  showProblem(0);
+}
+
+function showProblem(i) {
+  const p = problems[i];
+  const last = i === problems.length - 1;
+  card.innerHTML = `
+    <div class="solve">
+      <div class="progress">problem ${i + 1} of ${problems.length}</div>
+      <div class="statement">${renderStatement(p)}</div>
+      <div class="solve-foot">
+        <button id="nextBtn" class="btn-primary">${last ? "reveal answers" : "next →"}</button>
+      </div>
+    </div>`;
+  document.getElementById("nextBtn").onclick = next;
+  problemStart = Date.now();
+}
+
+function next() {
+  const p = problems[currentIndex];
+  durations[p.id] = (Date.now() - problemStart) / 1000;
+  currentIndex++;
+  if (currentIndex < problems.length) showProblem(currentIndex);
+  else showReview();
+}
+
+function showReview() {
+  const rows = problems.map((p, i) => `
+    <div class="review-row">
+      <span class="prob-index">${String(i + 1).padStart(2, "0")}</span>
+      <span class="prob-statement">${renderStatement(p)}</span>
+      <span class="prob-time">${fmtTime(durations[p.id])}</span>
+      <span class="prob-answer gradable" data-pid="${p.id}">${math(p.answer)}</span>
+    </div>`).join("");
+
+  card.innerHTML = `
+    <div class="review-head">all answers revealed — click an answer to grade: green = correct, red = incorrect, click again to clear.</div>
+    <div id="review-list">${rows}</div>
+    <div class="review-foot">
+      <button id="finalizeBtn" class="btn-primary">finalize</button>
+      <span id="msg" hidden></span>
+    </div>`;
+
+  card.querySelectorAll(".prob-answer").forEach(cell => {
+    cell.onclick = () => cycleGrade(cell, +cell.dataset.pid);
+  });
+  document.getElementById("finalizeBtn").onclick = finalize;
+}
+
+function cycleGrade(cell, pid) {
+  if (grade[pid] === undefined)  { grade[pid] = true;  cell.className = "prob-answer gradable correct"; }
+  else if (grade[pid] === true)  { grade[pid] = false; cell.className = "prob-answer gradable incorrect"; }
+  else                           { delete grade[pid];  cell.className = "prob-answer gradable"; }
+}
+
+async function finalize() {
+  // One attempt per problem: its recorded duration + grade (null if ungraded).
+  const attempts = problems.map(p => ({
+    problem_id: p.id,
+    answered_correctly: (p.id in grade) ? grade[p.id] : null,
+    duration_seconds: durations[p.id] ?? null,
+  }));
+  const finish = problems.reduce((s, p) => s + (durations[p.id] || 0), 0);
+  const body = {
+    problem_set_id: setId,
+    attempts,
+    finish_time: finish,
+    time_per_problem: problems.length ? finish / problems.length : null,
+  };
+  await api("/api/attempts", post(body));
+
+  document.getElementById("finalizeBtn").disabled = true;
+  const graded  = attempts.filter(a => a.answered_correctly !== null);
+  const correct = graded.filter(a => a.answered_correctly).length;
+  done(`saved set #${setId} — ${attempts.length} problem(s), ${graded.length} graded, ${correct} correct.`);
+}
+
+function fail(text) {
+  const f = document.getElementById("fail");
+  f.hidden = false;
+  f.textContent = text;
+}
+function done(text) {
+  const m = document.getElementById("msg");
+  m.hidden = false;
+  m.innerHTML = text + ` <a href="/">back to bank</a>`;
+}
+
+start();
+</script>
+</body>
+</html>

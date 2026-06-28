@@ -2,15 +2,14 @@
 <!--
   Bank browser (WIREFRAME — intentionally plain; final design via Claude Design).
 
-  - Lists tags, each with its approved-problem count.
-  - Clicking a tag expands an ordered list of its problems (LaTeX + attempt stats).
-  - Selection is global across tags and toggled by CLICKING A PROBLEM ROW (no
-    checkbox); a selected problem stays selected when viewed under another tag.
-  - Each row shows attempt stats: total attempts, quiz attempts, and percent
-    correct (total, plus quiz / practice splits).
-  - "quiz" and "practice" enable once MORE THAN ONE problem is selected.
-  - Quiz = timed, Practice = untimed; both hand the selected problem ids to the
-    quiz page via the URL.
+  - Lists types, each with its approved-problem count.
+  - Clicking a type expands an ordered list of its problems (decomposed fields +
+    attempt stats).
+  - Selection is global across types and toggled by CLICKING A PROBLEM ROW (no
+    checkbox); a selected problem stays selected when viewed under another type.
+  - Each row shows attempt stats: total attempts, percent correct, average time.
+  - "start set" enables once MORE THAN ONE problem is selected, and hands the
+    selected problem ids to the run page via /set?ids=...
 -->
 <html lang="en">
 <head>
@@ -28,17 +27,18 @@
     .bar .sel { font-size: .85rem; color: #444; margin-right: auto; }
     button { font-family: inherit; font-size: .9rem; padding: .35rem .9rem; border: 1px solid #000; background: #fff; color: #000; cursor: pointer; }
     button:disabled { color: #999; border-color: #999; cursor: not-allowed; }
-    ul.tags { list-style: none; padding: 0; margin: 1rem 0; }
-    li.tag { border: 1px solid #888; margin: .4rem 0; }
-    .taghead { padding: .5rem .7rem; cursor: pointer; display: flex; justify-content: space-between; background: #f4f4f4; }
-    .taghead .count { color: #444; }
+    ul.types { list-style: none; padding: 0; margin: 1rem 0; }
+    li.type { border: 1px solid #888; margin: .4rem 0; }
+    .typehead { padding: .5rem .7rem; cursor: pointer; display: flex; justify-content: space-between; background: #f4f4f4; }
+    .typehead .count { color: #444; }
     ol.problems { margin: 0; padding: .3rem .7rem .7rem 2rem; }
     ol.problems li.prow { margin: .3rem 0; padding: .3rem .5rem; cursor: pointer; user-select: none; border: 1px solid transparent; border-radius: 2px; }
     ol.problems li.prow:hover { background: #f7f7f7; }
     ol.problems li.prow.selected { background: #ececec; border-color: #000; border-left-width: 4px; }
     ol.problems .empty { list-style: none; margin-left: -1.3rem; color: #777; font-style: italic; }
     .pq { display: block; }
-    .pq .pqline + .pqline { margin-top: 2px; }
+    .pq .instr { font-size: .8rem; color: #777; text-transform: lowercase; }
+    .pq .mline + .mline { margin-top: 2px; }
     .stats { display: block; margin-top: .15rem; }
     .muted { color: #777; font-size: .85rem; }
   </style>
@@ -48,23 +48,32 @@
 
   <div class="bar">
     <span class="sel">0 selected</span>
-    <button id="quizBtn" disabled>quiz (timed)</button>
-    <button id="practiceBtn" disabled>practice</button>
+    <button id="startBtn" disabled>start set</button>
   </div>
 
-  <p id="empty" class="muted" hidden>no tags yet. approve some problems at
+  <p id="empty" class="muted" hidden>no types yet. approve some problems at
     <a href="/add-problems">/add-problems</a> first.</p>
 
-  <ul class="tags" id="tags"></ul>
+  <ul class="types" id="types"></ul>
 
   <p id="staged-link" hidden><a href="/add-problems"></a></p>
 
 <script>
 const selected = new Set();          // global selection of problem ids
-const problemCache = {};             // tag_id -> problems[]
+const problemCache = {};             // type_id -> problems[]
 
-// Problem text may be multi-line (\n-separated); render one math block per line.
-const pqLines = (tex) => tex.split("\n").map((s) => `<div class="pqline">\\(${s.trim()}\\)</div>`).join("");
+const FORMULAS    = ["formula_1", "formula_2", "formula_3"];
+const EXPRESSIONS = ["expression_1", "expression_2", "expression_3"];
+
+// Render a problem from its decomposed fields: prose instruction, then each
+// non-empty formula/expression as its own math line. Empty fields are skipped.
+function renderStatement(p) {
+  let html = "";
+  if (p.instructions) html += `<div class="instr">${escapeHtml(p.instructions)}</div>`;
+  for (const f of FORMULAS)    if (p[f]) html += `<div class="mline">\\(${p[f]}\\)</div>`;
+  for (const e of EXPRESSIONS) if (p[e]) html += `<div class="mline">\\(${p[e]}\\)</div>`;
+  return html;
+}
 
 async function api(path) {
   const res = await fetch(path);
@@ -73,11 +82,11 @@ async function api(path) {
 }
 
 async function load() {
-  const [tags, batches] = await Promise.all([api("/api/tags"), api("/api/staged")]);
-  document.getElementById("empty").hidden = tags.length > 0;
-  const ul = document.getElementById("tags");
+  const [types, batches] = await Promise.all([api("/api/types"), api("/api/staged")]);
+  document.getElementById("empty").hidden = types.length > 0;
+  const ul = document.getElementById("types");
   ul.innerHTML = "";
-  for (const t of tags) ul.appendChild(renderTag(t));
+  for (const t of types) ul.appendChild(renderType(t));
   refreshBar();
 
   const n = batches.reduce((s, b) => s + b.problems.length, 0);
@@ -88,12 +97,12 @@ async function load() {
   }
 }
 
-function renderTag(t) {
+function renderType(t) {
   const li = document.createElement("li");
-  li.className = "tag";
+  li.className = "type";
   li.innerHTML = `
-    <div class="taghead">
-      <span>${escapeHtml(t.display_text)}</span>
+    <div class="typehead">
+      <span>${escapeHtml(t.name)}</span>
       <span class="count">${t.attempted_count}/${t.problem_count}</span>
     </div>`;
   const body = document.createElement("ol");
@@ -101,9 +110,9 @@ function renderTag(t) {
   body.hidden = true;
   li.appendChild(body);
 
-  li.querySelector(".taghead").onclick = async () => {
+  li.querySelector(".typehead").onclick = async () => {
     if (body.hidden && !problemCache[t.id]) {
-      problemCache[t.id] = await api(`/api/problems?tag=${t.id}`);
+      problemCache[t.id] = await api(`/api/problems?type=${t.id}`);
       renderProblems(body, problemCache[t.id]);
     }
     body.hidden = !body.hidden;
@@ -114,7 +123,7 @@ function renderTag(t) {
 function renderProblems(ol, problems) {
   ol.innerHTML = "";
   if (!problems.length) {
-    ol.innerHTML = `<li class="empty">no approved problems with this tag</li>`;
+    ol.innerHTML = `<li class="empty">no approved problems of this type</li>`;
     return;
   }
   for (const p of problems) {
@@ -125,7 +134,7 @@ function renderProblems(ol, problems) {
 
     const pq = document.createElement("span");
     pq.className = "pq";
-    pq.innerHTML = pqLines(p.latex_problem_text);
+    pq.innerHTML = renderStatement(p);
 
     const stats = document.createElement("span");
     stats.className = "stats muted";
@@ -140,16 +149,15 @@ function renderProblems(ol, problems) {
 
 function statsLine(p) {
   if (!p.total_attempts) return "no attempts yet";
-  const pct = v => (v === null || v === undefined ? "—" : `${v}%`);
-  return `${p.total_attempts} attempts (${p.quiz_attempts} quiz) · `
-       + `${pct(p.pct_total)} correct — quiz ${pct(p.pct_quiz)}, `
-       + `practice ${pct(p.pct_practice)}`;
+  const pct = p.pct_total === null || p.pct_total === undefined ? "—" : `${p.pct_total}%`;
+  const avg = p.avg_seconds === null || p.avg_seconds === undefined ? "" : ` · avg ${p.avg_seconds}s`;
+  return `${p.total_attempts} attempt${p.total_attempts === 1 ? "" : "s"} · ${pct} correct${avg}`;
 }
 
 function toggleSelect(id) {
   if (selected.has(id)) selected.delete(id);
   else selected.add(id);
-  // a problem can appear under multiple tags — keep every rendered row in sync
+  // a problem can appear under multiple types — keep every rendered row in sync
   document.querySelectorAll(`li.prow[data-id="${id}"]`).forEach(row =>
     row.classList.toggle("selected", selected.has(id))
   );
@@ -159,17 +167,14 @@ function toggleSelect(id) {
 function refreshBar() {
   const n = selected.size;
   document.querySelector(".sel").textContent = `${n} selected`;
-  const enabled = n > 1;                       // de-gray once >1 selected
-  document.getElementById("quizBtn").disabled = !enabled;
-  document.getElementById("practiceBtn").disabled = !enabled;
+  document.getElementById("startBtn").disabled = n <= 1;   // de-gray once >1 selected
 }
 
-function goToSet(timed) {
+function goToSet() {
   const ids = [...selected].join(",");
-  location.href = `/quiz?timed=${timed ? 1 : 0}&ids=${ids}`;
+  location.href = `/set?ids=${ids}`;
 }
-document.getElementById("quizBtn").onclick = () => goToSet(true);
-document.getElementById("practiceBtn").onclick = () => goToSet(false);
+document.getElementById("startBtn").onclick = goToSet;
 
 function escapeHtml(s) {
   return String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));

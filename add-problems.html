@@ -1,17 +1,18 @@
 <!DOCTYPE html>
 <!--
   Review / approve surface for STAGED problems.
-  Design: design_handoff_add_problems_review/README.md
 
   Model:
-    - APPROVE is batch-level: "Approve" button sends per-problem stars/rejects
-      then flips all remaining staged problems in the batch to approved.
-    - State cycles per row (click anywhere): normal -> starred -> rejected -> normal
-    - Stars and rejects are tracked client-side; persisted at approve time.
+    - APPROVE is batch-level: "Approve" button sends per-problem rejects then
+      flips all remaining staged problems in the batch to approved.
+    - State cycles per row (click anywhere): normal -> rejected -> normal.
+    - Rejects are tracked client-side; persisted at approve time.
     - UNDO: confirmation strip after approve offers an in-session undo.
 
-  Tags are batch-level, assigned by Claude at generation time, shown read-only
-  with db_count (already approved) + active_count (not rejected) = new_total.
+  Types are batch-level (one type per batch — batches are monotype), shown
+  read-only with db_count (already approved) + active_count (not rejected) =
+  new_total. A problem is rendered from its decomposed fields (instructions,
+  formula_1..3, expression_1..3, answer); empty fields are simply not shown.
 -->
 <html lang="en">
 <head>
@@ -109,30 +110,30 @@
       color: #111;
     }
 
-    /* tag counts */
-    .tag-counts {
+    /* type counts */
+    .type-counts {
       font-family: 'IBM Plex Mono', monospace;
       font-size: 10.5px;
       line-height: 1.85;
     }
-    .tag-row { display: flex; align-items: baseline; gap: 4px; }
-    .tag-name { color: #444; font-weight: 500; }
-    .tag-db   { color: #999; }
-    .tag-sep  { color: #ccc; }
-    .tag-active { color: #333; font-weight: 500; }
-    .tag-total {
+    .type-row { display: flex; align-items: baseline; gap: 4px; }
+    .type-name { color: #444; font-weight: 500; }
+    .type-db   { color: #999; }
+    .type-sep  { color: #ccc; }
+    .type-active { color: #333; font-weight: 500; }
+    .type-total {
       color: #111;
       font-weight: 600;
       border-radius: 3px;
       transition: background 0.1s, color 0.1s;
     }
-    .tag-total.flash {
+    .type-total.flash {
       color: #222;
       font-weight: 700;
       background: #f0f0f0;
       padding: 0 2px;
     }
-    .tag-none { color: #999; font-family: 'IBM Plex Mono', monospace; font-size: 10.5px; }
+    .type-none { color: #999; font-family: 'IBM Plex Mono', monospace; font-size: 10.5px; }
 
     .batch-right {
       flex: 0 0 240px;
@@ -181,7 +182,7 @@
       display: flex;
       align-items: center;
       gap: 12px;
-      padding: 0 18px;
+      padding: 6px 18px;
       min-height: 65px;
       border-bottom: 1px dashed #ddd;
       font-size: 15px;
@@ -189,21 +190,10 @@
       cursor: pointer;
       user-select: none;
     }
-    .problem-row.starred {
-      background: #f5f5f5;
-      box-shadow: inset 3px 0 0 0 #d4a832;
-    }
     .problem-row.rejected {
       background: #fdf1f1;
       color: #c94040;
     }
-
-    .prob-star {
-      flex: 0 0 16px;
-      font-size: 13px;
-      color: transparent;
-    }
-    .problem-row.starred .prob-star { color: #666; }
 
     .prob-index {
       flex: 0 0 32px;
@@ -211,19 +201,26 @@
       font-size: 12px;
       color: #bbb;
     }
-    .problem-row.starred  .prob-index { color: #444; font-weight: 500; }
     .problem-row.rejected .prob-index { color: #e08080; }
 
-    .prob-question { flex: 0 0 200px; }
-    /* dist+ask lines: each its own left-aligned block, tightly stacked. */
-    .prob-question .katex-display { text-align: left; margin: 0; }
-    .prob-question .katex-display > .katex { text-align: left; }
-    .prob-question .katex-display + .katex-display { margin-top: 3px; }
-
-    .prob-pdf { flex: 1; padding: 0 8px; }
-    /* pdf/pmf: left-aligned block, same override as question */
-    .prob-pdf .katex-display { text-align: left; margin: 0; }
-    .prob-pdf .katex-display > .katex { text-align: left; }
+    /* statement column: instruction text + stacked formula/expression blocks */
+    .prob-statement {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      padding: 2px 8px 2px 0;
+      min-width: 0;
+    }
+    .prob-instr {
+      font-family: 'IBM Plex Mono', monospace;
+      font-size: 10.5px;
+      color: #999;
+      letter-spacing: 0.2px;
+    }
+    .problem-row.rejected .prob-instr { color: #d88; }
+    .prob-statement .katex-display { text-align: left; margin: 0; }
+    .prob-statement .katex-display > .katex { text-align: left; }
 
     .prob-answer {
       flex: 0 0 240px;
@@ -231,8 +228,7 @@
       text-align: right;
     }
     /* right-align answers to a common right edge. The inner .katex defaults to
-       text-align:center (KaTeX), so right-aligning the wrapper alone is not
-       enough — override the inner block as well. */
+       text-align:center (KaTeX), so override the inner block as well. */
     .prob-answer .katex-display { text-align: right; margin: 0; }
     .prob-answer .katex-display > .katex { text-align: right; }
 
@@ -290,7 +286,6 @@
 
 // ---- state ----------------------------------------------------------------
 const rejected     = new Set();  // problem IDs
-const starred      = new Set();  // problem IDs
 const collapsed    = new Set();  // batch IDs (all start collapsed)
 const resolved     = new Set();  // batch IDs: approved or fully-rejected (gone from staging)
 const flashTimers  = new Map();  // batchId -> timeoutId
@@ -301,21 +296,18 @@ function math(tex) {
   return katex.renderToString(tex, { throwOnError: false, displayMode: true });
 }
 
-// Split a problem's stored LaTeX into [questionHtml, pdfHtml] for the two
-// content columns. Probability problems are 3 \n-separated lines:
-//   line 0 = distribution  →  question col (with period)
-//   line 1 = pdf/pmf       →  pdf col
-//   line 2 = the ask       →  question col (capitalised, with period)
-// All other problems (1 line) go entirely in the question col; pdf col is empty.
-function renderProblemCols(tex) {
-  const lines = tex.split('\n');
-  if (lines.length === 3) {
-    const distLine = lines[0].trim() + '.';
-    const pdfLine  = lines[1].trim();
-    const askLine  = lines[2].trim().replace(/\\text\{f/, '\\text{F') + '.';
-    return [math(distLine) + math(askLine), math(pdfLine)];
-  }
-  return [math(lines[0].trim()), ''];
+// Render a problem from its decomposed fields: the prose instruction, then each
+// non-empty formula (definitions/givens) and expression (operand) as its own
+// left-aligned math block. Empty fields are skipped.
+const FORMULAS    = ['formula_1', 'formula_2', 'formula_3'];
+const EXPRESSIONS = ['expression_1', 'expression_2', 'expression_3'];
+
+function renderStatement(p) {
+  let html = '';
+  if (p.instructions) html += `<span class="prob-instr">${esc(p.instructions)}</span>`;
+  for (const f of FORMULAS)    if (p[f]) html += math(p[f]);
+  for (const e of EXPRESSIONS) if (p[e]) html += math(p[e]);
+  return html;
 }
 
 function esc(s) {
@@ -337,16 +329,16 @@ function updateCardTitle() {
       : 'all batches resolved';
 }
 
-function updateTagCounts(batchId) {
+function updateTypeCounts(batchId) {
   const batch = allBatches.find(b => b.id === batchId);
   if (!batch) return;
   const wrapper = document.querySelector(`[data-batch-id="${batchId}"]`);
   if (!wrapper) return;
   const ac = activeCount(batch);
-  wrapper.querySelectorAll('.tag-active').forEach(el => { el.textContent = ac; });
-  batch.tags.forEach(tag => {
-    const el = wrapper.querySelector(`.tag-total[data-tag-id="${tag.id}"]`);
-    if (el) el.textContent = (tag.db_count || 0) + ac;
+  wrapper.querySelectorAll('.type-active').forEach(el => { el.textContent = ac; });
+  batch.types.forEach(type => {
+    const el = wrapper.querySelector(`.type-total[data-type-id="${type.id}"]`);
+    if (el) el.textContent = (type.db_count || 0) + ac;
   });
 }
 
@@ -354,32 +346,25 @@ function triggerFlash(batchId) {
   if (flashTimers.has(batchId)) clearTimeout(flashTimers.get(batchId));
   const wrapper = document.querySelector(`[data-batch-id="${batchId}"]`);
   if (!wrapper) return;
-  wrapper.querySelectorAll('.tag-total').forEach(el => el.classList.add('flash'));
+  wrapper.querySelectorAll('.type-total').forEach(el => el.classList.add('flash'));
   const tid = setTimeout(() => {
-    wrapper.querySelectorAll('.tag-total').forEach(el => el.classList.remove('flash'));
+    wrapper.querySelectorAll('.type-total').forEach(el => el.classList.remove('flash'));
     flashTimers.delete(batchId);
   }, 650);
   flashTimers.set(batchId, tid);
 }
 
-// ---- row state cycling: normal -> starred -> rejected -> normal -----------
+// ---- row state cycling: normal -> rejected -> normal ----------------------
 function cycleRow(problemId, batchId, row) {
   if (rejected.has(problemId)) {
     rejected.delete(problemId);
     row.classList.remove('rejected');
-    updateTagCounts(batchId);
-    triggerFlash(batchId);
-  } else if (starred.has(problemId)) {
-    starred.delete(problemId);
-    row.classList.remove('starred');
+  } else {
     rejected.add(problemId);
     row.classList.add('rejected');
-    updateTagCounts(batchId);
-    triggerFlash(batchId);
-  } else {
-    starred.add(problemId);
-    row.classList.add('starred');
   }
+  updateTypeCounts(batchId);
+  triggerFlash(batchId);
 }
 
 // ---- api ------------------------------------------------------------------
@@ -402,17 +387,17 @@ function renderBatch(batch) {
 
   const ac = activeCount(batch);
 
-  const tagCountsHtml = batch.tags.length === 0
-    ? '<span class="tag-none">untagged</span>'
-    : batch.tags.map(tag => {
-        const db = tag.db_count || 0;
-        return `<div class="tag-row">
-          <span class="tag-name">${esc(tag.display_text)}:</span>
-          <span class="tag-db">${db}</span>
-          <span class="tag-sep">+</span>
-          <span class="tag-active">${ac}</span>
-          <span class="tag-sep">=</span>
-          <span class="tag-total" data-tag-id="${tag.id}">${db + ac}</span>
+  const typeCountsHtml = batch.types.length === 0
+    ? '<span class="type-none">untyped</span>'
+    : batch.types.map(type => {
+        const db = type.db_count || 0;
+        return `<div class="type-row">
+          <span class="type-name">${esc(type.name)}:</span>
+          <span class="type-db">${db}</span>
+          <span class="type-sep">+</span>
+          <span class="type-active">${ac}</span>
+          <span class="type-sep">=</span>
+          <span class="type-total" data-type-id="${type.id}">${db + ac}</span>
         </div>`;
       }).join('');
 
@@ -422,7 +407,7 @@ function renderBatch(batch) {
   header.innerHTML = `
     <div class="batch-left">
       <p class="batch-prompt">${esc(batch.prompt)}</p>
-      <div class="tag-counts">${tagCountsHtml}</div>
+      <div class="type-counts">${typeCountsHtml}</div>
     </div>
     <div class="batch-right">
       <button class="btn-reject-all">reject all</button>
@@ -437,17 +422,13 @@ function renderBatch(batch) {
     const row = document.createElement('div');
     row.className = 'problem-row';
     row.dataset.pid = p.id;
-    if (starred.has(p.id))  row.classList.add('starred');
     if (rejected.has(p.id)) row.classList.add('rejected');
 
     const idx = String(i + 1).padStart(2, '0');
-    const [qHtml, pdfHtml] = renderProblemCols(p.latex_problem_text);
     row.innerHTML = `
-      <span class="prob-star">&#9733;</span>
       <span class="prob-index">${idx}</span>
-      <span class="prob-question">${qHtml}</span>
-      <span class="prob-pdf">${pdfHtml}</span>
-      <span class="prob-answer">${math(p.latex_answer_text)}</span>`;
+      <span class="prob-statement">${renderStatement(p)}</span>
+      <span class="prob-answer">${math(p.answer)}</span>`;
 
     row.onclick = () => cycleRow(p.id, batch.id, row);
     body.appendChild(row);
@@ -460,7 +441,7 @@ function renderBatch(batch) {
 
   // header click toggles collapse
   header.onclick = e => {
-    if (e.target.closest('.btn-approve')) return;
+    if (e.target.closest('.btn-approve') || e.target.closest('.btn-reject-all')) return;
     if (collapsed.has(batch.id)) {
       collapsed.delete(batch.id);
       body.classList.remove('collapsed');
@@ -481,7 +462,6 @@ function renderBatch(batch) {
     rejectAllBtn.textContent = 'rejecting…';
     try {
       for (const p of batch.problems) {
-        starred.delete(p.id);
         rejected.add(p.id);
         await api(`/api/problems/${p.id}/reject`, post());
       }
@@ -508,11 +488,11 @@ function renderBatch(batch) {
         rejectAllBtn.disabled = false;
         approveBtn.disabled   = false;
         rejectAllBtn.textContent = 'reject all';
-        updateTagCounts(batch.id);
+        updateTypeCounts(batch.id);
         updateCardTitle();
       };
 
-      updateTagCounts(batch.id);
+      updateTypeCounts(batch.id);
       updateCardTitle();
     } catch (err) {
       rejectAllBtn.disabled = false;
@@ -530,9 +510,7 @@ function renderBatch(batch) {
     approveBtn.textContent = 'approving…';
     try {
       const batchRejected = batch.problems.filter(p => rejected.has(p.id));
-      const batchStarred  = batch.problems.filter(p => starred.has(p.id));
       for (const p of batchRejected) await api(`/api/problems/${p.id}/reject`, post());
-      for (const p of batchStarred)  await api(`/api/problems/${p.id}/star`, post({ starred: true }));
       await api(`/api/batches/${batch.id}/approve`, post());
 
       resolved.add(batch.id);
