@@ -19,10 +19,29 @@ rule #1: answers are computed AND independently verified, never LLM-guessed. See
 TYPES.md for the presentation style and verification method of each type.
 """
 
+import re
+
 import db
 from problem_types import TYPES
 
 _REGISTRY = {t.name: t for t in TYPES}
+
+# Auto-detect content flags from a problem's rendered LaTeX (math fields only,
+# not the prose instruction). Heuristics: \ln and \sin/\cos are unambiguous in
+# our output; Euler's e is "e^" (exp) or a standalone 'e' token not part of a
+# LaTeX command (\left, \text, \det, …) or an identifier.
+_E_RE = re.compile(r"e\^|(?<![\\A-Za-z0-9])e(?![A-Za-z0-9])")
+
+
+def _content_flags(it):
+    blob = " ".join(filter(None, [
+        it.formula_1, it.formula_2, it.formula_3,
+        it.expression_1, it.expression_2, it.expression_3, it.answer,
+    ]))
+    has_e = bool(_E_RE.search(blob))
+    has_ln = r"\ln" in blob
+    has_trig = (r"\sin" in blob) or (r"\cos" in blob)
+    return has_e, has_ln, has_trig
 
 
 def _ident(it):
@@ -44,7 +63,8 @@ def _report_unverified(items):
             print(f"    {_ident(it)}  -- {it.note}")
 
 
-def stage(prompt, items, type, subtype=None, problem_source=None, answer_source=None):
+def stage(prompt, items, type, subtype=None, difficulty="medium",
+          problem_source=None, answer_source=None):
     """Persist a batch of generated Items as 'staged' problems for approval.
 
     type: the single registered problem-type name applied to EVERY problem in
@@ -52,7 +72,9 @@ def stage(prompt, items, type, subtype=None, problem_source=None, answer_source=
     subtype: optional depth-1 label within the type (e.g. a method like
     "integration_by_parts"), applied to every problem in the batch. CHECK
     existing subtypes first (`db.subtypes_by_type`) so names don't drift.
-    Items flagged with the gotcha() wrapper carry `gotcha = 1`. Returns
+    difficulty: batch default ('easy'|'medium'|'hard'); a per-item easy()/hard()
+    wrapper overrides it. Items flagged with gotcha() carry `gotcha = 1`; the
+    has_e / has_ln / has_trig content flags are auto-detected. Returns
     (batch_id, [problem_ids]) and prints a summary including any items that
     could not be verified, so they are never silently treated as graded.
     """
@@ -101,6 +123,8 @@ def stage(prompt, items, type, subtype=None, problem_source=None, answer_source=
             p["problem_source"] = problem_source or it.problem_source
             p["answer_source"] = answer_source or it.answer_source
             p["gotcha"] = it.gotcha
+            p["difficulty"] = it.difficulty or difficulty
+            p["has_e"], p["has_ln"], p["has_trig"] = _content_flags(it)
             ids.append(db.insert_staged_problem(conn, batch_id, p))
 
         type_id = db.get_or_create_type(

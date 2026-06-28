@@ -87,6 +87,8 @@ class Item:
     expression_2: str | None = None
     expression_3: str | None = None
     gotcha: bool = False  # instructive trap; set via the gotcha() wrapper
+    difficulty: str | None = None  # easy|medium|hard via easy()/medium()/hard();
+    #                                None -> the batch default passed to stage()
     # By default stage() stamps the canonical instruction from the type registry
     # (single source). A generator that builds a per-problem instruction (e.g.
     # taylor encodes the point/order) sets this True to keep its own.
@@ -113,8 +115,29 @@ def gotcha(item):
 
         gotcha(determinant([[1, 2, 3], [4, 5, 6]]))   # non-square -> undefined
         gotcha(critical_points("x**3"))               # CP that isn't an extremum
+
+    A gotcha is anything (a) literally not doable (det of a non-square matrix),
+    (b) atypical in an interesting way (a definite integral that evaluates to 0),
+    or (c) where a general rule is violated (∫x^n is x^{n+1}/(n+1) — except n=-1,
+    which is ln|x|).
     """
     item.gotcha = True
+    return item
+
+
+def easy(item):
+    """Mark an item easy (sets problem.difficulty). Wrap a generator call."""
+    item.difficulty = "easy"
+    return item
+
+
+def medium(item):
+    item.difficulty = "medium"
+    return item
+
+
+def hard(item):
+    item.difficulty = "hard"
     return item
 
 

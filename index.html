@@ -41,7 +41,13 @@
     ol.problems li.subtype-head:hover { text-decoration: underline; }
     ol.problems li.subtype-head .muted { font-weight: 400; }
     ol.problems .empty { list-style: none; margin-left: -1.3rem; color: #777; font-style: italic; }
-    .gotcha { display: inline-block; font-size: .68rem; color: #b00; border: 1px solid #e0b0b0; border-radius: 3px; padding: 0 .3rem; margin-right: .4rem; vertical-align: middle; text-transform: uppercase; letter-spacing: .3px; }
+    .rowmeta { display: flex; flex-wrap: wrap; gap: .3rem; align-items: center; margin-bottom: .2rem; }
+    .gotcha { display: inline-block; font-size: .62rem; color: #b00; border: 1px solid #e0b0b0; border-radius: 3px; padding: 0 .3rem; text-transform: uppercase; letter-spacing: .3px; }
+    .diff { font-size: .62rem; text-transform: uppercase; letter-spacing: .3px; border-radius: 3px; padding: 0 .3rem; border: 1px solid #ccc; color: #555; }
+    .diff-easy { color: #1d7a4d; border-color: #aceac8; }
+    .diff-medium { color: #97700a; border-color: #ecd9a0; }
+    .diff-hard { color: #b00; border-color: #e0b0b0; }
+    .ftag { font-size: .62rem; font-family: ui-monospace, monospace; color: #456; background: #eef2f7; border: 1px solid #dde3ea; border-radius: 3px; padding: 0 .3rem; }
     .pq { display: block; }
     .pq .instr { font-size: .8rem; color: #777; text-transform: lowercase; }
     .pq .mline + .mline { margin-top: 2px; }
@@ -165,7 +171,7 @@ function renderProblemRow(p) {
 
   const pq = document.createElement("span");
   pq.className = "pq";
-  pq.innerHTML = (p.gotcha ? `<span class="gotcha">gotcha</span>` : "") + renderStatement(p);
+  pq.innerHTML = rowMeta(p) + renderStatement(p);
 
   const stats = document.createElement("span");
   stats.className = "stats muted";
@@ -174,6 +180,17 @@ function renderProblemRow(p) {
   li.append(pq, stats);
   li.onclick = () => toggleSelect(p.id);
   return li;
+}
+
+// gotcha + difficulty + content flags as a small tag row above the problem
+function rowMeta(p) {
+  let t = "";
+  if (p.gotcha) t += `<span class="gotcha">gotcha</span>`;
+  t += `<span class="diff diff-${p.difficulty}">${escapeHtml(p.difficulty)}</span>`;
+  if (p.has_e) t += `<span class="ftag">e</span>`;
+  if (p.has_ln) t += `<span class="ftag">ln</span>`;
+  if (p.has_trig) t += `<span class="ftag">sin/cos</span>`;
+  return `<div class="rowmeta">${t}</div>`;
 }
 
 function statsLine(p) {

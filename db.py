@@ -57,6 +57,10 @@ CREATE TABLE IF NOT EXISTS problem (
     answer_source       TEXT NOT NULL,
     status              TEXT NOT NULL DEFAULT 'staged', -- staged|approved|rejected
     gotcha              INTEGER NOT NULL DEFAULT 0,     -- instructive trap; weighted in drilling
+    difficulty          TEXT NOT NULL DEFAULT 'medium', -- easy|medium|hard (curated)
+    has_e               INTEGER NOT NULL DEFAULT 0,     -- involves Euler's e / exp (auto)
+    has_ln              INTEGER NOT NULL DEFAULT 0,     -- involves natural log (auto)
+    has_trig            INTEGER NOT NULL DEFAULT 0,     -- involves sine/cosine (auto)
     created_at          TEXT NOT NULL,
     approved_at         TEXT
 );
@@ -164,8 +168,9 @@ def insert_staged_problem(conn, batch_id, problem):
         """INSERT INTO problem
            (batch_id, instructions, formula_1, formula_2, formula_3,
             expression_1, expression_2, expression_3, answer, answer_verified_by,
-            problem_source, answer_source, gotcha, status, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'staged', ?)""",
+            problem_source, answer_source, gotcha, difficulty,
+            has_e, has_ln, has_trig, status, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'staged', ?)""",
         (
             batch_id,
             problem["instructions"],
@@ -180,6 +185,10 @@ def insert_staged_problem(conn, batch_id, problem):
             problem["problem_source"],
             problem["answer_source"],
             1 if problem.get("gotcha") else 0,
+            problem.get("difficulty") or "medium",
+            1 if problem.get("has_e") else 0,
+            1 if problem.get("has_ln") else 0,
+            1 if problem.get("has_trig") else 0,
             now(),
         ),
     )
