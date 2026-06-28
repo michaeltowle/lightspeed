@@ -17,7 +17,7 @@ PORT = 8000
 
 PAGES = {
     "/": "index.html",
-    "/add-problems": "add-problems.html",
+    "/staged": "staged.html",
     "/set": "set.html",
 }
 

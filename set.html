@@ -166,6 +166,14 @@
       font-size: 10.5px;
       color: #999;
     }
+    /* gotcha badge — only shown on the review screen, never while solving */
+    .gotcha {
+      display: inline-block; align-self: flex-start;
+      font-family: 'IBM Plex Mono', monospace;
+      font-size: 9px; font-weight: 500; letter-spacing: 0.4px; text-transform: uppercase;
+      color: #b00; border: 1px solid #e0b0b0; border-radius: 3px; padding: 1px 4px;
+      margin-bottom: 4px;
+    }
     .prob-time {
       flex: 0 0 64px;
       text-align: right;
@@ -330,7 +338,7 @@ function showReview() {
   const rows = problems.map((p, i) => `
     <div class="review-row">
       <span class="prob-index">${String(i + 1).padStart(2, "0")}</span>
-      <span class="prob-statement">${renderStatement(p)}</span>
+      <span class="prob-statement">${p.gotcha ? '<span class="gotcha">gotcha</span>' : ''}${renderStatement(p)}</span>
       <span class="prob-time">${fmtTime(durations[p.id])}</span>
       <span class="prob-answer gradable" data-pid="${p.id}">${math(p.answer)}</span>
     </div>`).join("");

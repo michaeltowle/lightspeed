@@ -35,7 +35,11 @@
     ol.problems li.prow { margin: .3rem 0; padding: .3rem .5rem; cursor: pointer; user-select: none; border: 1px solid transparent; border-radius: 2px; }
     ol.problems li.prow:hover { background: #f7f7f7; }
     ol.problems li.prow.selected { background: #ececec; border-color: #000; border-left-width: 4px; }
+    ol.problems li.subtype-head { list-style: none; margin: .5rem 0 .15rem -1.3rem; font-size: .82rem; font-weight: 600; color: #333; cursor: pointer; user-select: none; }
+    ol.problems li.subtype-head:hover { text-decoration: underline; }
+    ol.problems li.subtype-head .muted { font-weight: 400; }
     ol.problems .empty { list-style: none; margin-left: -1.3rem; color: #777; font-style: italic; }
+    .gotcha { display: inline-block; font-size: .68rem; color: #b00; border: 1px solid #e0b0b0; border-radius: 3px; padding: 0 .3rem; margin-right: .4rem; vertical-align: middle; text-transform: uppercase; letter-spacing: .3px; }
     .pq { display: block; }
     .pq .instr { font-size: .8rem; color: #777; text-transform: lowercase; }
     .pq .mline + .mline { margin-top: 2px; }
@@ -52,11 +56,11 @@
   </div>
 
   <p id="empty" class="muted" hidden>no types yet. approve some problems at
-    <a href="/add-problems">/add-problems</a> first.</p>
+    <a href="/staged">/staged</a> first.</p>
 
   <ul class="types" id="types"></ul>
 
-  <p id="staged-link" hidden><a href="/add-problems"></a></p>
+  <p id="staged-link" hidden><a href="/staged"></a></p>
 
 <script>
 const selected = new Set();          // global selection of problem ids
@@ -126,25 +130,44 @@ function renderProblems(ol, problems) {
     ol.innerHTML = `<li class="empty">no approved problems of this type</li>`;
     return;
   }
+  // group by subtype (first subtype, or "" for none) so you can drill a
+  // technique (click the subtype header) or pick individual problems.
+  const groups = new Map();
   for (const p of problems) {
-    const li = document.createElement("li");
-    li.className = "prow";
-    li.dataset.id = p.id;
-    if (selected.has(p.id)) li.classList.add("selected");
-
-    const pq = document.createElement("span");
-    pq.className = "pq";
-    pq.innerHTML = renderStatement(p);
-
-    const stats = document.createElement("span");
-    stats.className = "stats muted";
-    stats.textContent = statsLine(p);
-
-    li.append(pq, stats);
-    li.onclick = () => toggleSelect(p.id);
-    ol.appendChild(li);
+    const st = (p.subtypes && p.subtypes[0]) || "";
+    if (!groups.has(st)) groups.set(st, []);
+    groups.get(st).push(p);
+  }
+  for (const [st, ps] of groups) {
+    if (st) {
+      const head = document.createElement("li");
+      head.className = "subtype-head";
+      head.innerHTML = `${escapeHtml(st)} <span class="muted">(${ps.length}) — click to select all</span>`;
+      head.onclick = () => toggleSelectMany(ps.map(p => p.id));
+      ol.appendChild(head);
+    }
+    for (const p of ps) ol.appendChild(renderProblemRow(p));
   }
   if (window.MathJax?.typesetPromise) MathJax.typesetPromise([ol]);
+}
+
+function renderProblemRow(p) {
+  const li = document.createElement("li");
+  li.className = "prow";
+  li.dataset.id = p.id;
+  if (selected.has(p.id)) li.classList.add("selected");
+
+  const pq = document.createElement("span");
+  pq.className = "pq";
+  pq.innerHTML = (p.gotcha ? `<span class="gotcha">gotcha</span>` : "") + renderStatement(p);
+
+  const stats = document.createElement("span");
+  stats.className = "stats muted";
+  stats.textContent = statsLine(p);
+
+  li.append(pq, stats);
+  li.onclick = () => toggleSelect(p.id);
+  return li;
 }
 
 function statsLine(p) {
@@ -157,11 +180,25 @@ function statsLine(p) {
 function toggleSelect(id) {
   if (selected.has(id)) selected.delete(id);
   else selected.add(id);
-  // a problem can appear under multiple types — keep every rendered row in sync
+  syncRows(id);
+  refreshBar();
+}
+
+// Select-all / deselect-all for a subtype group (drill a whole technique).
+function toggleSelectMany(ids) {
+  const allSelected = ids.every(id => selected.has(id));
+  ids.forEach(id => {
+    if (allSelected) selected.delete(id); else selected.add(id);
+    syncRows(id);
+  });
+  refreshBar();
+}
+
+// a problem can appear under multiple types — keep every rendered row in sync
+function syncRows(id) {
   document.querySelectorAll(`li.prow[data-id="${id}"]`).forEach(row =>
     row.classList.toggle("selected", selected.has(id))
   );
-  refreshBar();
 }
 
 function refreshBar() {

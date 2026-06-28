@@ -11,13 +11,14 @@
 
   Types are batch-level (one type per batch — batches are monotype), shown
   read-only with db_count (already approved) + active_count (not rejected) =
-  new_total. A problem is rendered from its decomposed fields (instructions,
-  formula_1..3, expression_1..3, answer); empty fields are simply not shown.
+  new_total, plus the subtype and the batch's gotcha share. A problem is rendered
+  from its decomposed fields (instructions, formula_1..3, expression_1..3,
+  answer); empty fields are simply not shown.
 -->
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <title>lightspeed — add problems</title>
+  <title>lightspeed — staged</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Spectral:ital,wght@0,400;0,500;0,600;1,400&display=swap" rel="stylesheet">
@@ -134,6 +135,8 @@
       padding: 0 2px;
     }
     .type-none { color: #999; font-family: 'IBM Plex Mono', monospace; font-size: 10.5px; }
+    .subtype-line { font-family: 'IBM Plex Mono', monospace; font-size: 10.5px; color: #777; margin-top: 4px; }
+    .gotcha-line { font-family: 'IBM Plex Mono', monospace; font-size: 10.5px; color: #a04060; margin-top: 4px; }
 
     .batch-right {
       flex: 0 0 240px;
@@ -265,7 +268,7 @@
 <nav class="nav">
   <a href="/">← index</a>
   <span class="nav-sep">|</span>
-  <span class="nav-title">add problems</span>
+  <span class="nav-title">staged</span>
 </nav>
 
 <div class="content">
@@ -317,6 +320,14 @@ function esc(s) {
 
 function activeCount(batch) {
   return batch.problems.filter(p => !rejected.has(p.id)).length;
+}
+
+// Share of the whole batch flagged as instructive traps (gotchas).
+function gotchaSummary(batch) {
+  const total = batch.problems.length;
+  const n = batch.problems.filter(p => p.gotcha).length;
+  const pct = total ? Math.round(100 * n / total) : 0;
+  return `gotchas: ${n}/${total} (${pct}%)`;
 }
 
 function updateCardTitle() {
@@ -408,6 +419,9 @@ function renderBatch(batch) {
     <div class="batch-left">
       <p class="batch-prompt">${esc(batch.prompt)}</p>
       <div class="type-counts">${typeCountsHtml}</div>
+      ${batch.subtypes && batch.subtypes.length
+        ? `<div class="subtype-line">subtype: ${batch.subtypes.map(esc).join(', ')}</div>` : ''}
+      <div class="gotcha-line">${gotchaSummary(batch)}</div>
     </div>
     <div class="batch-right">
       <button class="btn-reject-all">reject all</button>
