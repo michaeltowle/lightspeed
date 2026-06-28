@@ -18,7 +18,7 @@ PORT = 8000
 PAGES = {
     "/": "index.html",
     "/add-problems": "add-problems.html",
-    "/quiz": "quiz.html",
+    "/set": "set.html",
 }
 
 
@@ -64,16 +64,10 @@ class Handler(BaseHTTPRequestHandler):
         if re.fullmatch(r"/[\w.-]+\.html", path):
             return self._send_file(path.lstrip("/"))
 
-        # GC orphaned tags whenever tags are surfaced (after rejected batches
-        # settle). Decoupled from the reject action so reject-all undo is intact.
         if path == "/api/staged":
-            return self._with_conn(
-                lambda c: (db.delete_orphaned_tags(c), db.staged_batches(c))[1],
-                commit=True)
-        if path == "/api/tags":
-            return self._with_conn(
-                lambda c: (db.delete_orphaned_tags(c), db.list_tags(c))[1],
-                commit=True)
+            return self._with_conn(db.staged_batches)
+        if path == "/api/types":
+            return self._with_conn(db.list_types)
         if path == "/api/problems":
             return self._get_problems(qs)
 
@@ -85,12 +79,6 @@ class Handler(BaseHTTPRequestHandler):
             body = self._read_json()
         except json.JSONDecodeError:
             return self._send_json({"error": "invalid json"}, 400)
-
-        if path == "/api/tags":
-            return self._with_conn(
-                lambda c: {"id": db.get_or_create_tag(c, body["display_text"])},
-                commit=True,
-            )
 
         m = re.fullmatch(r"/api/batches/(\d+)/approve", path)
         if m:
@@ -116,39 +104,9 @@ class Handler(BaseHTTPRequestHandler):
                 commit=True,
             )
 
-        m = re.fullmatch(r"/api/problems/(\d+)/star", path)
-        if m:
-            pid = int(m.group(1))
+        if path == "/api/problem-sets":
             return self._with_conn(
-                lambda c: (
-                    db.set_problem_starred(c, pid, body.get("starred", True)),
-                    {"ok": True},
-                )[1],
-                commit=True,
-            )
-
-        m = re.fullmatch(r"/api/problems/(\d+)/problematic", path)
-        if m:
-            pid = int(m.group(1))
-            return self._with_conn(
-                lambda c: (
-                    db.set_problem_problematic(c, pid, body.get("problematic", True)),
-                    {"ok": True},
-                )[1],
-                commit=True,
-            )
-
-        if path == "/api/problem-lists":
-            return self._with_conn(
-                lambda c: {
-                    "id": db.create_problem_list(
-                        c,
-                        is_timed=body.get("is_timed", False),
-                        finish_time=body.get("finish_time"),
-                        time_per_problem=body.get("time_per_problem"),
-                    )
-                },
-                commit=True,
+                lambda c: {"id": db.create_problem_set(c)}, commit=True
             )
 
         if path == "/api/attempts":
@@ -168,9 +126,9 @@ class Handler(BaseHTTPRequestHandler):
         self._send_json(result, status)
 
     def _get_problems(self, qs):
-        if "tag" in qs:
-            tag_id = int(qs["tag"][0])
-            return self._with_conn(lambda c: db.problems_by_tag(c, tag_id))
+        if "type" in qs:
+            type_id = int(qs["type"][0])
+            return self._with_conn(lambda c: db.problems_by_type(c, type_id))
         if "ids" in qs:
             ids = [int(i) for i in qs["ids"][0].split(",") if i]
             return self._with_conn(lambda c: db.problems_by_ids(c, ids))
@@ -178,16 +136,17 @@ class Handler(BaseHTTPRequestHandler):
 
     def _save_attempts(self, body):
         def fn(conn):
-            plist_id = body["problem_list_id"]
+            set_id = body["problem_set_id"]
             for a in body.get("attempts", []):
                 db.record_attempt(
-                    conn, plist_id, a["problem_id"], a.get("answered_correctly")
+                    conn, set_id, a["problem_id"],
+                    a.get("answered_correctly"), a.get("duration_seconds"),
                 )
             if body.get("finish_time") is not None:
-                db.set_problem_list_timing(
-                    conn, plist_id, body["finish_time"], body.get("time_per_problem")
+                db.set_problem_set_timing(
+                    conn, set_id, body["finish_time"], body.get("time_per_problem")
                 )
-            db.finalize_problem_list_counts(conn, plist_id)
+            db.finalize_problem_set_counts(conn, set_id)
             return {"ok": True}
 
         return self._with_conn(fn, commit=True)
