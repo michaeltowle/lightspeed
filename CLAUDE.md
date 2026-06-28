@@ -43,7 +43,10 @@ Zero-install: Python stdlib + sympy only. No API key, no Node.
   **reject is per-problem**. No type-picking in the UI.
 - **Types are batch-level and Claude-assigned** at generation time (one type per
   batch — batches are monotype). A type binds its generator + canonical
-  instruction (`problem_types.TYPES`); the owner does not hand-maintain them.
+  instruction (`problem_types.TYPES`); the owner does not hand-maintain them. The
+  `default_instruction` is the type's **display name** in the UI and the single
+  source: `stage()` stamps it onto every problem (a generator that specialized
+  its instruction sets `instructions_specialized` to keep its own).
 - **Subtypes** are an optional depth-1 label *within* a type (method/variant, e.g.
   `integration_by_parts`). Before coining one, **check existing subtypes for that
   type** (`db.subtypes_by_type`) so names don't drift. **Gotchas** (instructive
@@ -65,6 +68,7 @@ Zero-install: Python stdlib + sympy only. No API key, no Node.
 - `staged.html` — review/approve/reject surface (interim UI).
 - `index.html` — browse bank by type, select, start a set (wireframe).
 - `set.html` — one-at-a-time timed run + click-to-grade + finalize (wireframe).
+- `types.html` — read-only catalog of all problem types (interim UI).
 - `lightspeed.db` — created on first run; disposable.
 
 ## Docs

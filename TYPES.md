@@ -29,6 +29,12 @@ Two finer signals live on the problem, not the type:
   `problem.gotcha` so traps get due weight; shown as a badge everywhere except
   while solving (so the trap survives).
 
+Every type carries a canonical **default_instruction** — the imperative shown as
+the type's name in the UI (`summation` → *evaluate the sum*). It is the single
+source: `stage()` stamps it onto each problem's `instructions`, except where a
+generator builds a specialized instruction (e.g. `taylor` encodes the order) and
+sets `instructions_specialized`. The live catalog is the `/types` page.
+
 ## Registry
 
 | Type | Generator | Presentation | Verification method | Always verifiable? |

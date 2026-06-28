@@ -50,15 +50,16 @@ not displayed.
 
 ### `type`
 A registered problem type — the guardrail binding a type's name to the generator
-that produces it and its canonical instruction. Seeded on use at staging time
-from the `problem_types.TYPES` registry (mirrors `TYPES.md`).
+that produces it and its canonical instruction. Seeded **in full** from the
+`problem_types.TYPES` registry at staging time (so `/types` lists every type),
+mirroring `TYPES.md`.
 
 | column              | type | notes |
 |---------------------|------|-------|
 | id                  | INTEGER PK | |
-| name                | TEXT NOT NULL UNIQUE | e.g. `critical_points` |
+| name                | TEXT NOT NULL UNIQUE | generator-derived id, e.g. `critical_points` |
 | generator           | TEXT | the generator function in `problem_types.py` |
-| default_instruction | TEXT | the type's canonical instruction; NULL for theme types that span generators |
+| default_instruction | TEXT | canonical instruction, shown as the type's **display name**; `stage()` stamps it onto each problem; NULL for theme types |
 
 ### `problem_type`
 Join table: which types apply to which problems. Types are applied **per batch**

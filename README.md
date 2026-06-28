@@ -84,6 +84,10 @@ seeded into the `type` table on use. An optional **subtype**
 type — so you can later drill one technique or the whole type; reuse existing
 subtype names (`db.subtypes_by_type`) so they don't drift. Instructive traps are
 flagged with the `gotcha()` wrapper, setting `problem.gotcha` for due weight.
+A type's `default_instruction` is its canonical instruction and the **name shown
+in the UI** (`summation` → *evaluate the sum*); `stage()` stamps it onto every
+problem (single source), so editing it once changes all regenerated problems —
+unless a generator specialized its instruction (e.g. `taylor` encodes the order).
 **Why:** types are Claude's responsibility, applied per-prompt (not per-problem),
 and the registry is the guardrail: one type → one generator → one display shape,
 so changes to rendering have predictable effects. *(Implication: keep each prompt
@@ -139,8 +143,8 @@ python server.py          # serves pages + JSON API at http://localhost:8000/
 `server.py` is a stdlib `http.server`; it owns the SQLite DB and exposes a small
 JSON API (`/api/staged`, `/api/types`, `/api/batches/{id}/approve`, per-problem
 reject, problems, problem-sets, attempts). Pages: `/` (index), `/staged`,
-`/set`. Only ever one instance on :8000 — a stale process will silently keep
-answering with old code.
+`/set`, `/types`. Only ever one instance on :8000 — a stale process will silently
+keep answering with old code.
 
 ## Files
 
@@ -154,5 +158,6 @@ answering with old code.
 - `server.py` — local server: serves pages + JSON API. No sympy/LLM at runtime.
 - `staged.html` — review/approve surface for staged problems.
 - `index.html` / `set.html` — browse-and-build / one-at-a-time timed runner.
+- `types.html` — read-only catalog of all types (instruction, subtypes, count).
 - `lightspeed.db` — created on first run; disposable (recreated automatically).
 
