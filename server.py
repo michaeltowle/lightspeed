@@ -64,10 +64,16 @@ class Handler(BaseHTTPRequestHandler):
         if re.fullmatch(r"/[\w.-]+\.html", path):
             return self._send_file(path.lstrip("/"))
 
+        # GC orphaned tags whenever tags are surfaced (after rejected batches
+        # settle). Decoupled from the reject action so reject-all undo is intact.
         if path == "/api/staged":
-            return self._with_conn(lambda c: db.staged_batches(c))
+            return self._with_conn(
+                lambda c: (db.delete_orphaned_tags(c), db.staged_batches(c))[1],
+                commit=True)
         if path == "/api/tags":
-            return self._with_conn(lambda c: db.list_tags(c))
+            return self._with_conn(
+                lambda c: (db.delete_orphaned_tags(c), db.list_tags(c))[1],
+                commit=True)
         if path == "/api/problems":
             return self._get_problems(qs)
 

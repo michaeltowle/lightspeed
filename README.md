@@ -83,6 +83,10 @@ Claude's responsibility, applied per-prompt (not per-problem) so a homogeneous
 prompt → consistent tags. Bulk re-tagging/normalization is a script Claude runs
 over the DB, never manual curation. *(Implication: keep prompts homogeneous —
 one technique per prompt — or the batch gets all techniques' tags.)*
+**Cleanup:** tags left attached only to rejected problems are garbage-collected
+automatically (`db.delete_orphaned_tags`, run when `/api/staged` or `/api/tags`
+loads), so rejecting a batch never leaves an orphaned tag behind — unless another
+live batch still uses it, in which case it stays.
 
 ### Step 5 — Review the batch  *(`add-problems.html` at `/add-problems`)*
 **What:** The creator opens `/add-problems`, sees staged problems grouped by

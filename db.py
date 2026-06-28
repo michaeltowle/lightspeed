@@ -314,6 +314,32 @@ def apply_tags_to_batch(conn, batch_id, tag_ids):
             )
 
 
+def delete_orphaned_tags(conn):
+    """Delete tags no longer attached to any LIVE (staged or approved) problem.
+
+    Rejecting a batch leaves its problem_tag rows pointing at now-rejected
+    problems; if no other staged/approved problem shares the tag, the tag is
+    orphaned. We remove the dangling problem_tag rows and the tag itself. A tag
+    still used by any live problem (e.g. another staged batch) is kept — the
+    check spans the whole DB, not one batch. Safe because rejected problems are
+    never displayed and dedup keys on problem text, not tags. Returns the list
+    of deleted display_texts. Run as garbage collection when tags are surfaced
+    (see server's /api/staged and /api/tags), which keeps it clear of the
+    reject-all undo: by the time a page reloads, the rejection is settled.
+    """
+    orphans = conn.execute(
+        """SELECT id, display_text FROM tag
+           WHERE id NOT IN (
+               SELECT pt.tag_id FROM problem_tag pt
+               JOIN problem p ON p.id = pt.problem_id
+               WHERE p.status IN ('staged', 'approved'))"""
+    ).fetchall()
+    for r in orphans:
+        conn.execute("DELETE FROM problem_tag WHERE tag_id = ?", (r["id"],))
+        conn.execute("DELETE FROM tag WHERE id = ?", (r["id"],))
+    return [r["display_text"] for r in orphans]
+
+
 def reject_problem(conn, problem_id):
     conn.execute(
         "UPDATE problem SET status = 'rejected' WHERE id = ?", (problem_id,)
