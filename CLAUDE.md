@@ -32,7 +32,7 @@ recency / weak spots. Single user (the repo owner).
 - `python server.py` → serves pages + JSON API at http://localhost:8000/
   (stdlib `http.server`; no LLM/sympy at runtime).
 - Generation happens in **Claude Code sessions**, not in the app: in a session,
-  call `generate.py` helpers, then `stage(prompt, items, tags=[...])`.
+  call `generate.py` helpers, then `stage(prompt, items, type="...")`.
 
 Zero-install: Python stdlib + sympy only. No API key, no Node.
 
@@ -40,25 +40,26 @@ Zero-install: Python stdlib + sympy only. No API key, no Node.
 
 - **Generation → staging → review.** Generated problems are `staged`; the owner
   reviews at `/add-problems`. **Approve is batch-level** (one button per batch);
-  **reject is per-problem**; **star** flags interesting problems. No tag-picking
-  in the UI.
-- **Tags are batch-level and Claude-assigned** at generation time. The owner will
-  not hand-maintain tags; bulk re-tagging is a script Claude runs over the DB.
+  **reject is per-problem**. No type-picking in the UI.
+- **Types are batch-level and Claude-assigned** at generation time (one type per
+  batch — batches are monotype). A type binds its generator + canonical
+  instruction (`problem_types.TYPES`); the owner does not hand-maintain them.
 - **Batch size ~50 problems** per prompt. Keep prompts homogeneous (one technique
-  per prompt) so batch-level tags stay meaningful.
-- **Dedup at generation time** on exact `latex_problem_text`, against the whole DB
-  regardless of status (so rejected problems never resurface).
+  per prompt) so the batch's single type stays meaningful.
+- **Dedup at generation time** on the decomposed statement fields (`instructions`
+  + `formula_*` + `expression_*`), against the whole DB regardless of status (so
+  rejected problems never resurface).
 
 ## Files
 
-- `db.py` — SQLite schema + all data access (owns migrations).
+- `db.py` — SQLite schema + all data access (owns the schema).
 - `problem_types.py` — sympy compute+verify generators (one function per problem
-  type). Registered in `TYPES.md`.
-- `generate.py` — `stage()` (dedup + staging).
+  type) + the `TYPES` registry. Registered in `TYPES.md`.
+- `generate.py` — `stage()` (dedup + staging; one `type=` per batch).
 - `server.py` — local server: pages + JSON API.
-- `add-problems.html` — review/approve/reject/star surface (interim UI).
-- `index.html` — browse bank by tag, select, launch quiz/practice (wireframe).
-- `quiz.html` — timed/untimed practice + click-to-grade + finalize (wireframe).
+- `add-problems.html` — review/approve/reject surface (interim UI).
+- `index.html` — browse bank by type, select, start a set (wireframe).
+- `set.html` — one-at-a-time timed run + click-to-grade + finalize (wireframe).
 - `lightspeed.db` — created on first run; disposable.
 
 ## Docs
@@ -72,4 +73,4 @@ Zero-install: Python stdlib + sympy only. No API key, no Node.
 
 All three pages are functional as plain wireframes (final visual design comes
 from Claude Design): `add-problems.html` (review/approve), `index.html` (browse +
-build set), `quiz.html` (run + grade + finalize). The full loop works end to end.
+build set), `set.html` (run + grade + finalize). The full loop works end to end.

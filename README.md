@@ -52,9 +52,9 @@ parametric distributions (`Dist`, continuous or discrete). These are verified
 three ways: the density/mass totals 1, sympy returns a closed form, **and** an
 independent numeric cross-check at concrete parameter values agrees (mpmath
 quadrature for continuous, a direct truncated sum for discrete) — the symbolic
-engine never grades itself. These problems are stored as three `\n`-separated
-lines (`X ∼ Dist` / density + support / the ask); every page splits
-`latex_problem_text` on `\n` and renders one math block per line.
+engine never grades itself. These problems are stored decomposed — `formula_1`
+(`X ∼ Dist`), `formula_2` (density + support), `expression_1` (the ask) — and
+every page renders each non-empty field as its own math block.
 **Why:** sympy is the source of truth. Claude never writes the answer itself —
 it only chooses the problem and lets sympy produce/verify the answer.
 
@@ -75,53 +75,51 @@ reported, so unverified problems can never enter the staging queue.
 **Why:** staging keeps unreviewed problems out of the bank until approved, and
 the `batch` row preserves provenance and groups the set for review.
 
-### Step 4 — Tag  *(generation time, batch-level, Claude-assigned)*
-**What:** Claude assigns tags for the whole batch via `stage(..., tags=[...])`;
-every problem in the batch inherits them.
-**Why:** the creator refuses to hand-maintain tags at scale. Tags are therefore
-Claude's responsibility, applied per-prompt (not per-problem) so a homogeneous
-prompt → consistent tags. Bulk re-tagging/normalization is a script Claude runs
-over the DB, never manual curation. *(Implication: keep prompts homogeneous —
-one technique per prompt — or the batch gets all techniques' tags.)*
-**Cleanup:** tags left attached only to rejected problems are garbage-collected
-automatically (`db.delete_orphaned_tags`, run when `/api/staged` or `/api/tags`
-loads), so rejecting a batch never leaves an orphaned tag behind — unless another
-live batch still uses it, in which case it stays.
+### Step 4 — Type  *(generation time, batch-level)*
+**What:** Each batch is **monotype** — `stage(prompt, items, type="derivative")`
+applies one registered type to every problem in the batch. A type is bound to its
+generator and a canonical instruction (the `problem_types.TYPES` registry) and is
+seeded into the `type` table on use.
+**Why:** types are Claude's responsibility, applied per-prompt (not per-problem),
+and the registry is the guardrail: one type → one generator → one display shape,
+so changes to rendering have predictable effects. *(Implication: keep each prompt
+to a single technique.)*
 
 ### Step 5 — Review the batch  *(`add-problems.html` at `/add-problems`)*
 **What:** The creator opens `/add-problems`, sees staged problems grouped by
-prompt. Tags are shown read-only with a live count:
-`{tag}: {already-in-bank} + {active} = {new-total}`. Clicking a row cycles its
-state: **normal → starred → rejected → normal**. **Approve is batch-level**:
-one "Approve" button persists stars/rejects then flips every remaining staged
-problem to `approved` (the bank). An in-session **undo** link reverts the
-approval if needed.
+prompt. The batch type is shown read-only with a live count:
+`{type}: {already-in-bank} + {active} = {new-total}`. Clicking a row cycles its
+state: **normal → rejected → normal**. **Approve is batch-level**: one "Approve"
+button persists rejects then flips every remaining staged problem to `approved`
+(the bank). An in-session **undo** link reverts the approval if needed.
 **Why:** batches are large (~50), and the default outcome is "accept the lot."
-Reviewing means cycling the few duds to rejected (and starring any gems), then
-approving the whole batch in one action. Since `stage()` enforces verified-only
-staging, every problem on this page has a confirmed answer — no badge needed.
-There is **no tag-picking here** (Claude assigns tags at generation time).
+Reviewing means cycling the few duds to rejected, then approving the whole batch
+in one action. Since `stage()` enforces verified-only staging, every problem on
+this page has a confirmed answer — no badge needed. There is **no type-picking
+here** (the batch's type is set at generation).
 
 ### Step 6 — Browse & build a set  *(`index.html`)*
-**What:** Browse the bank by tag (with counts). Each problem row shows its
-attempt stats — total attempts, quiz attempts, and percent correct (overall plus
-quiz / practice splits). Click a row to select/deselect it (selection is global
-across tags); "quiz" (timed) or "practice" (untimed) enable once >1 is selected →
-hands the selected ids to the quiz page via `/quiz?timed=0|1&ids=...`.
-**Why:** turn the curated bank into a targeted practice/quiz set, informed by
-where reps and accuracy are weak.
+**What:** Browse the bank by type (with counts). Each problem row shows its
+attempt stats — total attempts, percent correct, and average time. Click a row to
+select/deselect it (selection is global across types); "start set" enables once
+>1 is selected → hands the selected ids to the run page via `/set?ids=...`.
+**Why:** turn the curated bank into a targeted set, informed by where reps,
+accuracy, and speed are weak.
 *Status: functional wireframe (plain styling; final design via Claude Design).*
 
-### Step 7 — Practice / quiz & record  *(`quiz.html`)*
-**What:** On load, creates a `ProblemList` (its id is the `#N` in the header) and,
-if timed, starts a timer. Problems shown in random order, answers hidden. "Stop &
-reveal" stops the timer and reveals each answer in its cell; each answer cell
-self-grades by click cycle (neutral → green = correct → red = incorrect → neutral
-= ungraded). "Finalize" (enabled once ≥1 graded) writes an `Attempt` per graded
-problem and saves the list's timing + correct/total counts.
-**Why:** the creator self-grades against the displayed sympy-verified answer; the
-recorded attempts feed the rep/recency/weak-spot tracking. Only graded problems
-become attempts; skipped (ungraded) ones are not recorded.
+### Step 7 — Run the set & record  *(`set.html`)*
+**What:** On load, creates a `ProblemSet` (its id is the `#N` in the header).
+Problems are shown in random order, **one at a time, answer hidden, no visible
+timer**. "Next" silently records the time spent on that problem and advances;
+after the last one, **all questions + all answers** appear. There each answer
+self-grades by click cycle (neutral → green = correct → red = incorrect →
+neutral), and every formula/expression has a copy button (raw LaTeX → Desmos).
+"Finalize" writes an `Attempt` per problem (its duration + grade) and the set's
+total / average timing.
+**Why:** timing every problem — without a visible clock egging you on — feeds the
+rep/recency/speed/weak-spot tracking; the creator self-grades against the
+displayed sympy-verified answer. Every problem is recorded with its time; grading
+is optional per problem.
 *Status: functional wireframe (plain styling; final design via Claude Design).*
 
 ## Running it
@@ -133,10 +131,10 @@ python server.py          # serves pages + JSON API at http://localhost:8000/
 ```
 
 `server.py` is a stdlib `http.server`; it owns the SQLite DB and exposes a small
-JSON API (`/api/staged`, `/api/tags`, `/api/batches/{id}/approve`, per-problem
-reject/star, problems, problem-lists, attempts). Pages: `/` (index),
-`/add-problems`, `/quiz`. Only ever one instance on :8000 — a stale process will
-silently keep answering with old code.
+JSON API (`/api/staged`, `/api/types`, `/api/batches/{id}/approve`, per-problem
+reject, problems, problem-sets, attempts). Pages: `/` (index), `/add-problems`,
+`/set`. Only ever one instance on :8000 — a stale process will silently keep
+answering with old code.
 
 ## Files
 
@@ -146,9 +144,9 @@ silently keep answering with old code.
   `variance`, `min_max`, `mle`, `known_value`, `factoring`, `identity`,
   `partial`, `double_integral`, …). The canonical registry is `TYPES.md`. Used
   from Claude Code sessions.
-- `generate.py` — `stage()` (dedup + staging).
+- `generate.py` — `stage()` (dedup + staging; monotype, one `type=` per batch).
 - `server.py` — local server: serves pages + JSON API. No sympy/LLM at runtime.
-- `add-problems.html` — review/approve/star surface for staged problems.
-- `index.html` / `quiz.html` — browse-and-build / timed practice (to be wired).
+- `add-problems.html` — review/approve surface for staged problems.
+- `index.html` / `set.html` — browse-and-build / one-at-a-time timed runner.
 - `lightspeed.db` — created on first run; disposable (recreated automatically).
 

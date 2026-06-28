@@ -7,9 +7,10 @@ you add or change a type (this mirrors the `schema.md` rule for the data model).
 
 Two orthogonal axes:
 
-- **Presentation** — the visual shape of `latex_problem_text`. Pages split it on
-  `\n` and render one math block per line, so presentation is encoded purely by
-  how many lines the generator emits.
+- **Presentation** — which decomposed fields the generator fills. A problem is
+  stored as `instructions` + up to three `formula_*` (definitions/givens) + up to
+  three `expression_*` (the operand) + `answer`. Each non-empty field renders as
+  its own math block (own copy button on the run page); empty fields are skipped.
 - **Verification** — the independent computational check that must pass before
   `stage()` will accept the problem (golden rule #1: answers are never
   LLM-guessed). `answer_verified_by` is non-NULL only when the check passes;
@@ -24,7 +25,7 @@ Two orthogonal axes:
 | Definite integral | `definite_integral(expr, a, b, var="x")` | single-expression | antiderivative re-differentiation **and** FTC cross-check `F(b) − F(a) ==` sympy's direct `∫ₐᵇ` | No — NULL on an unevaluated integral or special function |
 | Expectation (LOTUS) | `expectation(dist, g, g_latex)` | three-line | (1) density/mass totals 1, (2) sympy returns a closed form, (3) **independent numeric cross-check** at concrete params (mpmath quadrature / truncated sum) | No — NULL if any of the three fails |
 | Variance (LOTUS) | `variance(dist)` | three-line | both E[X] and E[X²] pass the expectation check, then `Var = E[X²] − E[X]²` | No — NULL if either moment fails |
-| Local extrema | `min_max(expr, var="x")` | single-expression | f'(cp) = 0 at each reported critical point (sympy `simplify` check); f'' ≠ 0 required (second derivative test must be conclusive). Reports "no local extrema" when there are no critical points | No — NULL if any CP fails the f'=0 check; inconclusive CPs (f''=0) are silently excluded |
+| Local extrema | `min_max(expr, var="x")` | formula-led | f'(cp) = 0 at each reported critical point (sympy `simplify` check); f'' ≠ 0 required (second derivative test must be conclusive). Reports "no local extrema" when there are no critical points | No — NULL if any CP fails the f'=0 check; inconclusive CPs (f''=0) are silently excluded |
 | Known value | `known_value(ask_latex, expr, decimals=None)` | single-expression | sympy **evaluates** the expression; the determinate result is the answer. `zoo` → "undefined" (e.g. tan(π/2)); `decimals=n` presents an n-place approximation (e, π) | No — NULL only on `nan` |
 | Factorization | `factoring(expr)` | single-expression | **expand-back**: `expand(factored) == expand(expr)` **and** the result is genuinely factored. An irreducible polynomial reports "(irreducible over ℚ)" | No — NULL only if the input is not a polynomial |
 | Algebraic law | `identity(prompt_latex, lhs, rhs)` | single-expression | **numeric cross-check**: lhs and rhs agree at three concrete positive points for every free symbol | No — NULL if the two sides disagree numerically |
@@ -45,35 +46,37 @@ Two orthogonal axes:
 | Matrix inverse | `matrix_inverse(rows)` | single-expression | non-square / singular → no-inverse verdict; else **A·A⁻¹ = I** check | No — NULL if A·A⁻¹ ≠ I |
 | Quadratic form | `quadratic_form(rows, variables)` | single-expression | sympy `expand(xᵀAx)` directly | **Yes** |
 | Switch order | `switch_order(expr, inner, outer, inner2, outer2)` | single-expression | both orderings evaluate to the same value (`simplify(v₁ − v₂) == 0`); answer is the reversed integral | No — NULL if the two orders disagree |
-| Critical points | `critical_points(expr, var="x")` | single-expression | f'(cp) = 0 at each reported point; "none" if no real roots, "every x" if f constant | No — NULL if a reported point fails the f'=0 check |
+| Critical points | `critical_points(expr, var="x")` | formula-led | f'(cp) = 0 at each reported point; "none" if no real roots, "every x" if f constant | No — NULL if a reported point fails the f'=0 check |
 
 `answer_verified_by` stores the verification *tool* — currently always `'sympy'`
 when the check passes, NULL when it doesn't. The *method* (the column above) is a
 property of the **type**, recorded here rather than per problem row.
 
-Some batches are **themes** that span several types, unified by a batch-level
-tag rather than one generator. The **need-to-know** batch (recall facts you
-should know cold — constant/trig/log values, exponent & log laws, Pythagorean
-identities, standard factorizations, core derivatives & integrals) draws on
-`known_value`, `factoring`, and `identity` alongside the reused `derivative` /
-`integral` generators. Such themes are expected to grow.
+Some categories are **themes** that would span several generators — e.g. a
+**need-to-know** recall set (constant/trig/log values, exponent & log laws,
+Pythagorean identities, standard factorizations, core derivatives & integrals)
+drawing on `known_value`, `factoring`, `identity`, `derivative`, `integral`. A
+theme would be a `type` with a NULL `default_instruction` (no single instruction
+fits). We currently generate **monotype** batches only — one generator per type —
+so no theme types exist yet.
 
 ## Presentation styles
 
-- **single-expression** — one line, no `\n`; the whole problem is a single LaTeX
-  expression rendered as one math block. *(every type except the two LOTUS ones
-  below — derivatives, integrals, sums, series, limits, linear algebra, matrices,
-  combinatorics, etc.)*
-- **three-line** — three `\n`-separated lines: `X ∼ Dist` / density + support /
-  the ask. `add-problems` and `quiz` lay these out as three columns
-  (distribution + ask · density · answer); `index` renders one block per line.
-  *(expectation, variance)* — when a `Dist` has no `name_latex`, the first line
-  is omitted and only two lines are emitted; the current renderers key on
-  exactly three lines, so name every distribution until that's generalized.
+Every type also sets `answer`. The label names which statement fields it fills:
+
+- **single-expression** — `instructions` + `expression_1` (one operand block).
+  The bulk of types — derivatives, integrals, sums, series, limits, linear
+  algebra, matrices, combinatorics, etc.
+- **formula-led** — `instructions` + `formula_1` (a definition such as `f(x)=…`),
+  no operand block. *(local extrema, critical points)*. `mle` is a hybrid:
+  `formula_1` (the iid sampling line) + `expression_1` (the estimator).
+- **three-line** *(LOTUS — expectation, variance)* — `formula_1` (`X∼Dist`) +
+  `formula_2` (density + support) + `expression_1` (the ask, e.g. `E[X²]`). When
+  a `Dist` has no `name_latex`, `formula_1` is omitted; renderers skip empty
+  fields, so two formulas renders fine.
 - **graph** *(planned)* — a problem needing a plotted figure. Not yet
-  implemented; it would carry a non-LaTeX payload and need a render path beyond
-  the split-on-`\n` convention, plus an explicit presentation signal (line count
-  alone can't express it).
+  implemented; it would carry a non-LaTeX payload and a render path beyond the
+  formula/expression fields, plus an explicit presentation signal.
 
 ## Verification methods
 
@@ -147,5 +150,7 @@ unevaluated integrals/sums, or a density that doesn't total 1 —
    reliable tool **and** independently verify it, returning an `Item` whose
    `answer_verified_by` is set only when the check passes.
 2. Add a row here: its presentation style and verification method.
-3. If it introduces a new presentation style, also wire the renderers
-   (`add-problems.html`, `quiz.html`, `index.html`).
+3. Add it to the `TYPES` registry in `problem_types.py` (name → generator →
+   default_instruction); staging seeds the `type` table from there.
+4. If it introduces a new presentation style, also wire the renderers
+   (`add-problems.html`, `set.html`, `index.html`).
