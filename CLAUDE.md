@@ -63,6 +63,16 @@ Zero-install: Python stdlib + sympy only. No API key, no Node.
 - **Dedup at generation time** on the decomposed statement fields (`instructions`
   + `formula_*` + `expression_*`), against the whole DB regardless of status (so
   rejected problems never resurface).
+- **Focus & lock are runtime state on a type, not generation concerns.** Each
+  type carries a *focus* — `accuracy → speed → mastery` (accurate before fast) —
+  tracked as `type_focus_period` rows (the open one is current). A fresh type
+  starts at `accuracy` and **auto-graduates to speed** once every approved
+  problem's *most-recent* attempt is correct; `speed → mastery` is a manual
+  promote; the owner can step focus down/up any time. Graduation is up-only
+  (never auto-demotes). Period-scoped stats reset on each transition. A type's
+  `status` (`active`/`locked`) separately holds it out of random sets. These are
+  set through the app (the index page / API), **not** at generation — `stage()`
+  does not touch focus or lock.
 
 ## Files
 
@@ -72,7 +82,8 @@ Zero-install: Python stdlib + sympy only. No API key, no Node.
 - `generate.py` — `stage()` (dedup + staging; one `type=` per batch).
 - `server.py` — local server: pages + JSON API.
 - `staged.html` — review/approve/reject surface (interim UI).
-- `index.html` — browse bank by type, select, start a set (wireframe).
+- `index.html` — browse bank by type (grouped into accuracy/speed/mastery focus
+  columns; lock to hide), select problems, start a set (wireframe).
 - `set.html` — one-at-a-time timed run + click-to-grade + finalize (wireframe).
 - `types.html` — read-only catalog of all problem types (interim UI).
 - `lightspeed.db` — created on first run; disposable.

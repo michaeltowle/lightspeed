@@ -107,15 +107,40 @@ this page has a confirmed answer — no badge needed. There is **no type-picking
 here** (the batch's type is set at generation).
 
 ### Step 6 — Browse & build a set  *(`index.html`)*
-**What:** Browse the bank by type (with counts). Within a type, problems group by
-**subtype** — click a subtype header to select that whole technique. Each problem
-row shows its attempt stats — total attempts, percent correct, and average time —
-and a **gotcha** badge if it's a trap. Click a row to select/deselect it
-(selection is global across types); "start set" enables once >1 is selected →
-hands the selected ids to the run page via `/set?ids=...`.
+**What:** Browse the bank by type, **grouped into three focus columns —
+accuracy / speed / mastery** (see *Focus* below). Each type card shows its
+current-period stats (how many problems are *solid* = most-recent attempt
+correct, this period's accuracy, average time) and ▲/▼ controls to step its
+focus; a **lock** button drops it into a collapsed section at the bottom
+(excluded from random sets, no focus shown). Expand a card to browse its
+problems, which group by **subtype** — click a subtype header to select that
+whole technique. Each problem row shows its attempt stats — total attempts,
+percent correct, average time — and a **gotcha** badge if it's a trap. Click a
+row to select/deselect it (selection is global across types); "start set"
+enables once >1 is selected → hands the selected ids to the run page via
+`/set?ids=...`.
 **Why:** turn the curated bank into a targeted set, informed by where reps,
-accuracy, and speed are weak.
+accuracy, and speed are weak — and by which stage of mastery each type is at.
 *Status: functional wireframe (plain styling; final design via Claude Design).*
+
+#### Focus — accuracy → speed → mastery
+You optimize for two things, in order: **you must be accurate before you can be
+fast.** So every type carries a *focus* that tracks its progress, stored as a
+sequence of **focus periods** (`type_focus_period`; the open one is current).
+
+- A fresh type starts at **accuracy**.
+- It **auto-graduates to speed** the moment every approved problem's
+  *most-recent* attempt is correct (not "ever correct" — the latest one).
+- **speed → mastery** is a manual promotion (▲); a future version will judge it
+  automatically. You can also manually step a type **down** (▼) any time.
+- Graduation is up-only and never skips: missing one, or adding new unattempted
+  problems, won't auto-demote you — your period accuracy stat is the signal.
+- A **locked** type is held out of randomly generated sets (independent of
+  focus) and hidden under a toggle; lock the ones you don't want drilled at random.
+
+Stats are scoped to the **current** focus period: graduating to speed starts a
+fresh clock, so a type's speed stats reflect only timed runs done *since* it got
+accurate — not the accuracy grind that earned the promotion.
 
 ### Step 7 — Run the set & record  *(`set.html`)*
 **What:** On load, creates a `ProblemSet` (its id is the `#N` in the header).
@@ -142,7 +167,9 @@ python server.py          # serves pages + JSON API at http://localhost:8000/
 
 `server.py` is a stdlib `http.server`; it owns the SQLite DB and exposes a small
 JSON API (`/api/staged`, `/api/types`, `/api/batches/{id}/approve`, per-problem
-reject, problems, problem-sets, attempts). Pages: `/` (index), `/staged`,
+reject, `/api/types/{id}/focus` (step focus up/down), `/api/types/{id}/lock`,
+problems, problem-sets, attempts — saving attempts auto-graduates any type whose
+problems are now all most-recent-correct). Pages: `/` (index), `/staged`,
 `/set`, `/types`. Only ever one instance on :8000 — a stale process will silently
 keep answering with old code.
 
