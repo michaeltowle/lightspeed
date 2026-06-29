@@ -2,83 +2,54 @@
 <!--
   Bank browser (WIREFRAME — intentionally plain; final design via Claude Design).
 
-  - Active (unlocked) types are grouped into THREE FOCUS COLUMNS — accuracy /
-    speed / mastery — each card showing its current-period stats. A type starts
-    at 'accuracy', auto-graduates to 'speed' once every problem's most-recent
-    attempt is correct, and is manually promoted to 'mastery' (▲ / ▼ step focus).
-  - Locked types (lock button) are excluded from random sets and collapsed under
-    a toggle header at the bottom, with NO focus shown.
-  - Clicking a card header expands an ordered list of its problems (decomposed
-    fields + attempt stats). Selection is global across types, toggled by
-    CLICKING A PROBLEM ROW; a selected problem stays selected under another type.
-  - "start set" enables once MORE THAN ONE problem is selected, handing the
-    selected problem ids to the run page via /set?ids=...
+  Each type is a CELL: one 8×8px square per approved problem, 1px apart, max 10
+  per row, wrapping left-aligned (a 45-problem type = 5 rows, last row 5 squares).
+  No cell border or background — just squares. Hovering a cell reveals its name,
+  centered, BEHIND the squares. Cells are grouped into three focus columns
+  (accuracy / speed / mastery); locked types collapse under a toggle.
+
+  (Stats, focus/lock controls, and click-to-select/start-set are intentionally
+  omitted for now — to be layered back on top of this.)
 -->
 <html lang="en">
 <head>
   <meta charset="utf-8" />
   <title>Lightspeed</title>
-  <script>
-    MathJax = { tex: { inlineMath: [["\\(", "\\)"]], displayMath: [["$$", "$$"]] } };
-  </script>
-  <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js" async></script>
   <style>
-    /* Deliberately monochrome wireframe styling. */
+    /* periwinkle squares, pale pastel purple name */
+    :root { --sq: #8c9eff; --name: #d9c9f2; }
+
     body { font-family: system-ui, sans-serif; max-width: 1040px; margin: 2rem auto; padding: 0 1rem; color: #000; }
     h1 { font-size: 1.3rem; }
-    .bar { position: sticky; top: 0; background: #fff; border-bottom: 1px solid #000; padding: .6rem 0; display: flex; gap: .6rem; align-items: center; z-index: 5; }
+    .bar { display: flex; gap: .6rem; align-items: center; padding: .6rem 0; border-bottom: 1px solid #000; }
     .bar a.navlink { font-size: .85rem; color: #000; text-decoration: underline; }
-    .bar .sel { font-size: .85rem; color: #444; margin-right: auto; }
-    button { font-family: inherit; font-size: .9rem; padding: .35rem .9rem; border: 1px solid #000; background: #fff; color: #000; cursor: pointer; }
-    button:disabled { color: #bbb; border-color: #ccc; cursor: not-allowed; }
 
-    /* focus columns */
-    .focus-cols { display: flex; gap: .8rem; align-items: flex-start; margin: 1rem 0; }
+    .focus-cols { display: flex; gap: .8rem; align-items: flex-start; margin: 1.4rem 0; }
     .col { flex: 1 1 0; min-width: 0; }
-    .col > h2 { font-size: .8rem; text-transform: uppercase; letter-spacing: .08em; color: #555; border-bottom: 1px solid #000; padding-bottom: .3rem; margin: 0 0 .5rem; display: flex; justify-content: space-between; }
+    .col > h2 { font-size: .8rem; text-transform: uppercase; letter-spacing: .08em; color: #555; padding-bottom: .3rem; margin: 0 0 1rem; display: flex; justify-content: space-between; }
     .col > h2 .n { color: #aaa; }
-    .col-body:empty::after { content: "—"; color: #ccc; font-size: .85rem; }
+    .col-body:empty::after { content: "—"; color: #ddd; font-size: .85rem; }
 
-    /* a type card */
-    li.type, div.type { list-style: none; border: 1px solid #888; margin: .4rem 0; }
-    .typehead { padding: .45rem .55rem; cursor: pointer; background: #f4f4f4; }
-    .typehead .title { display: flex; align-items: baseline; gap: .35rem; flex-wrap: wrap; }
-    .typehead .name { font-weight: 600; font-size: .92rem; }
-    .typehead .tid { font-family: ui-monospace, monospace; font-size: .68rem; color: #999; }
-    .cardstats { font-size: .72rem; color: #444; margin-top: .25rem; }
-    .cardstats .sep { color: #bbb; }
-    .controls { display: flex; gap: .3rem; margin-top: .4rem; }
-    .controls button { font-size: .72rem; padding: .12rem .45rem; }
-    .controls .step { font-weight: 700; }
-    .controls .spacer { flex: 1; }
+    /* a type cell: just squares; name behind them, shown on hover */
+    .type { position: relative; width: max-content; margin: 0 0 1.1rem; }
+    .type:hover { z-index: 2; }            /* lift hovered name above neighbours */
+    .cell-name {
+      position: absolute; inset: 0; z-index: 0;
+      display: flex; align-items: center; justify-content: center;
+      color: var(--name); font-size: .8rem; font-weight: 600; white-space: nowrap;
+      opacity: 0; transition: opacity .12s; pointer-events: none;
+    }
+    .type:hover .cell-name { opacity: 1; }
+    .squares {
+      position: relative; z-index: 1;
+      display: flex; flex-wrap: wrap; gap: 1px;
+      width: max-content; max-width: 89px;   /* 10×8px + 9×1px = 89px → wraps at 10 */
+    }
+    .sq { width: 8px; height: 8px; background: var(--sq); }
 
-    ol.problems { margin: 0; padding: .3rem .6rem .6rem 1.5rem; }
-    ol.problems li.prow { margin: .3rem 0; padding: .3rem .5rem; cursor: pointer; user-select: none; border: 1px solid transparent; border-radius: 2px; }
-    ol.problems li.prow:hover { background: #f7f7f7; }
-    ol.problems li.prow.selected { background: #ececec; border-color: #000; border-left-width: 4px; }
-    ol.problems li.subtype-head { list-style: none; margin: .5rem 0 .15rem -1rem; font-size: .82rem; font-weight: 600; color: #333; cursor: pointer; user-select: none; }
-    ol.problems li.subtype-head:hover { text-decoration: underline; }
-    ol.problems li.subtype-head .muted { font-weight: 400; }
-    ol.problems .empty { list-style: none; margin-left: -1rem; color: #777; font-style: italic; }
-    .rowmeta { display: flex; flex-wrap: wrap; gap: .3rem; align-items: center; margin-bottom: .2rem; }
-    .gotcha { display: inline-block; font-size: .62rem; color: #b00; border: 1px solid #e0b0b0; border-radius: 3px; padding: 0 .3rem; text-transform: uppercase; letter-spacing: .3px; }
-    .diff { font-size: .62rem; text-transform: uppercase; letter-spacing: .3px; border-radius: 3px; padding: 0 .3rem; border: 1px solid #ccc; color: #555; }
-    .diff-easy { color: #1d7a4d; border-color: #aceac8; }
-    .diff-medium { color: #97700a; border-color: #ecd9a0; }
-    .diff-hard { color: #b00; border-color: #e0b0b0; }
-    .ftag { font-size: .62rem; font-family: ui-monospace, monospace; color: #456; background: #eef2f7; border: 1px solid #dde3ea; border-radius: 3px; padding: 0 .3rem; }
-    .pq { display: block; }
-    .pq .instr { font-size: .8rem; color: #777; text-transform: lowercase; }
-    .pq .mline + .mline { margin-top: 2px; }
-    .stats { display: block; margin-top: .15rem; }
-    .muted { color: #777; font-size: .85rem; }
-
-    /* locked section */
     #lockedSection { margin-top: 1.5rem; }
     .locked-head { font-size: .8rem; text-transform: uppercase; letter-spacing: .08em; color: #555; border-top: 1px solid #000; padding-top: .5rem; cursor: pointer; user-select: none; }
-    .locked-head:hover { color: #000; }
-    #lockedBody { columns: 2; column-gap: .8rem; }
-    #lockedBody .type { break-inside: avoid; }
+    #lockedBody { display: flex; flex-wrap: wrap; gap: 1.1rem 1.5rem; margin-top: 1rem; }
   </style>
 </head>
 <body>
@@ -87,11 +58,9 @@
   <div class="bar">
     <a href="/types" class="navlink">types</a>
     <a href="/staged" class="navlink">staged</a>
-    <span class="sel">0 selected</span>
-    <button id="startBtn" disabled>start set</button>
   </div>
 
-  <p id="empty" class="muted" hidden>no types yet. approve some problems at
+  <p id="empty" hidden style="color:#777">no types yet. approve some problems at
     <a href="/staged">/staged</a> first.</p>
 
   <div class="focus-cols" id="focusCols">
@@ -108,44 +77,46 @@
   <p id="staged-link" hidden><a href="/staged"></a></p>
 
 <script>
-const selected = new Set();          // global selection of problem ids
-const problemCache = {};             // type_id -> problems[]
 const FOCI = ["accuracy", "speed", "mastery"];
-
-const FORMULAS    = ["formula_1", "formula_2", "formula_3"];
-const EXPRESSIONS = ["expression_1", "expression_2", "expression_3"];
-
-// Render a problem from its decomposed fields: prose instruction, then each
-// non-empty formula/expression as its own math line. Empty fields are skipped.
-function renderStatement(p) {
-  let html = "";
-  if (p.instructions) html += `<div class="instr">${escapeHtml(p.instructions)}</div>`;
-  for (const f of FORMULAS)    if (p[f]) html += `<div class="mline">\\(${p[f]}\\)</div>`;
-  for (const e of EXPRESSIONS) if (p[e]) html += `<div class="mline">\\(${p[e]}\\)</div>`;
-  return html;
-}
 
 async function api(path) {
   const res = await fetch(path);
   if (!res.ok) throw new Error(await res.text());
   return res.json();
 }
-async function post(path, body) {
-  const res = await fetch(path, {
-    method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body || {}),
-  });
-  if (!res.ok) throw new Error(await res.text());
-  return res.json();
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+}
+
+// A type cell: the name (behind), then one square per approved problem.
+function renderCell(t) {
+  const cell = document.createElement("div");
+  cell.className = "type";
+  cell.dataset.id = t.id;
+
+  const name = document.createElement("div");
+  name.className = "cell-name";
+  name.textContent = t.default_instruction || t.name;
+
+  const squares = document.createElement("div");
+  squares.className = "squares";
+  for (let i = 0; i < t.problem_count; i++) {
+    const s = document.createElement("div");
+    s.className = "sq";
+    squares.appendChild(s);
+  }
+
+  cell.append(name, squares);
+  return cell;
 }
 
 async function load() {
   const [types, batches] = await Promise.all([api("/api/types"), api("/api/staged")]);
-  // browse only types that have approved problems; the full catalog is /types
+  // only types with approved problems have squares to show; full catalog is /types
   const withProblems = types.filter(t => t.problem_count > 0);
   document.getElementById("empty").hidden = withProblems.length > 0;
 
-  // clear columns
   for (const col of document.querySelectorAll(".col")) {
     col.querySelector(".col-body").innerHTML = "";
     col.querySelector(".n").textContent = "";
@@ -158,20 +129,18 @@ async function load() {
     const here = active.filter(t => (t.focus || "accuracy") === focus);
     col.querySelector(".n").textContent = here.length || "";
     const body = col.querySelector(".col-body");
-    for (const t of here) body.appendChild(renderCard(t, false));
+    for (const t of here) body.appendChild(renderCell(t));
   }
 
-  // locked section
   const sec = document.getElementById("lockedSection");
   const head = document.getElementById("lockedHead");
   const lbody = document.getElementById("lockedBody");
   sec.hidden = locked.length === 0;
   if (locked.length) {
-    head.textContent = `${lbody.hidden ? "▸" : "▾"} locked (${locked.length})`;
     lbody.innerHTML = "";
-    for (const t of locked) lbody.appendChild(renderCard(t, true));
+    for (const t of locked) lbody.appendChild(renderCell(t));
+    head.textContent = `${lbody.hidden ? "▸" : "▾"} locked (${locked.length})`;
   }
-  refreshBar();
 
   const n = batches.reduce((s, b) => s + b.problems.length, 0);
   if (n > 0) {
@@ -184,191 +153,9 @@ async function load() {
 document.getElementById("lockedHead").onclick = () => {
   const lbody = document.getElementById("lockedBody");
   lbody.hidden = !lbody.hidden;
-  const head = document.getElementById("lockedHead");
-  const n = lbody.children.length;
-  head.textContent = `${lbody.hidden ? "▸" : "▾"} locked (${n})`;
+  document.getElementById("lockedHead").textContent =
+    `${lbody.hidden ? "▸" : "▾"} locked (${lbody.children.length})`;
 };
-
-// current-period stats line: how many problems are "solid" (most-recent attempt
-// correct — the graduation gate), plus this period's accuracy and average time.
-function periodLine(t) {
-  const solid = `${t.mastered}/${t.n_problems} solid`;
-  const pct = t.period_pct == null ? "—" : `${t.period_pct}%`;
-  const avg = t.period_avg_seconds == null ? "—" : `${t.period_avg_seconds}s`;
-  return `${solid} <span class="sep">·</span> ${pct} acc <span class="sep">·</span> ${avg} avg`;
-}
-
-function renderCard(t, locked) {
-  const card = document.createElement("div");
-  card.className = "type";
-  card.dataset.id = t.id;
-
-  const head = document.createElement("div");
-  head.className = "typehead";
-
-  let controls;
-  if (locked) {
-    controls = `<div class="controls">
-        <button class="unlock">unlock</button>
-        <span class="spacer"></span>
-        <span class="muted" style="font-size:.72rem">${t.problem_count} in bank</span>
-      </div>`;
-  } else {
-    const i = FOCI.indexOf(t.focus || "accuracy");
-    controls = `<div class="cardstats" title="stats since this focus began">${periodLine(t)}</div>
-      <div class="controls">
-        <button class="step demote" ${i <= 0 ? "disabled" : ""} title="step focus down">▼</button>
-        <button class="step promote" ${i >= FOCI.length - 1 ? "disabled" : ""} title="step focus up">▲</button>
-        <span class="spacer"></span>
-        <button class="lock" title="exclude from random sets">lock</button>
-      </div>`;
-  }
-
-  head.innerHTML = `
-    <div class="title"><span class="name">${escapeHtml(t.default_instruction || t.name)}</span><span class="tid">${escapeHtml(t.name)}</span></div>
-    ${controls}`;
-  card.appendChild(head);
-
-  const body = document.createElement("ol");
-  body.className = "problems";
-  body.hidden = true;
-  card.appendChild(body);
-
-  // expand on header click — but not when a control button was clicked.
-  // Render whenever the body is empty (not merely when uncached): a focus/lock
-  // action re-runs load(), which rebuilds every card with a fresh empty <ol>
-  // while problemCache persists — so keying off the cache alone would un-hide an
-  // empty body. Cache still spares the re-fetch.
-  head.onclick = async (e) => {
-    if (e.target.closest("button")) return;
-    if (body.hidden && !body.children.length) {
-      if (!problemCache[t.id]) problemCache[t.id] = await api(`/api/problems?type=${t.id}`);
-      renderProblems(body, problemCache[t.id]);
-    }
-    body.hidden = !body.hidden;
-  };
-
-  // focus / lock controls
-  head.querySelector(".promote")?.addEventListener("click", () => stepFocus(t.id, "up"));
-  head.querySelector(".demote")?.addEventListener("click", () => stepFocus(t.id, "down"));
-  head.querySelector(".lock")?.addEventListener("click", () => setLock(t.id, true));
-  head.querySelector(".unlock")?.addEventListener("click", () => setLock(t.id, false));
-
-  return card;
-}
-
-async function stepFocus(id, direction) {
-  await post(`/api/types/${id}/focus`, { direction });
-  await load();
-}
-async function setLock(id, locked) {
-  await post(`/api/types/${id}/lock`, { locked });
-  await load();
-}
-
-function renderProblems(ol, problems) {
-  ol.innerHTML = "";
-  if (!problems.length) {
-    ol.innerHTML = `<li class="empty">no approved problems of this type</li>`;
-    return;
-  }
-  // group by subtype (first subtype, or "" for none) so you can drill a
-  // technique (click the subtype header) or pick individual problems.
-  const groups = new Map();
-  for (const p of problems) {
-    const st = (p.subtypes && p.subtypes[0]) || "";
-    if (!groups.has(st)) groups.set(st, []);
-    groups.get(st).push(p);
-  }
-  for (const [st, ps] of groups) {
-    if (st) {
-      const head = document.createElement("li");
-      head.className = "subtype-head";
-      head.innerHTML = `${escapeHtml(st)} <span class="muted">(${ps.length}) — click to select all</span>`;
-      head.onclick = () => toggleSelectMany(ps.map(p => p.id));
-      ol.appendChild(head);
-    }
-    for (const p of ps) ol.appendChild(renderProblemRow(p));
-  }
-  if (window.MathJax?.typesetPromise) MathJax.typesetPromise([ol]);
-}
-
-function renderProblemRow(p) {
-  const li = document.createElement("li");
-  li.className = "prow";
-  li.dataset.id = p.id;
-  if (selected.has(p.id)) li.classList.add("selected");
-
-  const pq = document.createElement("span");
-  pq.className = "pq";
-  pq.innerHTML = rowMeta(p) + renderStatement(p);
-
-  const stats = document.createElement("span");
-  stats.className = "stats muted";
-  stats.textContent = statsLine(p);
-
-  li.append(pq, stats);
-  li.onclick = () => toggleSelect(p.id);
-  return li;
-}
-
-// gotcha + difficulty + content flags as a small tag row above the problem
-function rowMeta(p) {
-  let t = "";
-  if (p.gotcha) t += `<span class="gotcha">gotcha</span>`;
-  t += `<span class="diff diff-${p.difficulty}">${escapeHtml(p.difficulty)}</span>`;
-  if (p.has_e) t += `<span class="ftag">e</span>`;
-  if (p.has_ln) t += `<span class="ftag">ln</span>`;
-  if (p.has_trig) t += `<span class="ftag">sin/cos</span>`;
-  return `<div class="rowmeta">${t}</div>`;
-}
-
-function statsLine(p) {
-  if (!p.total_attempts) return "no attempts yet";
-  const pct = p.pct_total === null || p.pct_total === undefined ? "—" : `${p.pct_total}%`;
-  const avg = p.avg_seconds === null || p.avg_seconds === undefined ? "" : ` · avg ${p.avg_seconds}s`;
-  return `${p.total_attempts} attempt${p.total_attempts === 1 ? "" : "s"} · ${pct} correct${avg}`;
-}
-
-function toggleSelect(id) {
-  if (selected.has(id)) selected.delete(id);
-  else selected.add(id);
-  syncRows(id);
-  refreshBar();
-}
-
-// Select-all / deselect-all for a subtype group (drill a whole technique).
-function toggleSelectMany(ids) {
-  const allSelected = ids.every(id => selected.has(id));
-  ids.forEach(id => {
-    if (allSelected) selected.delete(id); else selected.add(id);
-    syncRows(id);
-  });
-  refreshBar();
-}
-
-// a problem can appear under multiple types — keep every rendered row in sync
-function syncRows(id) {
-  document.querySelectorAll(`li.prow[data-id="${id}"]`).forEach(row =>
-    row.classList.toggle("selected", selected.has(id))
-  );
-}
-
-function refreshBar() {
-  const n = selected.size;
-  document.querySelector(".sel").textContent = `${n} selected`;
-  document.getElementById("startBtn").disabled = n <= 1;   // de-gray once >1 selected
-}
-
-function goToSet() {
-  const ids = [...selected].join(",");
-  location.href = `/set?ids=${ids}`;
-}
-document.getElementById("startBtn").onclick = goToSet;
-
-function escapeHtml(s) {
-  return String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
-}
 
 load();
 </script>
