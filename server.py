@@ -105,6 +105,28 @@ class Handler(BaseHTTPRequestHandler):
                 commit=True,
             )
 
+        # manually step a type's focus one notch up/down the accuracy/speed/mastery ladder
+        m = re.fullmatch(r"/api/types/(\d+)/focus", path)
+        if m:
+            tid = int(m.group(1))
+            direction = body.get("direction")
+            if direction not in ("up", "down"):
+                return self._send_json({"error": "direction must be up|down"}, 400)
+            return self._with_conn(
+                lambda c: {"ok": True, "focus": db.change_focus(c, tid, direction)},
+                commit=True,
+            )
+
+        # lock/unlock a type (locked => out of random sets, hidden under a toggle)
+        m = re.fullmatch(r"/api/types/(\d+)/lock", path)
+        if m:
+            tid = int(m.group(1))
+            status = "locked" if body.get("locked") else "active"
+            return self._with_conn(
+                lambda c: (db.set_type_status(c, tid, status), {"ok": True, "status": status})[1],
+                commit=True,
+            )
+
         if path == "/api/problem-sets":
             return self._with_conn(
                 lambda c: {"id": db.create_problem_set(c)}, commit=True
@@ -138,7 +160,8 @@ class Handler(BaseHTTPRequestHandler):
     def _save_attempts(self, body):
         def fn(conn):
             set_id = body["problem_set_id"]
-            for a in body.get("attempts", []):
+            attempts = body.get("attempts", [])
+            for a in attempts:
                 db.record_attempt(
                     conn, set_id, a["problem_id"],
                     a.get("answered_correctly"), a.get("duration_seconds"),
@@ -148,7 +171,14 @@ class Handler(BaseHTTPRequestHandler):
                     conn, set_id, body["finish_time"], body.get("time_per_problem")
                 )
             db.finalize_problem_set_counts(conn, set_id)
-            return {"ok": True}
+            # re-check graduation only for the types this set touched; report any
+            # accuracy->speed promotions so the UI can celebrate them.
+            pids = [a["problem_id"] for a in attempts]
+            graduated = [
+                tid for tid in db.types_for_attempts(conn, pids)
+                if db.maybe_graduate(conn, tid)
+            ]
+            return {"ok": True, "graduated": graduated}
 
         return self._with_conn(fn, commit=True)
 
