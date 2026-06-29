@@ -34,6 +34,11 @@ PROBLEM_FIELDS = (
     "expression_1", "expression_2", "expression_3",
 )
 
+# Focus progression, low -> high. You must be accurate before fast: a fresh type
+# starts at 'accuracy' and graduates to 'speed' once every problem's most-recent
+# attempt is correct; 'speed' -> 'mastery' is a manual promotion (for now).
+FOCI = ("accuracy", "speed", "mastery")
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS batch (
     id          INTEGER PRIMARY KEY,
@@ -69,7 +74,21 @@ CREATE TABLE IF NOT EXISTS type (
     id                  INTEGER PRIMARY KEY,
     name                TEXT NOT NULL UNIQUE,          -- e.g. 'critical_points'
     generator           TEXT,                          -- generator fn in problem_types.py
-    default_instruction TEXT                           -- canonical instruction (NULL for themes)
+    default_instruction TEXT,                          -- canonical instruction (NULL for themes)
+    status              TEXT NOT NULL DEFAULT 'active'  -- active | locked (locked = out of random sets)
+);
+
+-- A type's progress is tracked as a sequence of focus PERIODS. The current
+-- focus is the single open period (end_at IS NULL); closing it and opening a
+-- new one is a focus transition. Attempts on the type's problems after a
+-- period's start_at (and before its end_at) belong to that period, which is how
+-- "stats during the current focus" are scoped.
+CREATE TABLE IF NOT EXISTS type_focus_period (
+    id        INTEGER PRIMARY KEY,
+    type_id   INTEGER NOT NULL REFERENCES type(id),
+    focus     TEXT NOT NULL,                           -- accuracy | speed | mastery
+    start_at  TEXT NOT NULL,
+    end_at    TEXT                                     -- NULL = current/open period
 );
 
 CREATE TABLE IF NOT EXISTS problem_type (
@@ -127,9 +146,35 @@ def init_db():
     conn = connect()
     try:
         conn.executescript(SCHEMA)
+        _migrate(conn)
         conn.commit()
     finally:
         conn.close()
+
+
+def _migrate(conn):
+    """Idempotent, non-destructive migrations for DBs created before a column or
+    table existed. SQLite has no ADD COLUMN IF NOT EXISTS, so introspect first."""
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(type)")}
+    if "status" not in cols:
+        conn.execute(
+            "ALTER TABLE type ADD COLUMN status TEXT NOT NULL DEFAULT 'active'"
+        )
+    # Every type must have exactly one open focus period; backfill 'accuracy' for
+    # any type that has none (freshly seeded types, or a pre-focus database). For
+    # a pre-focus DB, anchor the backfilled period at the type's earliest attempt
+    # so existing history isn't orphaned out of the current period; else now().
+    missing = conn.execute(
+        """SELECT t.id,
+                  (SELECT MIN(a.completed_at) FROM attempt a
+                   JOIN problem_type pt ON pt.problem_id = a.problem_id
+                   WHERE pt.type_id = t.id) AS first_attempt
+           FROM type t
+           WHERE NOT EXISTS (SELECT 1 FROM type_focus_period f
+                             WHERE f.type_id = t.id AND f.end_at IS NULL)"""
+    ).fetchall()
+    for r in missing:
+        _open_focus_period(conn, r["id"], "accuracy", at=r["first_attempt"] or now())
 
 
 # --- dedup ---------------------------------------------------------------
@@ -245,8 +290,11 @@ def batch_types(conn, batch_id):
 
 
 def list_types(conn):
+    """Every registered type with its subtype names, approved/attempted counts,
+    and current focus + lock status + current-period stats — everything the bank
+    browser needs to group types by focus and show per-period progress."""
     rows = conn.execute(
-        """SELECT t.id, t.name, t.generator, t.default_instruction,
+        """SELECT t.id, t.name, t.generator, t.default_instruction, t.status,
                   (SELECT group_concat(s.name, '|') FROM subtype s
                    WHERE s.type_id = t.id) AS subtype_names,
                   COUNT(DISTINCT CASE WHEN p.status = 'approved' THEN p.id END)          AS problem_count,
@@ -255,7 +303,7 @@ def list_types(conn):
            LEFT JOIN problem_type pt ON pt.type_id = t.id
            LEFT JOIN problem p       ON p.id  = pt.problem_id
            LEFT JOIN attempt a       ON a.problem_id = p.id
-           GROUP BY t.id, t.name, t.generator, t.default_instruction
+           GROUP BY t.id, t.name, t.generator, t.default_instruction, t.status
            ORDER BY t.name"""
     ).fetchall()
     out = []
@@ -263,6 +311,12 @@ def list_types(conn):
         d = dict(r)
         names = d.pop("subtype_names")
         d["subtypes"] = names.split("|") if names else []
+        period = current_focus_period(conn, d["id"])
+        d["focus"] = period["focus"] if period else "accuracy"
+        d["focus_since"] = period["start_at"] if period else None
+        n, mastered = type_mastery(conn, d["id"])
+        d["n_problems"], d["mastered"] = n, mastered
+        d.update(type_period_stats(conn, d["id"], d["focus_since"] or now()))
         out.append(d)
     return out
 
@@ -342,6 +396,8 @@ def get_or_create_type(conn, name, generator=None, default_instruction=None):
         "INSERT INTO type (name, generator, default_instruction) VALUES (?, ?, ?)",
         (name, generator, default_instruction),
     )
+    # a fresh type starts an open 'accuracy' focus period (accurate before fast)
+    _open_focus_period(conn, cur.lastrowid, "accuracy")
     return cur.lastrowid
 
 
@@ -449,6 +505,139 @@ def undo_approve_batch(conn, batch_id):
         (batch_id,),
     )
     return cur.rowcount
+
+
+# --- focus & lock --------------------------------------------------------
+
+def _open_focus_period(conn, type_id, focus, at=None):
+    """Open a new focus period (end_at NULL). Caller ensures any prior open
+    period for this type is already closed."""
+    cur = conn.execute(
+        "INSERT INTO type_focus_period (type_id, focus, start_at) VALUES (?, ?, ?)",
+        (type_id, focus, at or now()),
+    )
+    return cur.lastrowid
+
+
+def current_focus_period(conn, type_id):
+    """The type's open focus period (end_at IS NULL), or None if it somehow has
+    none (init_db backfills one for every type)."""
+    row = conn.execute(
+        """SELECT * FROM type_focus_period
+           WHERE type_id = ? AND end_at IS NULL
+           ORDER BY id DESC LIMIT 1""",
+        (type_id,),
+    ).fetchone()
+    return dict(row) if row else None
+
+
+def set_focus(conn, type_id, focus, at=None):
+    """Transition a type to a new focus: close the open period and open a fresh
+    one. No-op (returns False) if already at that focus."""
+    if focus not in FOCI:
+        raise ValueError(f"unknown focus {focus!r}; valid: {', '.join(FOCI)}")
+    at = at or now()
+    cur = current_focus_period(conn, type_id)
+    if cur and cur["focus"] == focus:
+        return False
+    conn.execute(
+        "UPDATE type_focus_period SET end_at = ? WHERE type_id = ? AND end_at IS NULL",
+        (at, type_id),
+    )
+    _open_focus_period(conn, type_id, focus, at)
+    return True
+
+
+def change_focus(conn, type_id, direction):
+    """Manually step a type's focus one notch 'up' or 'down' the FOCI ladder
+    (clamped at the ends). Returns the new focus, or None if already clamped."""
+    cur = current_focus_period(conn, type_id)
+    i = FOCI.index(cur["focus"]) if cur else 0
+    j = i + (1 if direction == "up" else -1)
+    if j < 0 or j >= len(FOCI):
+        return None
+    set_focus(conn, type_id, FOCI[j])
+    return FOCI[j]
+
+
+def type_mastery(conn, type_id):
+    """(n_problems, mastered) for a type: how many approved problems it has, and
+    how many have their MOST-RECENT attempt correct. mastered == n_problems (and
+    n_problems > 0) is the accuracy->speed graduation gate."""
+    row = conn.execute(
+        """SELECT COUNT(*) AS n,
+                  COALESCE(SUM(CASE WHEN last_correct = 1 THEN 1 ELSE 0 END), 0) AS mastered
+           FROM (
+               SELECT (SELECT a.answered_correctly FROM attempt a
+                       WHERE a.problem_id = p.id
+                       ORDER BY a.completed_at DESC, a.id DESC LIMIT 1) AS last_correct
+               FROM problem p
+               JOIN problem_type pt ON pt.problem_id = p.id
+               WHERE pt.type_id = ? AND p.status = 'approved'
+           )""",
+        (type_id,),
+    ).fetchone()
+    return row["n"], row["mastered"]
+
+
+def type_period_stats(conn, type_id, since):
+    """Attempt stats for a type scoped to the current focus period: attempts at
+    or after `since`. pct over graded attempts only; avg over timed attempts."""
+    row = conn.execute(
+        """SELECT COUNT(a.id) AS attempts,
+                  COALESCE(SUM(CASE WHEN a.answered_correctly IS NOT NULL
+                               THEN 1 ELSE 0 END), 0) AS graded,
+                  COALESCE(SUM(CASE WHEN a.answered_correctly = 1
+                               THEN 1 ELSE 0 END), 0) AS correct,
+                  AVG(a.duration_seconds) AS avg_seconds
+           FROM attempt a
+           JOIN problem_type pt ON pt.problem_id = a.problem_id
+           JOIN problem p ON p.id = a.problem_id
+           WHERE pt.type_id = ? AND p.status = 'approved' AND a.completed_at >= ?""",
+        (type_id, since),
+    ).fetchone()
+    graded = row["graded"]
+    return {
+        "period_attempts": row["attempts"],
+        "period_pct": round(100 * row["correct"] / graded) if graded else None,
+        "period_avg_seconds": round(row["avg_seconds"], 1)
+        if row["avg_seconds"] is not None else None,
+    }
+
+
+def maybe_graduate(conn, type_id):
+    """Auto-graduate accuracy -> speed when every approved problem's most-recent
+    attempt is correct. Up-only and accuracy-only: never auto-demotes, never
+    skips speed. Returns True if it graduated."""
+    cur = current_focus_period(conn, type_id)
+    if not cur or cur["focus"] != "accuracy":
+        return False
+    n, mastered = type_mastery(conn, type_id)
+    if n > 0 and mastered == n:
+        set_focus(conn, type_id, "speed")
+        return True
+    return False
+
+
+def set_type_status(conn, type_id, status):
+    """Lock/unlock a type. Locked types are excluded from randomly generated
+    sets and hidden (no focus shown) on the bank browser."""
+    if status not in ("active", "locked"):
+        raise ValueError(f"unknown status {status!r}")
+    conn.execute("UPDATE type SET status = ? WHERE id = ?", (status, type_id))
+
+
+def types_for_attempts(conn, problem_ids):
+    """Distinct type ids covering a set of attempted problems (to re-check
+    graduation only for the types actually touched)."""
+    if not problem_ids:
+        return []
+    qs = ",".join("?" for _ in problem_ids)
+    rows = conn.execute(
+        f"SELECT DISTINCT type_id FROM problem_type WHERE problem_id IN ({qs})",
+        list(problem_ids),
+    ).fetchall()
+    return [r["type_id"] for r in rows]
 
 
 # --- writes: problem sets & attempts ------------------------------------
