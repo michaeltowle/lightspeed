@@ -234,11 +234,15 @@ function renderCard(t, locked) {
   body.hidden = true;
   card.appendChild(body);
 
-  // expand on header click — but not when a control button was clicked
+  // expand on header click — but not when a control button was clicked.
+  // Render whenever the body is empty (not merely when uncached): a focus/lock
+  // action re-runs load(), which rebuilds every card with a fresh empty <ol>
+  // while problemCache persists — so keying off the cache alone would un-hide an
+  // empty body. Cache still spares the re-fetch.
   head.onclick = async (e) => {
     if (e.target.closest("button")) return;
-    if (body.hidden && !problemCache[t.id]) {
-      problemCache[t.id] = await api(`/api/problems?type=${t.id}`);
+    if (body.hidden && !body.children.length) {
+      if (!problemCache[t.id]) problemCache[t.id] = await api(`/api/problems?type=${t.id}`);
       renderProblems(body, problemCache[t.id]);
     }
     body.hidden = !body.hidden;
