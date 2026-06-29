@@ -2,11 +2,11 @@
 <!--
   Bank browser (WIREFRAME — intentionally plain; final design via Claude Design).
 
-  Each type is a CELL: one 8×8px square per approved problem, 1px apart, max 10
-  per row, wrapping left-aligned (a 45-problem type = 5 rows, last row 5 squares).
-  No cell border or background — just squares. Hovering a cell reveals its name,
-  centered, BEHIND the squares. Cells are grouped into three focus columns
-  (accuracy / speed / mastery); locked types collapse under a toggle.
+  Each type is a 200px-wide CELL: one 16×16px square per approved problem, 1px
+  apart, max 10 per row, wrapping left-aligned (a 45-problem type = 5 rows, last
+  row 5 squares). No border or background — just squares. Hovering a cell reveals
+  its name, centered, BEHIND the squares. Cells lay out 5 across. Locked types
+  (medium-light-gray squares) always sort to the bottom.
 
   (Stats, focus/lock controls, and click-to-select/start-set are intentionally
   omitted for now — to be layered back on top of this.)
@@ -16,40 +16,35 @@
   <meta charset="utf-8" />
   <title>Lightspeed</title>
   <style>
-    /* periwinkle squares, pale pastel purple name */
-    :root { --sq: #8c9eff; --name: #d9c9f2; }
+    /* periwinkle squares (gray when locked), pale pastel purple name */
+    :root { --sq: #8c9eff; --sq-locked: #c2c2c2; --name: #d9c9f2; }
 
-    body { font-family: system-ui, sans-serif; max-width: 1040px; margin: 2rem auto; padding: 0 1rem; color: #000; }
+    body { font-family: system-ui, sans-serif; max-width: 1120px; margin: 2rem auto; padding: 0 1rem; color: #000; }
     h1 { font-size: 1.3rem; }
     .bar { display: flex; gap: .6rem; align-items: center; padding: .6rem 0; border-bottom: 1px solid #000; }
     .bar a.navlink { font-size: .85rem; color: #000; text-decoration: underline; }
 
-    .focus-cols { display: flex; gap: .8rem; align-items: flex-start; margin: 1.4rem 0; }
-    .col { flex: 1 1 0; min-width: 0; }
-    .col > h2 { font-size: .8rem; text-transform: uppercase; letter-spacing: .08em; color: #555; padding-bottom: .3rem; margin: 0 0 1rem; display: flex; justify-content: space-between; }
-    .col > h2 .n { color: #aaa; }
-    .col-body:empty::after { content: "—"; color: #ddd; font-size: .85rem; }
+    /* 5 type cards across a row */
+    .cards { display: grid; grid-template-columns: repeat(5, 200px); gap: 2rem 1.25rem; align-items: start; justify-content: start; margin: 1.6rem 0; }
 
     /* a type cell: just squares; name behind them, shown on hover */
-    .type { position: relative; width: max-content; margin: 0 0 1.1rem; }
+    .type { position: relative; width: 200px; }
     .type:hover { z-index: 2; }            /* lift hovered name above neighbours */
+    .type.locked-first { grid-column-start: 1; }  /* locked block starts a fresh row */
     .cell-name {
       position: absolute; inset: 0; z-index: 0;
       display: flex; align-items: center; justify-content: center;
-      color: var(--name); font-size: .8rem; font-weight: 600; white-space: nowrap;
+      color: var(--name); font-size: .85rem; font-weight: 600; white-space: nowrap;
       opacity: 0; transition: opacity .12s; pointer-events: none;
     }
     .type:hover .cell-name { opacity: 1; }
     .squares {
       position: relative; z-index: 1;
       display: flex; flex-wrap: wrap; gap: 1px;
-      width: max-content; max-width: 89px;   /* 10×8px + 9×1px = 89px → wraps at 10 */
+      width: max-content; max-width: 169px;   /* 10×16px + 9×1px = 169px → wraps at 10 */
     }
-    .sq { width: 8px; height: 8px; background: var(--sq); }
-
-    #lockedSection { margin-top: 1.5rem; }
-    .locked-head { font-size: .8rem; text-transform: uppercase; letter-spacing: .08em; color: #555; border-top: 1px solid #000; padding-top: .5rem; cursor: pointer; user-select: none; }
-    #lockedBody { display: flex; flex-wrap: wrap; gap: 1.1rem 1.5rem; margin-top: 1rem; }
+    .sq { width: 16px; height: 16px; background: var(--sq); }
+    .type.locked .sq { background: var(--sq-locked); }
   </style>
 </head>
 <body>
@@ -63,36 +58,21 @@
   <p id="empty" hidden style="color:#777">no types yet. approve some problems at
     <a href="/staged">/staged</a> first.</p>
 
-  <div class="focus-cols" id="focusCols">
-    <section class="col" data-focus="accuracy"><h2>accuracy <span class="n"></span></h2><div class="col-body"></div></section>
-    <section class="col" data-focus="speed"><h2>speed <span class="n"></span></h2><div class="col-body"></div></section>
-    <section class="col" data-focus="mastery"><h2>mastery <span class="n"></span></h2><div class="col-body"></div></section>
-  </div>
-
-  <section id="lockedSection" hidden>
-    <div class="locked-head" id="lockedHead"></div>
-    <div id="lockedBody" hidden></div>
-  </section>
+  <div class="cards" id="cards"></div>
 
   <p id="staged-link" hidden><a href="/staged"></a></p>
 
 <script>
-const FOCI = ["accuracy", "speed", "mastery"];
-
 async function api(path) {
   const res = await fetch(path);
   if (!res.ok) throw new Error(await res.text());
   return res.json();
 }
 
-function escapeHtml(s) {
-  return String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
-}
-
 // A type cell: the name (behind), then one square per approved problem.
-function renderCell(t) {
+function renderCell(t, locked) {
   const cell = document.createElement("div");
-  cell.className = "type";
+  cell.className = "type" + (locked ? " locked" : "");
   cell.dataset.id = t.id;
 
   const name = document.createElement("div");
@@ -117,30 +97,17 @@ async function load() {
   const withProblems = types.filter(t => t.problem_count > 0);
   document.getElementById("empty").hidden = withProblems.length > 0;
 
-  for (const col of document.querySelectorAll(".col")) {
-    col.querySelector(".col-body").innerHTML = "";
-    col.querySelector(".n").textContent = "";
-  }
   const active = withProblems.filter(t => t.status !== "locked");
   const locked = withProblems.filter(t => t.status === "locked");
 
-  for (const focus of FOCI) {
-    const col = document.querySelector(`.col[data-focus="${focus}"]`);
-    const here = active.filter(t => (t.focus || "accuracy") === focus);
-    col.querySelector(".n").textContent = here.length || "";
-    const body = col.querySelector(".col-body");
-    for (const t of here) body.appendChild(renderCell(t));
-  }
-
-  const sec = document.getElementById("lockedSection");
-  const head = document.getElementById("lockedHead");
-  const lbody = document.getElementById("lockedBody");
-  sec.hidden = locked.length === 0;
-  if (locked.length) {
-    lbody.innerHTML = "";
-    for (const t of locked) lbody.appendChild(renderCell(t));
-    head.textContent = `${lbody.hidden ? "▸" : "▾"} locked (${locked.length})`;
-  }
+  const grid = document.getElementById("cards");
+  grid.innerHTML = "";
+  for (const t of active) grid.appendChild(renderCell(t, false));
+  locked.forEach((t, i) => {
+    const cell = renderCell(t, true);
+    if (i === 0) cell.classList.add("locked-first");  // push locked onto its own row(s)
+    grid.appendChild(cell);
+  });
 
   const n = batches.reduce((s, b) => s + b.problems.length, 0);
   if (n > 0) {
@@ -149,13 +116,6 @@ async function load() {
     p.hidden = false;
   }
 }
-
-document.getElementById("lockedHead").onclick = () => {
-  const lbody = document.getElementById("lockedBody");
-  lbody.hidden = !lbody.hidden;
-  document.getElementById("lockedHead").textContent =
-    `${lbody.hidden ? "▸" : "▾"} locked (${lbody.children.length})`;
-};
 
 load();
 </script>
