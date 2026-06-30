@@ -20,7 +20,9 @@
   filters. It is deliberately NOT what you'll actually see (no randomization) —
   it conveys the set's scope and character, not the exact problems.
 
-  (Launch/start is not wired yet — the "draw" mode is captured but unused here.)
+  "launch" (upper-right of the builder) starts a set immediately: 5 problems
+  (or the whole pool if fewer) drawn from the eligible problems per the draw
+  mode (random, or evenly random across the selected types).
 -->
 <html lang="en">
 <head>
@@ -61,7 +63,11 @@
     .builder { position: sticky; top: 1rem; flex: none; width: 320px;
       border: 1px solid #ccc; border-radius: 4px; padding: .8rem .9rem;
       max-height: calc(100vh - 2rem); overflow: auto; }
-    .builder h2 { font-size: .8rem; text-transform: uppercase; letter-spacing: .06em; color: #555; margin: 0 0 .7rem; }
+    .bhead { display: flex; justify-content: space-between; align-items: baseline; margin: 0 0 .7rem; }
+    .builder h2 { font-size: .8rem; text-transform: uppercase; letter-spacing: .06em; color: #555; margin: 0; }
+    .launchbtn { font-family: inherit; font-size: .8rem; text-transform: uppercase; letter-spacing: .06em; color: #555; background: none; border: none; padding: 0; cursor: pointer; }
+    .launchbtn:hover { color: #000; }
+    .launchbtn:disabled { color: #ccc; cursor: not-allowed; }
     .tgroup { margin-bottom: .55rem; }
     .tgroup.disabled { opacity: .4; pointer-events: none; }
     .tgroup .lbl { font-size: .66rem; text-transform: uppercase; letter-spacing: .04em; color: #999; display: block; margin-bottom: .2rem; }
@@ -183,6 +189,52 @@ function eligible(p) {
   return true;
 }
 
+// per selected type: its eligible problem ids (difficulty selected AND filters pass)
+function eligibleByType() {
+  const lists = [];
+  for (const tid of selected) {
+    const ids = (problemsByType[tid] || [])
+      .filter(p => diffSel[tid]?.has(p.difficulty) && eligible(p))
+      .map(p => p.id);
+    if (ids.length) lists.push(ids);
+  }
+  return lists;
+}
+
+function shuffle(arr) {
+  const a = arr.slice();
+  for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; }
+  return a;
+}
+// round-robin across shuffled per-type pools => ~even per-type weight
+function evenSample(lists, n) {
+  const pools = lists.map(shuffle);
+  const order = shuffle(pools.map((_, i) => i));
+  const at = new Array(pools.length).fill(0);
+  const out = [];
+  let adv = true;
+  while (out.length < n && adv) {
+    adv = false;
+    for (const i of order) {
+      if (out.length >= n) break;
+      if (at[i] < pools[i].length) { out.push(pools[i][at[i]++]); adv = true; }
+    }
+  }
+  return out;
+}
+
+// LAUNCH: draw 5 (or the whole pool if fewer) from the eligible problems,
+// per the draw mode, and start the set immediately.
+const SET_SIZE = 5;
+function launch() {
+  const lists = eligibleByType();
+  const pool = lists.flat();
+  if (!pool.length) return;
+  const n = Math.min(SET_SIZE, pool.length);
+  const chosen = filters.mode === "evenly" ? evenSample(lists, n) : shuffle(pool).slice(0, n);
+  if (chosen.length) location.href = "/set?ids=" + chosen.join(",");
+}
+
 async function refreshBuilder() {
   await Promise.all([...selected].map(ensureProblems));
   renderBuilder();
@@ -197,7 +249,9 @@ function tg(label, group, opts, disabled) {
 
 function builderHTML() {
   const corrOff = filters.attempt !== "attempted";
-  let h = `<h2>problem set</h2>`;
+  const canLaunch = eligibleByType().flat().length > 0;
+  let h = `<div class="bhead"><h2>problem set</h2>` +
+          `<button id="launch" class="launchbtn"${canLaunch ? "" : " disabled"}>launch</button></div>`;
   h += tg("draw", "mode", [["random", "random"], ["evenly", "evenly random"]], false);
   h += tg("attempts", "attempt", [["unattempted", "unattempted"], ["attempted", "attempted"], ["all", "all"]], false);
   h += tg("of those", "correct", [["incorrect", "incorrect"], ["all", "all"]], corrOff);
@@ -223,6 +277,8 @@ function builderHTML() {
 function renderBuilder() {
   const el = document.getElementById("builder");
   el.innerHTML = builderHTML();
+  const lb = el.querySelector("#launch");
+  if (lb) lb.onclick = launch;
   el.querySelectorAll(".tg button").forEach(b => b.onclick = () => {
     filters[b.dataset.group] = b.dataset.val;
     renderBuilder();
