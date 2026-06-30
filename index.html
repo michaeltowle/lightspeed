@@ -6,23 +6,36 @@
   apart, max 10 per row, wrapping left-aligned (a 45-problem type = 5 rows, last
   row 5 squares). Each card has a thin border hugging its squares, with the
   type's name in its own container centered ABOVE the squares. Cells lay out 5
-  across. Locked types (medium-light-gray squares) always sort to the bottom.
+  across. Locked types (medium-light-gray squares, border + name) always sort to
+  the bottom.
 
-  (Stats, focus/lock controls, and click-to-select/start-set are intentionally
-  omitted for now — to be layered back on top of this.)
+  Click a card to select it (border + name go dark purple). With ≥1 selected, a
+  go-button section appears above the nav bar: "random 10" (10 random from the
+  selected types' pooled problems; only if 11+ total), "random 10 (evenly
+  weighted)" (10 random, ~even per type; only if >1 type), and "all" (every
+  problem of every selected type). Each starts a problem set immediately.
+
+  (Per-card stats and focus/lock controls are still omitted for now.)
 -->
 <html lang="en">
 <head>
   <meta charset="utf-8" />
   <title>Lightspeed</title>
   <style>
-    /* periwinkle squares (gray when locked), pale pastel purple name */
-    :root { --sq: #8c9eff; --sq-locked: #c2c2c2; --name: #d9c9f2; }
+    /* periwinkle squares (gray when locked), pale pastel purple name,
+       dark purple when a card is selected */
+    :root { --sq: #8c9eff; --sq-locked: #c2c2c2; --name: #d9c9f2; --selected: #5b21b6; }
 
     body { font-family: system-ui, sans-serif; max-width: 1120px; margin: 2rem auto; padding: 0 1rem; color: #000; }
     h1 { font-size: 1.3rem; }
     .bar { display: flex; gap: .6rem; align-items: center; padding: .6rem 0; border-bottom: 1px solid #000; }
     .bar a.navlink { font-size: .85rem; color: #000; text-decoration: underline; }
+
+    /* go-button section (above the nav bar); shows only when ≥1 card selected */
+    .gobar { display: flex; flex-wrap: wrap; gap: .6rem; align-items: center; padding: .6rem 0; }
+    .gobar .golabel { font-size: .85rem; color: #777; }
+    .gobtn { font-family: inherit; font-size: .85rem; padding: .25rem .7rem; border: 1px solid #000; background: #fff; color: #000; cursor: pointer; }
+    .gobtn:hover { background: #f0f0f0; }
 
     /* 5 type cards across a row */
     .cards { display: grid; grid-template-columns: repeat(5, 200px); gap: 1.5rem 1.25rem; align-items: start; justify-content: start; margin: 1.6rem 0; }
@@ -31,7 +44,7 @@
        border sits close around the squares (small padding). */
     .type {
       width: 200px; box-sizing: border-box;
-      border: 1px solid #e3e3e3; padding: 8px 6px;
+      border: 1px solid #e3e3e3; padding: 8px 6px; cursor: pointer; user-select: none;
       display: flex; flex-direction: column; align-items: center; gap: 7px;
     }
     .type.locked-first { grid-column-start: 1; }  /* locked block starts a fresh row */
@@ -45,10 +58,18 @@
     }
     .sq { width: 16px; height: 16px; background: var(--sq); }
     .type.locked .sq { background: var(--sq-locked); }
+    /* locked: border + name match the gray squares */
+    .type.locked { border-color: var(--sq-locked); }
+    .type.locked .cell-name { color: var(--sq-locked); }
+    /* selected wins over locked: border + name go dark purple */
+    .type.selected { border-color: var(--selected); }
+    .type.selected .cell-name { color: var(--selected); }
   </style>
 </head>
 <body>
   <h1>limitations are in the mind.</h1>
+
+  <div class="gobar" id="gobar" hidden></div>
 
   <div class="bar">
     <a href="/types" class="navlink">types</a>
@@ -63,16 +84,21 @@
   <p id="staged-link" hidden><a href="/staged"></a></p>
 
 <script>
+const selected = new Set();      // selected type ids
+const typeById = {};             // id -> type object (for problem_count etc.)
+const problemIdCache = {};       // type id -> [approved problem ids]
+
 async function api(path) {
   const res = await fetch(path);
   if (!res.ok) throw new Error(await res.text());
   return res.json();
 }
 
-// A type cell: the name (behind), then one square per approved problem.
+// A type cell: name above its section of one square per approved problem.
 function renderCell(t, locked) {
   const cell = document.createElement("div");
   cell.className = "type" + (locked ? " locked" : "");
+  if (selected.has(t.id)) cell.classList.add("selected");
   cell.dataset.id = t.id;
 
   const name = document.createElement("div");
@@ -88,7 +114,83 @@ function renderCell(t, locked) {
   }
 
   cell.append(name, squares);
+  cell.onclick = () => toggleSelect(t.id, cell);
   return cell;
+}
+
+function toggleSelect(id, cell) {
+  if (selected.has(id)) selected.delete(id); else selected.add(id);
+  cell.classList.toggle("selected", selected.has(id));
+  refreshGobar();
+}
+
+// --- go buttons: which appear depends on the current selection ---
+function goActions() {
+  const ids = [...selected];
+  const total = ids.reduce((s, id) => s + (typeById[id]?.problem_count || 0), 0);
+  const acts = [];
+  if (total >= 11) acts.push(["random10", "random 10"]);          // subsample needs 11+
+  if (ids.length >= 2) acts.push(["even10", "random 10 (evenly weighted)"]);  // needs >1 type
+  acts.push(["all", "all"]);                                       // always available
+  return acts;
+}
+
+function refreshGobar() {
+  const gobar = document.getElementById("gobar");
+  if (selected.size === 0) { gobar.hidden = true; gobar.innerHTML = ""; return; }
+  gobar.innerHTML = `<span class="golabel">go:</span>`;
+  for (const [key, label] of goActions()) {
+    const b = document.createElement("button");
+    b.className = "gobtn";
+    b.textContent = label;
+    b.onclick = () => startSet(key);
+    gobar.appendChild(b);
+  }
+  gobar.hidden = false;
+}
+
+async function problemIds(typeId) {
+  if (!problemIdCache[typeId]) {
+    const probs = await api(`/api/problems?type=${typeId}`);
+    problemIdCache[typeId] = probs.map(p => p.id);
+  }
+  return problemIdCache[typeId];
+}
+
+function shuffle(arr) {
+  const a = arr.slice();
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+
+// round-robin across shuffled per-type pools => ~even per-type weight, randomized
+function evenSample(lists, n) {
+  const pools = lists.map(shuffle);
+  const order = shuffle(pools.map((_, i) => i));
+  const at = new Array(pools.length).fill(0);
+  const out = [];
+  let advanced = true;
+  while (out.length < n && advanced) {
+    advanced = false;
+    for (const i of order) {
+      if (out.length >= n) break;
+      if (at[i] < pools[i].length) { out.push(pools[i][at[i]++]); advanced = true; }
+    }
+  }
+  return out;
+}
+
+async function startSet(kind) {
+  const lists = await Promise.all([...selected].map(problemIds));
+  let chosen;
+  if (kind === "all") chosen = lists.flat();
+  else if (kind === "random10") chosen = shuffle(lists.flat()).slice(0, 10);
+  else if (kind === "even10") chosen = evenSample(lists, 10);
+  else return;
+  if (chosen.length) location.href = "/set?ids=" + chosen.join(",");
 }
 
 async function load() {
@@ -96,6 +198,7 @@ async function load() {
   // only types with approved problems have squares to show; full catalog is /types
   const withProblems = types.filter(t => t.problem_count > 0);
   document.getElementById("empty").hidden = withProblems.length > 0;
+  for (const t of withProblems) typeById[t.id] = t;
 
   const active = withProblems.filter(t => t.status !== "locked");
   const locked = withProblems.filter(t => t.status === "locked");
@@ -108,6 +211,7 @@ async function load() {
     if (i === 0) cell.classList.add("locked-first");  // push locked onto its own row(s)
     grid.appendChild(cell);
   });
+  refreshGobar();
 
   const n = batches.reduce((s, b) => s + b.problems.length, 0);
   if (n > 0) {
