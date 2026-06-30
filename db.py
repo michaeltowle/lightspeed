@@ -289,10 +289,36 @@ def batch_types(conn, batch_id):
     return [dict(r) for r in rows]
 
 
+def problem_squares(conn):
+    """Per type, its approved problems as compact 'squares' — id, difficulty, and
+    whether attempted — ORDERED by difficulty (easy→medium→hard) then problem id.
+    Drives the per-type square grid on the bank browser (each square is one
+    problem, colored by attempt status). Returns {type_id: [ {id, difficulty,
+    attempted}, ... ]}."""
+    rows = conn.execute(
+        """SELECT pt.type_id AS type_id, p.id AS id, p.difficulty AS difficulty,
+                  (SELECT COUNT(*) FROM attempt a WHERE a.problem_id = p.id) AS n_attempts
+           FROM problem p
+           JOIN problem_type pt ON pt.problem_id = p.id
+           WHERE p.status = 'approved'
+           ORDER BY pt.type_id,
+                    CASE p.difficulty WHEN 'easy' THEN 0 WHEN 'medium' THEN 1
+                                      WHEN 'hard' THEN 2 ELSE 3 END,
+                    p.id"""
+    ).fetchall()
+    out = {}
+    for r in rows:
+        out.setdefault(r["type_id"], []).append(
+            {"id": r["id"], "difficulty": r["difficulty"], "attempted": r["n_attempts"] > 0}
+        )
+    return out
+
+
 def list_types(conn):
     """Every registered type with its subtype names, approved/attempted counts,
-    and current focus + lock status + current-period stats — everything the bank
-    browser needs to group types by focus and show per-period progress."""
+    current focus + lock status + current-period stats, and its problem 'squares'
+    (id/difficulty/attempted, difficulty-then-id ordered) — everything the bank
+    browser needs to render the cards and group by focus."""
     rows = conn.execute(
         """SELECT t.id, t.name, t.generator, t.default_instruction, t.status,
                   (SELECT group_concat(s.name, '|') FROM subtype s
@@ -306,6 +332,7 @@ def list_types(conn):
            GROUP BY t.id, t.name, t.generator, t.default_instruction, t.status
            ORDER BY t.name"""
     ).fetchall()
+    squares = problem_squares(conn)
     out = []
     for r in rows:
         d = dict(r)
@@ -317,6 +344,7 @@ def list_types(conn):
         n, mastered = type_mastery(conn, d["id"])
         d["n_problems"], d["mastered"] = n, mastered
         d.update(type_period_stats(conn, d["id"], d["focus_since"] or now()))
+        d["squares"] = squares.get(d["id"], [])
         out.append(d)
     return out
 

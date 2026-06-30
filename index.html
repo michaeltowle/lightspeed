@@ -4,9 +4,10 @@
 
   LEFT: type cards, 4 across. Each type is one 16×16px square per approved
   problem (1px gap, max 10/row, wrapping left-aligned), name centered above, thin
-  border. Periwinkle squares; locked types go medium-light gray (square + border
-  + name) and sort to the bottom. Click a card to (de)select it — border + name
-  go dark purple.
+  border. Each square IS a problem, ordered difficulty-then-id; royal blue if
+  attempted, light blue-gray if not. Locked types go medium-light gray (square +
+  border + name) and sort to the bottom. Click a card to (de)select it — border +
+  name go dark purple.
 
   RIGHT: the problemset-builder sidebar. Top toggles:
     - draw:     random | evenly random            (sampling mode, for launch)
@@ -33,7 +34,12 @@
   </script>
   <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js" async></script>
   <style>
-    :root { --sq: #8c9eff; --sq-locked: #c2c2c2; --name: #d9c9f2; --selected: #5b21b6; }
+    :root {
+      --sq-unattempted: #c4cfe0;  /* light blue-gray */
+      --sq-attempted:   #4169e1;  /* royal blue */
+      --sq-locked:      #c2c2c2;  /* medium-light gray */
+      --name: #d9c9f2; --selected: #5b21b6;
+    }
 
     body { font-family: system-ui, sans-serif; max-width: 1260px; margin: 2rem auto; padding: 0 1rem; color: #000; }
     h1 { font-size: 1.3rem; }
@@ -52,8 +58,9 @@
     .type.locked-first { grid-column-start: 1; }
     .cell-name { color: var(--name); font-size: .8rem; font-weight: 600; line-height: 1.2; text-align: center; }
     .squares { display: flex; flex-wrap: wrap; gap: 1px; max-width: 169px; }  /* 10×16 + 9×1 = 169 */
-    .sq { width: 16px; height: 16px; background: var(--sq); }
-    .type.locked .sq { background: var(--sq-locked); }
+    .sq { width: 16px; height: 16px; background: var(--sq-unattempted); }
+    .sq.attempted { background: var(--sq-attempted); }
+    .type.locked .sq { background: var(--sq-locked); }   /* locked overrides attempt color */
     .type.locked { border-color: var(--sq-locked); }
     .type.locked .cell-name { color: var(--sq-locked); }
     .type.selected { border-color: var(--selected); }
@@ -120,7 +127,7 @@ const selected = new Set();         // selected type ids (insertion order)
 const typeById = {};                // id -> type object
 const problemsByType = {};          // id -> [problem objects] (id-sorted, full)
 const diffSel = {};                 // id -> Set of selected difficulties
-const filters = { mode: "random", attempt: "all", correct: "all" };
+const filters = { mode: "random", attempt: "unattempted", correct: "all" };
 
 const FORMULAS = ["formula_1", "formula_2", "formula_3"];
 const EXPRESSIONS = ["expression_1", "expression_2", "expression_3"];
@@ -152,11 +159,15 @@ function renderCell(t, locked) {
   name.className = "cell-name";
   name.textContent = t.default_instruction || t.name;
 
+  // one square per problem, already ordered difficulty-then-id by the server;
+  // royal blue if attempted, light blue-gray if not.
   const squares = document.createElement("div");
   squares.className = "squares";
-  for (let i = 0; i < t.problem_count; i++) {
+  for (const sq of (t.squares || [])) {
     const s = document.createElement("div");
-    s.className = "sq";
+    s.className = "sq" + (sq.attempted ? " attempted" : "");
+    s.dataset.id = sq.id;
+    s.title = `#${sq.id} · ${sq.difficulty}${sq.attempted ? " · attempted" : ""}`;
     squares.appendChild(s);
   }
 
