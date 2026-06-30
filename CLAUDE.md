@@ -36,6 +36,21 @@ recency / weak spots. Single user (the repo owner).
 
 Zero-install: Python stdlib + sympy only. No API key, no Node.
 
+## Sync (two laptops)
+
+The owner uses two machines, never at once (work by day, personal by night), so
+DB sync is plain last-writer-wins — no merging. `lightspeed.db` is gitignored; it
+travels as a deterministic text snapshot at `data/lightspeed.sql` (`db.py`'s
+`export_snapshot` / `import_snapshot`, via stdlib `iterdump`). Two skills wrap
+the workflow (kept in `.claude/skills/`, so they sync too):
+
+- **fancy push** — `python db.py dump`, then commit code + snapshot and `git push`.
+- **fancy pull** — `git pull`, then `python db.py load` (rebuilds the DB from the
+  snapshot; backs the old one up to `lightspeed.db.bak`), then restart the server.
+
+Discipline: pull before working, push when done. `python db.py load` fully
+replaces the local DB, so never run it with un-pushed local changes you care about.
+
 ## Conventions
 
 - **Generation → staging → review.** Generated problems are `staged`; the owner

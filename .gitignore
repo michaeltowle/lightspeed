@@ -1,3 +1,7 @@
 lightspeed.db
+lightspeed.db.bak
 __pycache__/
 *.pyc
+
+# the DB itself is disposable/ignored; data/lightspeed.sql (the tracked text
+# snapshot used to sync between laptops) is intentionally NOT ignored.

@@ -22,10 +22,15 @@ problem.
 """
 
 import os
+import shutil
 import sqlite3
 from datetime import datetime, timezone
 
-DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "lightspeed.db")
+_HERE = os.path.dirname(os.path.abspath(__file__))
+DB_PATH = os.path.join(_HERE, "lightspeed.db")
+# Text snapshot of the whole DB, tracked in git so the bank + practice history
+# sync across machines (the .db itself stays gitignored). See export/import below.
+SNAPSHOT_PATH = os.path.join(_HERE, "data", "lightspeed.sql")
 
 # The decomposed problem-statement fields, in order — also the dedup key.
 PROBLEM_FIELDS = (
@@ -719,6 +724,53 @@ def finalize_problem_set_counts(conn, problem_set_id):
     )
 
 
+# --- snapshot sync (two-laptop) ------------------------------------------
+
+def export_snapshot(path=SNAPSHOT_PATH):
+    """Dump the entire DB to a deterministic SQL text file (stdlib iterdump):
+    schema + every row, tables in creation order, rows by id. Tracked in git so
+    the bank and practice history travel between machines. Returns the path."""
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    conn = connect()
+    try:
+        with open(path, "w", encoding="utf-8") as f:
+            for line in conn.iterdump():
+                f.write(line + "\n")
+    finally:
+        conn.close()
+    return path
+
+
+def import_snapshot(path=SNAPSHOT_PATH):
+    """Rebuild the local DB from a snapshot (full replace, last-push-wins). The
+    current lightspeed.db is backed up to lightspeed.db.bak first, so a mistaken
+    load is recoverable. init_db() runs afterward to apply any newer migrations
+    on top. Returns the DB path."""
+    if not os.path.exists(path):
+        raise FileNotFoundError(f"no snapshot at {path}")
+    if os.path.exists(DB_PATH):
+        shutil.copy2(DB_PATH, DB_PATH + ".bak")
+        os.remove(DB_PATH)
+    # raw connection: foreign_keys default OFF, so rows load regardless of order
+    raw = sqlite3.connect(DB_PATH)
+    try:
+        with open(path, encoding="utf-8") as f:
+            raw.executescript(f.read())
+        raw.commit()
+    finally:
+        raw.close()
+    init_db()  # CREATE IF NOT EXISTS + idempotent migrations on top of the load
+    return DB_PATH
+
+
 if __name__ == "__main__":
-    init_db()
-    print("Initialized", DB_PATH)
+    import sys
+
+    cmd = sys.argv[1] if len(sys.argv) > 1 else "init"
+    if cmd == "dump":
+        print("Exported snapshot ->", export_snapshot())
+    elif cmd == "load":
+        print("Rebuilt DB from snapshot ->", import_snapshot())
+    else:
+        init_db()
+        print("Initialized", DB_PATH)
