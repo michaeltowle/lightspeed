@@ -24,7 +24,7 @@ problem.
 import os
 import shutil
 import sqlite3
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 DB_PATH = os.path.join(_HERE, "lightspeed.db")
@@ -722,6 +722,28 @@ def finalize_problem_set_counts(conn, problem_set_id):
         "UPDATE problem_set SET n_attempts = ?, n_correct = ? WHERE id = ?",
         (row["n"], row["c"] or 0, problem_set_id),
     )
+
+
+def attempts_this_week(conn):
+    """Attempt counts per calendar day from the most recent Monday through today.
+    Returns {"mon": n, "tue": n, ...} for days up to and including today."""
+    today = datetime.today().date()
+    monday = today - timedelta(days=today.weekday())  # weekday(): Mon=0 … Sun=6
+    rows = conn.execute(
+        "SELECT date(completed_at, 'localtime') AS day, COUNT(*) AS n "
+        "FROM attempt WHERE date(completed_at, 'localtime') >= ? "
+        "GROUP BY day ORDER BY day",
+        (monday.isoformat(),),
+    ).fetchall()
+    counts = {row["day"]: row["n"] for row in rows}
+    day_names = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
+    result = {}
+    for i, name in enumerate(day_names):
+        d = monday + timedelta(days=i)
+        if d > today:
+            break
+        result[name] = counts.get(d.isoformat(), 0)
+    return result
 
 
 # --- snapshot sync (two-laptop) ------------------------------------------

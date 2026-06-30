@@ -65,6 +65,8 @@ class Handler(BaseHTTPRequestHandler):
         if re.fullmatch(r"/[\w.-]+\.html", path):
             return self._send_file(path.lstrip("/"))
 
+        if path == "/api/stats/week":
+            return self._with_conn(db.attempts_this_week)
         if path == "/api/staged":
             return self._with_conn(db.staged_batches)
         if path == "/api/types":

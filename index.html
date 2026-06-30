@@ -45,6 +45,7 @@
     h1 { font-size: 1.3rem; }
     .bar { display: flex; gap: .6rem; align-items: center; padding: .6rem 0; border-bottom: 1px solid #000; }
     .bar a.navlink { font-size: .85rem; color: #000; text-decoration: underline; }
+    #week-stats { font-size: .85rem; padding: .4rem 0 .15rem; color: #000; }
 
     .layout { display: flex; gap: 1.5rem; align-items: flex-start; margin-top: 1.4rem; }
 
@@ -105,10 +106,8 @@
 <body>
   <h1>limitations are in the mind.</h1>
 
-  <div class="bar">
-    <a href="/types" class="navlink">types</a>
-    <a href="/staged" class="navlink">staged</a>
-  </div>
+  <div id="week-stats"></div>
+  <div class="bar"></div>
 
   <p id="empty" hidden style="color:#777">no types yet. approve some problems at
     <a href="/staged">/staged</a> first.</p>
@@ -119,6 +118,11 @@
   </div>
 
   <p id="staged-link" hidden><a href="/staged"></a></p>
+
+  <div class="bar">
+    <a href="/types" class="navlink">types</a>
+    <a href="/staged" class="navlink">staged</a>
+  </div>
 
 <script>
 const DIFFS = ["easy", "medium", "hard"];
@@ -324,7 +328,14 @@ function renderPreview() {
 }
 
 // ---- load -----------------------------------------------------------------
+async function loadWeekStats() {
+  const week = await api("/api/stats/week");
+  const text = Object.entries(week).map(([day, n]) => `${day}: ${n}`).join("  ");
+  document.getElementById("week-stats").textContent = text;
+}
+
 async function load() {
+  loadWeekStats();
   const [types, batches] = await Promise.all([api("/api/types"), api("/api/staged")]);
   const withProblems = types.filter(t => t.problem_count > 0);
   document.getElementById("empty").hidden = withProblems.length > 0;
