@@ -3,8 +3,9 @@
   Problem-set runner.  Reached from index.html as /set?ids=1,2,3
 
   Flow:
-    - On load: fetch the chosen problems, shuffle, create a ProblemSet row
-      (its id is the "#N" in the nav).
+    - On load: fetch the chosen problems, order them easy → medium → hard
+      (random within each tier), create a ProblemSet row (its id is the "#N"
+      in the nav).
     - ONE problem at a time, answer hidden. No timer is shown while solving.
     - "next" records that problem's elapsed time (silently) and advances.
     - After "next" on the LAST problem, ALL questions + ALL answers are shown.
@@ -251,6 +252,13 @@ async function api(path, opts) {
 const post = obj => ({ method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(obj || {}) });
 const shuffle = a => { for (let i = a.length - 1; i > 0; i--) { const j = Math.random() * (i + 1) | 0; [a[i], a[j]] = [a[j], a[i]]; } return a; };
 
+// Presentation order: easy first, then medium, then hard (random WITHIN each
+// difficulty tier). Guarantees every easy is seen before the first medium and
+// every medium before the first hard — for the whole set, so per type too.
+const DIFF_RANK = { easy: 0, medium: 1, hard: 2 };
+const orderForRun = probs =>
+  shuffle(probs).sort((a, b) => (DIFF_RANK[a.difficulty] ?? 1) - (DIFF_RANK[b.difficulty] ?? 1));
+
 function math(tex) {
   return katex.renderToString(tex, { throwOnError: false, displayMode: true });
 }
@@ -301,7 +309,7 @@ document.addEventListener("click", async (e) => {
 // ---- flow -----------------------------------------------------------------
 async function start() {
   if (ids.length === 0) { fail("no problems selected. go back to the bank and pick some."); return; }
-  problems = shuffle(await api(`/api/problems?ids=${ids.join(",")}`));
+  problems = orderForRun(await api(`/api/problems?ids=${ids.join(",")}`));
   if (problems.length === 0) { fail("those problems weren't found."); return; }
 
   const { id } = await api("/api/problem-sets", post({}));

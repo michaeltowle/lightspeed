@@ -9,11 +9,12 @@
   across. Locked types (medium-light-gray squares, border + name) always sort to
   the bottom.
 
-  Click a card to select it (border + name go dark purple). With ≥1 selected, a
-  go-button section appears above the nav bar: "random 10" (10 random from the
-  selected types' pooled problems; only if 11+ total), "random 10 (evenly
-  weighted)" (10 random, ~even per type; only if >1 type), and "all" (every
-  problem of every selected type). Each starts a problem set immediately.
+  Click a card to select it (border + name go dark purple). With ≥1 selected,
+  go links appear on the RIGHT of the nav bar (same look as types/staged):
+  "random 10" (10 random from the selected types' pooled problems; only if 11+
+  total), "random 10 (evenly weighted)" (10 random, ~even per type; only if >1
+  type), and "all" (every problem of every selected type). Each starts a problem
+  set immediately, presented easy → medium → hard (ordering lives in the runner).
 
   (Per-card stats and focus/lock controls are still omitted for now.)
 -->
@@ -31,11 +32,11 @@
     .bar { display: flex; gap: .6rem; align-items: center; padding: .6rem 0; border-bottom: 1px solid #000; }
     .bar a.navlink { font-size: .85rem; color: #000; text-decoration: underline; }
 
-    /* go-button section (above the nav bar); shows only when ≥1 card selected */
-    .gobar { display: flex; flex-wrap: wrap; gap: .6rem; align-items: center; padding: .6rem 0; }
-    .gobar .golabel { font-size: .85rem; color: #777; }
-    .gobtn { font-family: inherit; font-size: .85rem; padding: .25rem .7rem; border: 1px solid #000; background: #fff; color: #000; cursor: pointer; }
-    .gobtn:hover { background: #f0f0f0; }
+    /* go links: same look as the nav links, pushed to the right of the bar;
+       shown only when ≥1 card is selected */
+    #gobar { margin-left: auto; display: flex; gap: .9rem; align-items: center; }
+    .golink { font-family: inherit; font-size: .85rem; color: #000; background: none; border: none; padding: 0; text-decoration: underline; cursor: pointer; }
+    .golink:hover { color: #555; }
 
     /* 5 type cards across a row */
     .cards { display: grid; grid-template-columns: repeat(5, 200px); gap: 1.5rem 1.25rem; align-items: start; justify-content: start; margin: 1.6rem 0; }
@@ -69,11 +70,10 @@
 <body>
   <h1>limitations are in the mind.</h1>
 
-  <div class="gobar" id="gobar" hidden></div>
-
   <div class="bar">
     <a href="/types" class="navlink">types</a>
     <a href="/staged" class="navlink">staged</a>
+    <span id="gobar" hidden></span>
   </div>
 
   <p id="empty" hidden style="color:#777">no types yet. approve some problems at
@@ -137,11 +137,11 @@ function goActions() {
 
 function refreshGobar() {
   const gobar = document.getElementById("gobar");
-  if (selected.size === 0) { gobar.hidden = true; gobar.innerHTML = ""; return; }
-  gobar.innerHTML = `<span class="golabel">go:</span>`;
+  gobar.innerHTML = "";
+  if (selected.size === 0) { gobar.hidden = true; return; }
   for (const [key, label] of goActions()) {
     const b = document.createElement("button");
-    b.className = "gobtn";
+    b.className = "golink";
     b.textContent = label;
     b.onclick = () => startSet(key);
     gobar.appendChild(b);
