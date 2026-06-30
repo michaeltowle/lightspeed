@@ -326,12 +326,17 @@ def problems_by_type(conn, type_id):
 
     Percentages are over *graded* attempts only (answered_correctly NOT NULL);
     None when a problem has no graded attempts. avg_seconds is the mean recorded
-    per-problem time (None if never timed)."""
+    per-problem time (None if never timed). last_correct is the MOST-RECENT
+    attempt's grade (1 correct / 0 incorrect / None if never graded or never
+    attempted) — used to filter "incorrect-only" sets."""
     rows = conn.execute(
         """SELECT p.*,
                (SELECT group_concat(s.name)
                   FROM problem_subtype ps JOIN subtype s ON s.id = ps.subtype_id
                   WHERE ps.problem_id = p.id) AS subtype_names,
+               (SELECT a2.answered_correctly FROM attempt a2
+                  WHERE a2.problem_id = p.id
+                  ORDER BY a2.completed_at DESC, a2.id DESC LIMIT 1) AS last_correct,
                COUNT(a.id) AS total_attempts,
                COALESCE(SUM(CASE WHEN a.answered_correctly IS NOT NULL
                             THEN 1 ELSE 0 END), 0) AS graded_total,
