@@ -27,6 +27,7 @@ Stack
 Routes
 
 - /sing
+- /mvp
 - nothing else should resolve
 
 Notable Info
