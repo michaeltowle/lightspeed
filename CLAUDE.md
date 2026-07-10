@@ -1,117 +1,36 @@
-# CLAUDE.md — Lightspeed
+"Lightspeed" - math practice app
 
-Personal calculus-practice app. Replaces a Jupyter+sympy notebook workflow:
-generate verified problems, curate them into a bank, drill them, and track reps /
-recency / weak spots. Single user (the repo owner).
+Golden Rules
 
-## Golden rules
+1. Never, ever touch Mike's markdown files.
+2. Never, ever take action WITHOUT FIRST reading the following files:
+   - MIKE_DEFS.md (must be read even to understand CLAUDE.md)
+3. Never, ever christen an important or semi-important noun/verb in VOS without prior authorization from Mike. (Non-important: internal-to-function variables, etc.) Note, you may defer naming by e.g. naming a class TMPNAME*JS_CLASS_01, in order to get the real coding done, then batch the name requests for Mike's approival, then rename. Always use 'tmpname*\*' in whatever casing, so that you may grep /tmpname/ case-insensitive later for missed renames.
+4. When asking Mike to christen a noun/verb:
+   - Title the ask-section "Please Christen".
+   - Suggest 3-5 names.
+   - Suggest verbose names. Try for 3+ words.
+   - DISAMBIGUATE between this new thing and all others in current VOS
+   - However, when DISAMBIGUATING, think also about the "hypothetical VOS" - objects that don't exist but easily could. (E.g. suppose rn an application isn't linked up to a DB. It's always, always the case that it could be linked to a DB in the future. Therefore it is unwise to name things "table". Instead, at minimum, strive to clarify what kind of table. If we have an HTML table, .info-table and updateInfoTable() are fine names, bc nobody ever names a DB table INFO_TABLE. updateBookTable() would, however, be ambiguous, even if everything else in the app were perfectly named, BECAUSE the user has in his mind not only the extant VOS but the hypothetical VOS.) HUGE WIN for longterm maintainability if you can do this.
+   - Consider making note of the object-names and (both extant object-names and potential future object-names) informing your disambiguation thinking. Be exhaustive with the list, but be brief explaining what each is. Prefer no explanation where possible.
 
-1. **Answers are never LLM-guessed.** Claude picks the problem; **sympy** computes
-   AND independently verifies the answer (`problem_types.py`). `answer_verified_by
-   = 'sympy'` only when a check confirms it (`diff(answer) == integrand`; FTC
-   cross-check for definite integrals; numeric cross-check for LOTUS; special
-   functions / unevaluated integrals are left NULL). Each type's verification
-   method is registered in `TYPES.md`. If sympy can't reliably do a requested
-   type, say so — don't guess.
-2. **Update `schema.md` whenever the DB schema changes.** Any new table, column,
-   constraint, enum value, or migration in `db.py` MUST be mirrored in
-   `schema.md` in the same change. The owner relies on `schema.md` as the
-   canonical, always-current picture of the data model. Don't let it drift.
-3. **Update `TYPES.md` whenever a problem type changes.** Any new generator in
-   `problem_types.py`, or a change to a type's presentation style or verification
-   method, MUST be mirrored in `TYPES.md` in the same change. It's the canonical
-   registry of problem types — don't let it drift.
-4. **Update `README.md` when behavior/flow changes**, and this file when a rule
-   or convention changes.
-5. **Only ever run ONE server on :8000.** A stale process silently answers with
-   old code (we've been bitten by this). Kill existing listeners before
-   restarting.
+User Habits
 
-## How it runs
+- As a way of dealing with complex risk-spaces, the user habitually chooses 'intermediate goals' to aim for without making full context known, when the full context would take forever to elaborate or when the user's picture of the MCS-VOS mapping is unclear. E.g., to wire an Anthropic API connection, he might say, "create a /sing path and wire it to talk to claude haiku over chat. when Haiku replies 'fa la la,' we consider the goal achieved. when goal achieved, set page title to "fa la la" and turn bg yellow." the reason this should be called 'sing' may not be obvious to you. the reason is that its informality, the obvious non-relation betw singing and math in a math app, marks it out as temporary. therefore sing-specific infra shd be build in a disposable way.
 
-- `python server.py` → serves pages + JSON API at http://localhost:8000/
-  (stdlib `http.server`; no LLM/sympy at runtime).
-- Generation happens in **Claude Code sessions**, not in the app: in a session,
-  call `generate.py` helpers, then `stage(prompt, items, type="...")`.
+Stack
 
-Zero-install: Python stdlib + sympy only. No API key, no Node.
+- TypeScript
+- NPM/Node
+- Vercel's AI api for model-independence
 
-## Sync (two laptops)
+Routes
 
-The owner uses two machines, never at once (work by day, personal by night), so
-DB sync is plain last-writer-wins — no merging. `lightspeed.db` is gitignored; it
-travels as a deterministic text snapshot at `data/lightspeed.sql` (`db.py`'s
-`export_snapshot` / `import_snapshot`, via stdlib `iterdump`). Two skills wrap
-the workflow (kept in `.claude/skills/`, so they sync too):
+- /sing
+- nothing else should resolve
 
-- **fancy push** — `python db.py dump`, then commit code + snapshot and `git push`.
-- **fancy pull** — `git pull`, then `python db.py load` (rebuilds the DB from the
-  snapshot; backs the old one up to `lightspeed.db.bak`), then restart the server.
+Notable Info
 
-Discipline: pull before working, push when done. `python db.py load` fully
-replaces the local DB, so never run it with un-pushed local changes you care about.
-
-## Conventions
-
-- **Generation → staging → review.** Generated problems are `staged`; the owner
-  reviews at `/staged`. **Approve is batch-level** (one button per batch);
-  **reject is per-problem**. No type-picking in the UI.
-- **Types are batch-level and Claude-assigned** at generation time (one type per
-  batch — batches are monotype). A type binds its generator + canonical
-  instruction (`problem_types.TYPES`); the owner does not hand-maintain them. The
-  `default_instruction` is the type's **display name** in the UI and the single
-  source: `stage()` stamps it onto every problem (a generator that specialized
-  its instruction sets `instructions_specialized` to keep its own).
-- **Subtypes** are an optional depth-1 label *within* a type (method/variant, e.g.
-  `integration_by_parts`). Before coining one, **check existing subtypes for that
-  type** (`db.subtypes_by_type`) so names don't drift. **Gotchas** (instructive
-  traps) are flagged with the `gotcha()` wrapper at generation so they get due
-  weight — a gotcha is anything not literally doable (det of a non-square matrix),
-  atypical in an interesting way (a definite integral that's 0), or where a
-  general rule is violated (∫xⁿ vs n=−1 → ln).
-- **Difficulty** (`easy`/`medium`/`hard`) is curated: `stage(difficulty=...)` sets
-  the batch default, per-item `easy()`/`hard()` wrappers override. The **content
-  flags** `has_e` / `has_ln` / `has_trig` are auto-detected from each problem's
-  LaTeX (no curation).
-- **Batch size ~50 problems** per prompt. Keep prompts homogeneous (one technique
-  per prompt) so the batch's single type stays meaningful.
-- **Dedup at generation time** on the decomposed statement fields (`instructions`
-  + `formula_*` + `expression_*`), against the whole DB regardless of status (so
-  rejected problems never resurface).
-- **Focus & lock are runtime state on a type, not generation concerns.** Each
-  type carries a *focus* — `accuracy → speed → mastery` (accurate before fast) —
-  tracked as `type_focus_period` rows (the open one is current). A fresh type
-  starts at `accuracy` and **auto-graduates to speed** once every approved
-  problem's *most-recent* attempt is correct; `speed → mastery` is a manual
-  promote; the owner can step focus down/up any time. Graduation is up-only
-  (never auto-demotes). Period-scoped stats reset on each transition. A type's
-  `status` (`active`/`locked`) separately holds it out of random sets. These are
-  set through the app (the index page / API), **not** at generation — `stage()`
-  does not touch focus or lock.
-
-## Files
-
-- `db.py` — SQLite schema + all data access (owns the schema).
-- `problem_types.py` — sympy compute+verify generators (one function per problem
-  type) + the `TYPES` registry. Registered in `TYPES.md`.
-- `generate.py` — `stage()` (dedup + staging; one `type=` per batch).
-- `server.py` — local server: pages + JSON API.
-- `staged.html` — review/approve/reject surface (interim UI).
-- `index.html` — browse bank by type (grouped into accuracy/speed/mastery focus
-  columns; lock to hide), select problems, start a set (wireframe).
-- `set.html` — one-at-a-time timed run + click-to-grade + finalize (wireframe).
-- `types.html` — read-only catalog of all problem types (interim UI).
-- `lightspeed.db` — created on first run; disposable.
-
-## Docs
-
-- `schema.md` — canonical data model (keep current — rule #2).
-- `TYPES.md` — canonical problem-type registry: presentation style + verification
-  method per type (keep current — rule #3).
-- `README.md` — full pipeline, rationale, run instructions.
-
-## Status
-
-All three pages are functional as plain wireframes (final visual design comes
-from Claude Design): `staged.html` (review/approve), `index.html` (browse +
-build set), `set.html` (run + grade + finalize). The full loop works end to end.
+- App will live at xy.michaeltowle.io, hosted on Cloudflare free tier (for now, at least).
+- App will not be publicly available. For Mike's use only.
+- Devices/screen sizes of concern: iPhone 13. Dell 13.3" Latitude. Dell 22" dual-screen setup.
