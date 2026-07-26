@@ -4,6 +4,10 @@ import { generateText } from "ai";
 export interface Env {
   ANTHROPIC_API_KEY: string;
   LIGHTSPEED_APP_RECORDS: D1Database;
+  // Injected at deploy time by the `deploy` npm script (see package.json).
+  // Absent under `wrangler dev`, which renders the badge as "local dev".
+  TMPNAME_DEPLOY_BRANCH_01?: string;
+  TMPNAME_DEPLOYED_AT_01?: string;
 }
 
 const TMPNAME_MODEL_ID_01 = "claude-opus-5";
@@ -98,6 +102,31 @@ const TMPNAME_PAGE_HTML_01 = `<!doctype html>
   #saved .text { font-size: 0.85rem; margin: 0.15rem 0 0.4rem; }
   #saved .acts { display: flex; gap: 0.4rem; }
   #saved .acts button { font-size: 0.75rem; padding: 0.2rem 0.6rem; }
+
+  #tmpname-deploy-badge-01 {
+    position: fixed;
+    right: 1rem;
+    bottom: 1rem;
+    padding: 0.5rem 0.75rem;
+    border: 1px solid rgba(128,128,128,0.3);
+    border-radius: 8px;
+    background: rgba(127,127,127,0.06);
+    backdrop-filter: blur(6px);
+    font-size: 0.72rem;
+    line-height: 1.6;
+    pointer-events: none;
+  }
+  #tmpname-deploy-badge-01 .lbl { opacity: 0.55; }
+  #tmpname-deploy-badge-01 .val {
+    color: #b06a2c;
+    font-variant-numeric: tabular-nums;
+  }
+  @media (prefers-color-scheme: dark) {
+    #tmpname-deploy-badge-01 .val { color: #d99a5b; }
+  }
+  @media (max-width: 30rem) {
+    #tmpname-deploy-badge-01 { position: static; margin-top: 2rem; }
+  }
 </style>
 </head>
 <body>
@@ -118,6 +147,38 @@ const TMPNAME_PAGE_HTML_01 = `<!doctype html>
 
 <h2>saved</h2>
 <ul id="saved"></ul>
+
+<div id="tmpname-deploy-badge-01"
+     data-at="__TMPNAME_DEPLOYED_AT_01__"
+     data-branch="__TMPNAME_DEPLOY_BRANCH_01__">
+  <div><span class="lbl">deployed</span> <span class="val" id="tmpname-deploy-when-01"></span></div>
+  <div><span class="lbl">from branch</span> <span class="val" id="tmpname-deploy-branch-01"></span></div>
+</div>
+
+<script>
+(function () {
+  var badge = document.getElementById('tmpname-deploy-badge-01');
+  var at = badge.getAttribute('data-at');
+  var branch = badge.getAttribute('data-branch');
+
+  // Rendered in the viewer's local time, so it reads correctly on the phone
+  // and both Dells regardless of where the deploy ran.
+  function whenText(iso) {
+    if (!iso) return 'local dev';
+    var d = new Date(iso);
+    if (isNaN(d.getTime())) return 'local dev';
+    var mons = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    var h = d.getHours();
+    var ampm = h >= 12 ? 'pm' : 'am';
+    h = h % 12; if (h === 0) h = 12;
+    var m = d.getMinutes();
+    return h + ':' + (m < 10 ? '0' + m : m) + ampm + ' on ' + mons[d.getMonth()] + ' ' + d.getDate();
+  }
+
+  document.getElementById('tmpname-deploy-when-01').textContent = whenText(at);
+  document.getElementById('tmpname-deploy-branch-01').textContent = branch ? '#' + branch : '#local';
+})();
+</script>
 
 <script>
 (function () {
@@ -457,7 +518,22 @@ export default {
     if (url.pathname !== "/") return new Response("Not found", { status: 404 });
 
     if (request.method === "GET") {
-      return new Response(TMPNAME_PAGE_HTML_01, {
+      const attr = (value: string) =>
+        value
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;")
+          .replace(/"/g, "&quot;");
+
+      const page = TMPNAME_PAGE_HTML_01.replace(
+        "__TMPNAME_DEPLOYED_AT_01__",
+        attr(env.TMPNAME_DEPLOYED_AT_01 ?? ""),
+      ).replace(
+        "__TMPNAME_DEPLOY_BRANCH_01__",
+        attr(env.TMPNAME_DEPLOY_BRANCH_01 ?? ""),
+      );
+
+      return new Response(page, {
         headers: { "content-type": "text/html; charset=utf-8" },
       });
     }
