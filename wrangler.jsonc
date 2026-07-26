@@ -6,6 +6,6 @@
   "compatibility_flags": ["nodejs_compat"],
   "workers_dev": false,
   "routes": [
-    { "pattern": "xy.michaeltowle.io", "custom_domain": true }
+    { "pattern": "z.michaeltowle.io", "custom_domain": true }
   ]
 }
