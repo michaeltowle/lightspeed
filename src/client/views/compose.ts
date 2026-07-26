@@ -56,10 +56,7 @@ export function tmpnameRenderCompose01(
 ): void {
   const attachments: UnsavedImageAttachment[] = [];
 
-  const promptEl = h("textarea", {
-    id: "prompt",
-    placeholder: "describe the problems you want (attach a screenshot of the source)",
-  });
+  const promptEl = h("textarea", { id: "prompt" });
   const countEl = h("input", {
     id: "count",
     type: "number",
@@ -69,7 +66,6 @@ export function tmpnameRenderCompose01(
   });
   const thumbsEl = h("ul", { class: "shots" });
   const statusEl = h("div", { id: "out" });
-  const pickerEl = h("input", { id: "picker", type: "file", accept: "image/*", multiple: true });
   const goEl = h("button", { type: "submit", id: "go" }, ["generate"]);
 
   const setStatus = (text: string, isError = false) => {
@@ -123,11 +119,7 @@ export function tmpnameRenderCompose01(
     }
   }
 
-  pickerEl.addEventListener("change", () => {
-    if (pickerEl.files) void addFiles(pickerEl.files);
-    pickerEl.value = "";
-  });
-
+  // Paste is the only way images get in -- there is no file picker.
   document.addEventListener("paste", (event) => {
     const clipboard = (event as ClipboardEvent).clipboardData;
     if (!clipboard) return;
@@ -162,15 +154,8 @@ export function tmpnameRenderCompose01(
   form.append(
     promptEl,
     thumbsEl,
-    h("div", { class: "row" }, [
-      h("label", { class: "filebtn", for: "picker" }, ["attach images"]),
-      pickerEl,
-      h("label", { class: "hint", for: "count" }, ["how many"]),
-      countEl,
-      goEl,
-      h("span", { class: "hint" }, ["or paste (⌘V / Ctrl+V)"]),
-    ]),
+    h("div", { class: "row" }, [countEl, goEl]),
   );
 
-  root.replaceChildren(h("h1", {}, ["new problem set"]), form, statusEl);
+  root.replaceChildren(h("h1", {}, ["limitations are in the mind"]), form, statusEl);
 }

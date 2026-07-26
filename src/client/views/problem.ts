@@ -28,15 +28,14 @@ export function tmpnameRenderProblem01(
 
   const statusEl = h("div", { id: "out" });
 
-  async function advance(skipped: boolean): Promise<void> {
+  async function advance(): Promise<void> {
     if (advancing) return;
     advancing = true;
     const elapsed = performance.now() - startedAt;
 
     try {
-      // The attempt is recorded even when skipped -- a skip is still an
-      // encounter with the problem, and still earns a square.
-      await tmpnameRecordAttempt01(problem.id, runId, Math.round(elapsed), skipped);
+      // self_grade is left NULL here; skipping is expressed on the answer page.
+      await tmpnameRecordAttempt01(problem.id, runId, Math.round(elapsed));
       void tmpnameRefreshTrophyWall01();
       if (isLast) go({ name: "answers", runId });
       else go({ name: "problem", runId, problems, index: index + 1 });
@@ -51,10 +50,9 @@ export function tmpnameRenderProblem01(
     h("div", { class: "problem-meta" }, [`${index + 1} of ${problems.length}`]),
     bodyEl,
     h("div", { class: "row" }, [
-      h("button", { type: "button", id: "go", onclick: () => void advance(false) }, [
+      h("button", { type: "button", id: "go", onclick: () => void advance() }, [
         isLast ? "next (finish)" : "next",
       ]),
-      h("button", { type: "button", onclick: () => void advance(true) }, ["skip"]),
     ]),
     statusEl,
   );

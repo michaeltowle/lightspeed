@@ -53,7 +53,7 @@ export const tmpnameRecordAttempt01 = (
   problemId: number,
   runId: number,
   elapsedMs: number,
-  skipped: boolean,
+  skipped = false,
 ) =>
   post<{ attempt_id: number }>({
     action: "tmpname_record_attempt_01",
@@ -61,7 +61,8 @@ export const tmpnameRecordAttempt01 = (
     run_id: runId,
     elapsed_ms: elapsedMs,
     // A skip pre-fills self_grade; anything else is left NULL to be graded on
-    // the answer page.
+    // the answer page. The problem view no longer skips, but the worker still
+    // honours the flag.
     skipped,
   });
 

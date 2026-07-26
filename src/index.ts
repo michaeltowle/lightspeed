@@ -225,15 +225,13 @@ function indexPageDocument(env: Env): string {
     background: rgba(127,127,127,0.04);
   }
   .row { display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; }
-  button, label.filebtn {
+  button {
     padding: 0.55rem 1rem; font: inherit; border-radius: 6px;
     border: 1px solid rgba(128,128,128,0.5);
     background: rgba(127,127,127,0.06); color: inherit; cursor: pointer;
   }
   button#go { font-weight: 600; }
   button:disabled { opacity: 0.45; cursor: default; }
-  input[type=file] { display: none; }
-  .hint { font-size: 0.8rem; opacity: 0.6; }
 
   ul.shots { display: flex; flex-wrap: wrap; gap: 0.5rem; margin: 0; padding: 0; list-style: none; }
   ul.shots li {
