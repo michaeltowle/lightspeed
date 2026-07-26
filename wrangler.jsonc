@@ -7,5 +7,12 @@
   "workers_dev": false,
   "routes": [
     { "pattern": "z.michaeltowle.io", "custom_domain": true }
+  ],
+  "d1_databases": [
+    {
+      "binding": "LIGHTSPEED_APP_RECORDS",
+      "database_name": "lightspeed_app_records",
+      "database_id": "e855e5f2-192b-4900-bf97-93a33705653e"
+    }
   ]
 }

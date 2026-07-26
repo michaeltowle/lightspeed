@@ -3,7 +3,10 @@ import { generateText } from "ai";
 
 export interface Env {
   ANTHROPIC_API_KEY: string;
+  LIGHTSPEED_APP_RECORDS: D1Database;
 }
+
+const TMPNAME_MODEL_ID_01 = "claude-opus-5";
 
 const TMPNAME_SYSTEM_PROMPT_01 = [
   "This is a wiring test for image attachment.",
@@ -29,12 +32,13 @@ const TMPNAME_PAGE_HTML_01 = `<!doctype html>
   * { box-sizing: border-box; }
   body {
     font-family: system-ui, -apple-system, sans-serif;
-    max-width: 46rem;
+    max-width: 52rem;
     margin: 0 auto;
     padding: 1rem 1rem 4rem;
     line-height: 1.45;
   }
   h1 { font-size: 1rem; font-weight: 600; opacity: 0.6; margin: 0 0 1rem; }
+  h2 { font-size: 0.85rem; font-weight: 600; opacity: 0.6; margin: 2rem 0 0.75rem; }
   form { display: flex; flex-direction: column; gap: 0.75rem; }
   textarea {
     width: 100%;
@@ -61,17 +65,17 @@ const TMPNAME_PAGE_HTML_01 = `<!doctype html>
   button:disabled { opacity: 0.45; cursor: default; }
   input[type=file] { display: none; }
   .hint { font-size: 0.8rem; opacity: 0.6; }
-  #shots { display: flex; flex-wrap: wrap; gap: 0.5rem; margin: 0; padding: 0; list-style: none; }
-  #shots li {
+  ul.shots { display: flex; flex-wrap: wrap; gap: 0.5rem; margin: 0; padding: 0; list-style: none; }
+  ul.shots li {
     border: 1px solid rgba(128,128,128,0.4);
     border-radius: 6px;
     padding: 0.4rem;
     width: 8.5rem;
     font-size: 0.75rem;
   }
-  #shots img { width: 100%; height: 4.5rem; object-fit: contain; display: block; }
-  #shots .dims { font-variant-numeric: tabular-nums; opacity: 0.75; margin-top: 0.25rem; }
-  #shots .drop { margin-top: 0.25rem; font-size: 0.75rem; padding: 0.15rem 0.4rem; }
+  ul.shots img { width: 100%; height: 4.5rem; object-fit: contain; display: block; }
+  ul.shots .dims { font-variant-numeric: tabular-nums; opacity: 0.75; margin-top: 0.25rem; }
+  ul.shots .drop { margin-top: 0.25rem; font-size: 0.75rem; padding: 0.15rem 0.4rem; }
   #out {
     margin-top: 1.25rem;
     padding: 0.75rem;
@@ -83,35 +87,48 @@ const TMPNAME_PAGE_HTML_01 = `<!doctype html>
     min-height: 2.5rem;
   }
   #out.err { border-color: #c0392b; color: #c0392b; }
-  #truth { margin-top: 0.5rem; font-size: 0.75rem; opacity: 0.6; font-family: ui-monospace, Menlo, monospace; white-space: pre-wrap; }
+  #saved { list-style: none; margin: 0; padding: 0; }
+  #saved li {
+    border: 1px solid rgba(128,128,128,0.35);
+    border-radius: 6px;
+    padding: 0.5rem 0.65rem;
+    margin-bottom: 0.4rem;
+  }
+  #saved .meta { font-size: 0.72rem; opacity: 0.6; font-variant-numeric: tabular-nums; }
+  #saved .text { font-size: 0.85rem; margin: 0.15rem 0 0.4rem; }
+  #saved .acts { display: flex; gap: 0.4rem; }
+  #saved .acts button { font-size: 0.75rem; padding: 0.2rem 0.6rem; }
 </style>
 </head>
 <body>
-<h1>screenshot probe</h1>
+<h1>authored math prompts</h1>
 
 <form id="f">
   <textarea id="prompt" placeholder="prompt (optional)"></textarea>
-  <ul id="shots"></ul>
+  <ul class="shots" id="shots"></ul>
   <div class="row">
     <label class="filebtn" for="picker">attach images</label>
     <input id="picker" type="file" accept="image/*" multiple />
-    <button type="submit" id="go">send</button>
+    <button type="submit" id="go">send &amp; save</button>
     <span class="hint">or paste (&#8984;V / Ctrl+V)</span>
   </div>
 </form>
 
 <div id="out"></div>
-<div id="truth"></div>
+
+<h2>saved</h2>
+<ul id="saved"></ul>
 
 <script>
 (function () {
   var MAX_SHOTS = 8;
-  var MAX_BYTES = 5 * 1024 * 1024;
+  var MAX_STORED_BYTES = 1000000;   // stay well under D1's 2,000,000 byte BLOB cap
+  var MAX_EDGE = 2000;              // downscale ceiling if WebP alone isn't enough
 
   var shots = [];
   var listEl = document.getElementById('shots');
   var outEl = document.getElementById('out');
-  var truthEl = document.getElementById('truth');
+  var savedEl = document.getElementById('saved');
   var goEl = document.getElementById('go');
   var promptEl = document.getElementById('prompt');
   var pickerEl = document.getElementById('picker');
@@ -121,12 +138,23 @@ const TMPNAME_PAGE_HTML_01 = `<!doctype html>
     outEl.className = isError ? 'err' : '';
   }
 
-  function measure(dataUrl) {
+  function post(payload) {
+    return fetch('/', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(payload)
+    }).then(function (res) {
+      return res.json().then(function (data) {
+        if (!res.ok) throw new Error(data.error || ('HTTP ' + res.status));
+        return data;
+      });
+    });
+  }
+
+  function loadImage(dataUrl) {
     return new Promise(function (resolve, reject) {
       var img = new Image();
-      img.onload = function () {
-        resolve({ w: img.naturalWidth, h: img.naturalHeight });
-      };
+      img.onload = function () { resolve(img); };
       img.onerror = function () { reject(new Error('could not decode image')); };
       img.src = dataUrl;
     });
@@ -141,6 +169,32 @@ const TMPNAME_PAGE_HTML_01 = `<!doctype html>
     });
   }
 
+  // Re-encode to WebP, shrinking until the encoded bytes fit under the D1 cap.
+  // Returns the dimensions actually stored, not the dimensions pasted.
+  function reencode(img) {
+    var scale = Math.min(1, MAX_EDGE / Math.max(img.naturalWidth, img.naturalHeight));
+    var quality = 0.85;
+
+    function attempt() {
+      var w = Math.max(1, Math.round(img.naturalWidth * scale));
+      var h = Math.max(1, Math.round(img.naturalHeight * scale));
+      var canvas = document.createElement('canvas');
+      canvas.width = w; canvas.height = h;
+      canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+      var url = canvas.toDataURL('image/webp', quality);
+      var base64 = url.slice(url.indexOf(',') + 1);
+      var bytes = Math.floor(base64.length * 3 / 4);
+
+      if (bytes <= MAX_STORED_BYTES) {
+        return { dataUrl: url, base64: base64, mimeType: 'image/webp', w: w, h: h, byteSize: bytes };
+      }
+      if (quality > 0.5) { quality -= 0.15; return attempt(); }
+      if (scale > 0.25) { scale *= 0.75; return attempt(); }
+      return { dataUrl: url, base64: base64, mimeType: 'image/webp', w: w, h: h, byteSize: bytes };
+    }
+    return attempt();
+  }
+
   function addFiles(files) {
     var pending = [];
     for (var i = 0; i < files.length; i++) {
@@ -150,26 +204,11 @@ const TMPNAME_PAGE_HTML_01 = `<!doctype html>
         setOut('limit is ' + MAX_SHOTS + ' images', true);
         break;
       }
-      if (file.size > MAX_BYTES) {
-        setOut(file.name + ' is over 5MB', true);
-        continue;
-      }
       pending.push(file);
     }
 
     return Promise.all(pending.map(function (file) {
-      return readFile(file).then(function (dataUrl) {
-        return measure(dataUrl).then(function (dims) {
-          return {
-            name: file.name || 'pasted',
-            mimeType: file.type,
-            dataUrl: dataUrl,
-            base64: dataUrl.slice(dataUrl.indexOf(',') + 1),
-            w: dims.w,
-            h: dims.h
-          };
-        });
-      });
+      return readFile(file).then(loadImage).then(reencode);
     })).then(function (added) {
       shots = shots.concat(added);
       render();
@@ -185,12 +224,12 @@ const TMPNAME_PAGE_HTML_01 = `<!doctype html>
 
       var img = document.createElement('img');
       img.src = shot.dataUrl;
-      img.alt = shot.name;
       li.appendChild(img);
 
       var dims = document.createElement('div');
       dims.className = 'dims';
-      dims.textContent = (idx + 1) + ': ' + shot.w + 'x' + shot.h;
+      dims.textContent = (idx + 1) + ': ' + shot.w + 'x' + shot.h +
+        ' (' + Math.round(shot.byteSize / 1024) + 'kb)';
       li.appendChild(dims);
 
       var drop = document.createElement('button');
@@ -205,6 +244,80 @@ const TMPNAME_PAGE_HTML_01 = `<!doctype html>
 
       listEl.appendChild(li);
     });
+  }
+
+  function renderSaved(rows) {
+    savedEl.innerHTML = '';
+    if (!rows.length) {
+      var empty = document.createElement('li');
+      empty.className = 'meta';
+      empty.textContent = 'nothing saved yet';
+      savedEl.appendChild(empty);
+      return;
+    }
+    rows.forEach(function (row) {
+      var li = document.createElement('li');
+
+      var meta = document.createElement('div');
+      meta.className = 'meta';
+      meta.textContent = '#' + row.id + '  ' + row.created_at +
+        '  ' + row.attachment_count + ' image(s)  ' + row.model_id;
+      li.appendChild(meta);
+
+      var text = document.createElement('div');
+      text.className = 'text';
+      text.textContent = row.prompt_text || '(no prompt)';
+      li.appendChild(text);
+
+      var acts = document.createElement('div');
+      acts.className = 'acts';
+
+      var loadBtn = document.createElement('button');
+      loadBtn.type = 'button';
+      loadBtn.textContent = 'load';
+      loadBtn.addEventListener('click', function () { loadPrompt(row.id); });
+      acts.appendChild(loadBtn);
+
+      var replayBtn = document.createElement('button');
+      replayBtn.type = 'button';
+      replayBtn.textContent = 'replay';
+      replayBtn.addEventListener('click', function () { replayPrompt(row.id); });
+      acts.appendChild(replayBtn);
+
+      li.appendChild(acts);
+      savedEl.appendChild(li);
+    });
+  }
+
+  function refreshSaved() {
+    return post({ action: 'list' })
+      .then(function (data) { renderSaved(data.rows); })
+      .catch(function (err) { setOut(err.message, true); });
+  }
+
+  // Read-back: pull a stored prompt and its images back into the composer.
+  function loadPrompt(id) {
+    setOut('loading #' + id + '...', false);
+    return post({ action: 'load', id: id }).then(function (data) {
+      promptEl.value = data.prompt_text || '';
+      shots = data.attachments.map(function (att) {
+        var dataUrl = 'data:' + att.mime_type + ';base64,' + att.base64;
+        return {
+          dataUrl: dataUrl, base64: att.base64, mimeType: att.mime_type,
+          w: att.width_px, h: att.height_px, byteSize: att.byte_size
+        };
+      });
+      render();
+      setOut('loaded #' + id + ' (' + shots.length + ' image(s)) -- original reply:\\n' +
+        (data.reply_text || '(none)'), false);
+    }).catch(function (err) { setOut(err.message, true); });
+  }
+
+  function replayPrompt(id) {
+    setOut('replaying #' + id + '...', false);
+    return post({ action: 'replay', id: id }).then(function (data) {
+      setOut('replay of #' + id + ':\\n' + data.reply, false);
+    }).catch(function (err) { setOut(err.message, true); });
   }
 
   pickerEl.addEventListener('change', function () {
@@ -231,35 +344,27 @@ const TMPNAME_PAGE_HTML_01 = `<!doctype html>
     e.preventDefault();
     goEl.disabled = true;
     setOut('...', false);
-    truthEl.textContent = '';
 
-    fetch('/', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        prompt: promptEl.value,
-        tmpnameShots: shots.map(function (shot) {
-          return { base64: shot.base64, mimeType: shot.mimeType };
-        })
+    post({
+      action: 'run',
+      prompt: promptEl.value,
+      tmpnameShots: shots.map(function (shot) {
+        return {
+          base64: shot.base64, mimeType: shot.mimeType,
+          w: shot.w, h: shot.h, byteSize: shot.byteSize
+        };
       })
-    }).then(function (res) {
-      return res.json().then(function (data) {
-        if (!res.ok) throw new Error(data.error || ('HTTP ' + res.status));
-        return data;
-      });
     }).then(function (data) {
-      setOut(data.reply, false);
-      if (shots.length) {
-        truthEl.textContent = 'browser says: ' + shots.map(function (shot, idx) {
-          return (idx + 1) + ': ' + shot.w + 'x' + shot.h;
-        }).join('  ');
-      }
+      setOut('saved as #' + data.id + '\\n' + data.reply, false);
+      return refreshSaved();
     }).catch(function (err) {
       setOut(err.message, true);
     }).then(function () {
       goEl.disabled = false;
     });
   });
+
+  refreshSaved();
 })();
 </script>
 </body>
@@ -268,73 +373,234 @@ const TMPNAME_PAGE_HTML_01 = `<!doctype html>
 interface TmpnameShot01 {
   base64: string;
   mimeType: string;
+  w: number;
+  h: number;
+  byteSize: number;
 }
+
+function base64ToBytes(base64: string): Uint8Array {
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return bytes;
+}
+
+function bytesToBase64(value: unknown): string {
+  // D1 hands BLOBs back as number[] on some paths and ArrayBuffer on others.
+  const bytes =
+    value instanceof ArrayBuffer
+      ? new Uint8Array(value)
+      : Array.isArray(value)
+        ? Uint8Array.from(value)
+        : new Uint8Array(value as ArrayBufferLike);
+
+  let binary = "";
+  for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+  return btoa(binary);
+}
+
+async function askModel(
+  env: Env,
+  promptText: string,
+  shots: { base64: string; mimeType: string }[],
+  systemPrompt: string,
+  modelId: string,
+): Promise<string> {
+  // ai@4 always sends `temperature` (it defaults to 0 rather than being
+  // omitted). Anthropic removed the sampling params on Opus 4.7 and later,
+  // so they must be stripped from the wire or the request 400s.
+  const anthropic = createAnthropic({
+    apiKey: env.ANTHROPIC_API_KEY,
+    fetch: async (input, init) => {
+      if (typeof init?.body === "string") {
+        const body = JSON.parse(init.body);
+        delete body.temperature;
+        delete body.top_p;
+        delete body.top_k;
+        init = { ...init, body: JSON.stringify(body) };
+      }
+      return fetch(input, init);
+    },
+  });
+
+  const { text } = await generateText({
+    model: anthropic(modelId),
+    system: systemPrompt,
+    messages: [
+      {
+        role: "user",
+        content: [
+          { type: "text", text: promptText.trim() || "(no prompt)" },
+          ...shots.map((shot) => ({
+            type: "image" as const,
+            image: shot.base64,
+            mimeType: shot.mimeType,
+          })),
+        ],
+      },
+    ],
+  });
+
+  return text;
+}
+
+const json = (body: unknown, status = 200) =>
+  new Response(JSON.stringify(body), {
+    status,
+    headers: { "content-type": "application/json" },
+  });
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
 
-    if (url.pathname === "/" && request.method === "GET") {
+    if (url.pathname !== "/") return new Response("Not found", { status: 404 });
+
+    if (request.method === "GET") {
       return new Response(TMPNAME_PAGE_HTML_01, {
         headers: { "content-type": "text/html; charset=utf-8" },
       });
     }
 
-    if (url.pathname === "/" && request.method === "POST") {
-      const { prompt, tmpnameShots } = await request.json<{
-        prompt?: string;
-        tmpnameShots?: TmpnameShot01[];
-      }>();
-      const shots = tmpnameShots ?? [];
-
-      // ai@4 always sends `temperature` (it defaults to 0 rather than being
-      // omitted). Anthropic removed the sampling params on Opus 4.7 and later,
-      // so they must be stripped from the wire or the request 400s.
-      const anthropic = createAnthropic({
-        apiKey: env.ANTHROPIC_API_KEY,
-        fetch: async (input, init) => {
-          if (typeof init?.body === "string") {
-            const body = JSON.parse(init.body);
-            delete body.temperature;
-            delete body.top_p;
-            delete body.top_k;
-            init = { ...init, body: JSON.stringify(body) };
-          }
-          return fetch(input, init);
-        },
-      });
-
-      try {
-        const { text } = await generateText({
-          model: anthropic("claude-opus-5"),
-          system: TMPNAME_SYSTEM_PROMPT_01,
-          messages: [
-            {
-              role: "user",
-              content: [
-                { type: "text", text: prompt?.trim() || "(no prompt)" },
-                ...shots.map((shot) => ({
-                  type: "image" as const,
-                  image: shot.base64,
-                  mimeType: shot.mimeType,
-                })),
-              ],
-            },
-          ],
-        });
-
-        return new Response(JSON.stringify({ reply: text }), {
-          headers: { "content-type": "application/json" },
-        });
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        return new Response(JSON.stringify({ error: message }), {
-          status: 502,
-          headers: { "content-type": "application/json" },
-        });
-      }
+    if (request.method !== "POST") {
+      return new Response("Not found", { status: 404 });
     }
 
-    return new Response("Not found", { status: 404 });
+    const db = env.LIGHTSPEED_APP_RECORDS;
+    const body = await request.json<{
+      action?: string;
+      id?: number;
+      prompt?: string;
+      tmpnameShots?: TmpnameShot01[];
+    }>();
+
+    try {
+      if (body.action === "list") {
+        const { results } = await db
+          .prepare(
+            `SELECT p.id, p.prompt_text, p.model_id, p.reply_text, p.created_at,
+                    COUNT(a.id) AS attachment_count
+               FROM authored_math_prompt p
+               LEFT JOIN math_prompt_image_attachment a
+                 ON a.authored_math_prompt_id = p.id
+              GROUP BY p.id
+              ORDER BY p.id DESC
+              LIMIT 50`,
+          )
+          .all();
+        return json({ rows: results });
+      }
+
+      if (body.action === "load") {
+        const prompt = await db
+          .prepare(`SELECT * FROM authored_math_prompt WHERE id = ?`)
+          .bind(body.id)
+          .first();
+        if (!prompt) return json({ error: "no such prompt" }, 404);
+
+        const { results } = await db
+          .prepare(
+            `SELECT id, ordinal, mime_type, width_px, height_px, byte_size, image_bytes
+               FROM math_prompt_image_attachment
+              WHERE authored_math_prompt_id = ?
+              ORDER BY ordinal`,
+          )
+          .bind(body.id)
+          .all();
+
+        return json({
+          ...prompt,
+          attachments: results.map((row: Record<string, unknown>) => ({
+            id: row.id,
+            ordinal: row.ordinal,
+            mime_type: row.mime_type,
+            width_px: row.width_px,
+            height_px: row.height_px,
+            byte_size: row.byte_size,
+            base64: bytesToBase64(row.image_bytes),
+          })),
+        });
+      }
+
+      if (body.action === "replay") {
+        const prompt = await db
+          .prepare(`SELECT * FROM authored_math_prompt WHERE id = ?`)
+          .bind(body.id)
+          .first<{ prompt_text: string; model_id: string; system_prompt: string }>();
+        if (!prompt) return json({ error: "no such prompt" }, 404);
+
+        const { results } = await db
+          .prepare(
+            `SELECT mime_type, image_bytes
+               FROM math_prompt_image_attachment
+              WHERE authored_math_prompt_id = ?
+              ORDER BY ordinal`,
+          )
+          .bind(body.id)
+          .all();
+
+        // Replayed against the stored model_id and system_prompt, not the
+        // current ones, so an old prompt reproduces its original request.
+        const reply = await askModel(
+          env,
+          prompt.prompt_text,
+          results.map((row: Record<string, unknown>) => ({
+            base64: bytesToBase64(row.image_bytes),
+            mimeType: String(row.mime_type),
+          })),
+          prompt.system_prompt,
+          prompt.model_id,
+        );
+        return json({ reply });
+      }
+
+      // default: run the prompt and save it
+      const shots = body.tmpnameShots ?? [];
+      const promptText = body.prompt ?? "";
+      const reply = await askModel(
+        env,
+        promptText,
+        shots,
+        TMPNAME_SYSTEM_PROMPT_01,
+        TMPNAME_MODEL_ID_01,
+      );
+
+      const inserted = await db
+        .prepare(
+          `INSERT INTO authored_math_prompt (prompt_text, model_id, system_prompt, reply_text)
+           VALUES (?, ?, ?, ?) RETURNING id`,
+        )
+        .bind(promptText, TMPNAME_MODEL_ID_01, TMPNAME_SYSTEM_PROMPT_01, reply)
+        .first<{ id: number }>();
+
+      const promptId = inserted!.id;
+
+      if (shots.length) {
+        await db.batch(
+          shots.map((shot, idx) =>
+            db
+              .prepare(
+                `INSERT INTO math_prompt_image_attachment
+                   (authored_math_prompt_id, ordinal, mime_type, width_px, height_px, byte_size, image_bytes)
+                 VALUES (?, ?, ?, ?, ?, ?, ?)`,
+              )
+              .bind(
+                promptId,
+                idx,
+                shot.mimeType,
+                shot.w,
+                shot.h,
+                shot.byteSize,
+                base64ToBytes(shot.base64),
+              ),
+          ),
+        );
+      }
+
+      return json({ id: promptId, reply });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return json({ error: message }, 502);
+    }
   },
 };
