@@ -286,7 +286,23 @@ export default {
         tmpnameShots?: TmpnameShot01[];
       }>();
       const shots = tmpnameShots ?? [];
-      const anthropic = createAnthropic({ apiKey: env.ANTHROPIC_API_KEY });
+
+      // ai@4 always sends `temperature` (it defaults to 0 rather than being
+      // omitted). Anthropic removed the sampling params on Opus 4.7 and later,
+      // so they must be stripped from the wire or the request 400s.
+      const anthropic = createAnthropic({
+        apiKey: env.ANTHROPIC_API_KEY,
+        fetch: async (input, init) => {
+          if (typeof init?.body === "string") {
+            const body = JSON.parse(init.body);
+            delete body.temperature;
+            delete body.top_p;
+            delete body.top_k;
+            init = { ...init, body: JSON.stringify(body) };
+          }
+          return fetch(input, init);
+        },
+      });
 
       try {
         const { text } = await generateText({
