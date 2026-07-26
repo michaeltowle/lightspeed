@@ -6,13 +6,13 @@ export interface Env {
   LIGHTSPEED_APP_RECORDS: D1Database;
   // Injected at deploy time by the `deploy` npm script (see package.json).
   // Absent under `wrangler dev`, which renders the badge as "local dev".
-  TMPNAME_DEPLOY_BRANCH_01?: string;
-  TMPNAME_DEPLOYED_AT_01?: string;
+  DEPLOY_BRANCH?: string;
+  DEPLOYED_AT?: string;
 }
 
-const TMPNAME_MODEL_ID_01 = "claude-opus-5";
+const CURRENT_AUTHORING_MODEL_ID = "claude-opus-5";
 
-const TMPNAME_SYSTEM_PROMPT_01 = [
+const MODEL_INSTRUCTION_PREAMBLE = [
   "This is a wiring test for image attachment.",
   "",
   "If no images are attached, reply with exactly: no screenshot",
@@ -25,7 +25,7 @@ const TMPNAME_SYSTEM_PROMPT_01 = [
   "Reply with nothing else -- no preamble, no explanation, no units.",
 ].join("\n");
 
-const TMPNAME_PAGE_HTML_01 = `<!doctype html>
+const INDEX_PAGE_DOCUMENT = `<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8" />
@@ -103,7 +103,7 @@ const TMPNAME_PAGE_HTML_01 = `<!doctype html>
   #saved .acts { display: flex; gap: 0.4rem; }
   #saved .acts button { font-size: 0.75rem; padding: 0.2rem 0.6rem; }
 
-  #tmpname-deploy-badge-01 {
+  #deploy-badge {
     position: fixed;
     right: 1rem;
     bottom: 1rem;
@@ -116,16 +116,16 @@ const TMPNAME_PAGE_HTML_01 = `<!doctype html>
     line-height: 1.6;
     pointer-events: none;
   }
-  #tmpname-deploy-badge-01 .lbl { opacity: 0.55; }
-  #tmpname-deploy-badge-01 .val {
+  #deploy-badge .lbl { opacity: 0.55; }
+  #deploy-badge .val {
     color: #b06a2c;
     font-variant-numeric: tabular-nums;
   }
   @media (prefers-color-scheme: dark) {
-    #tmpname-deploy-badge-01 .val { color: #d99a5b; }
+    #deploy-badge .val { color: #d99a5b; }
   }
   @media (max-width: 30rem) {
-    #tmpname-deploy-badge-01 { position: static; margin-top: 2rem; }
+    #deploy-badge { position: static; margin-top: 2rem; }
   }
 </style>
 </head>
@@ -148,16 +148,16 @@ const TMPNAME_PAGE_HTML_01 = `<!doctype html>
 <h2>saved</h2>
 <ul id="saved"></ul>
 
-<div id="tmpname-deploy-badge-01"
-     data-at="__TMPNAME_DEPLOYED_AT_01__"
-     data-branch="__TMPNAME_DEPLOY_BRANCH_01__">
-  <div><span class="lbl">deployed</span> <span class="val" id="tmpname-deploy-when-01"></span></div>
-  <div><span class="lbl">from branch</span> <span class="val" id="tmpname-deploy-branch-01"></span></div>
+<div id="deploy-badge"
+     data-at="__DEPLOYED_AT__"
+     data-branch="__DEPLOY_BRANCH__">
+  <div><span class="lbl">deployed</span> <span class="val" id="deploy-when"></span></div>
+  <div><span class="lbl">from branch</span> <span class="val" id="deploy-branch"></span></div>
 </div>
 
 <script>
 (function () {
-  var badge = document.getElementById('tmpname-deploy-badge-01');
+  var badge = document.getElementById('deploy-badge');
   var at = badge.getAttribute('data-at');
   var branch = badge.getAttribute('data-branch');
 
@@ -175,8 +175,8 @@ const TMPNAME_PAGE_HTML_01 = `<!doctype html>
     return h + ':' + (m < 10 ? '0' + m : m) + ampm + ' on ' + mons[d.getMonth()] + ' ' + d.getDate();
   }
 
-  document.getElementById('tmpname-deploy-when-01').textContent = whenText(at);
-  document.getElementById('tmpname-deploy-branch-01').textContent = branch ? '#' + branch : '#local';
+  document.getElementById('deploy-when').textContent = whenText(at);
+  document.getElementById('deploy-branch').textContent = branch ? '#' + branch : '#local';
 })();
 </script>
 
@@ -359,7 +359,7 @@ const TMPNAME_PAGE_HTML_01 = `<!doctype html>
   // Read-back: pull a stored prompt and its images back into the composer.
   function loadPrompt(id) {
     setOut('loading #' + id + '...', false);
-    return post({ action: 'load', id: id }).then(function (data) {
+    return post({ action: 'read', id: id }).then(function (data) {
       promptEl.value = data.prompt_text || '';
       shots = data.attachments.map(function (att) {
         var dataUrl = 'data:' + att.mime_type + ';base64,' + att.base64;
@@ -407,9 +407,9 @@ const TMPNAME_PAGE_HTML_01 = `<!doctype html>
     setOut('...', false);
 
     post({
-      action: 'run',
+      action: 'author_and_save',
       prompt: promptEl.value,
-      tmpnameShots: shots.map(function (shot) {
+      unsaved_image_attachments: shots.map(function (shot) {
         return {
           base64: shot.base64, mimeType: shot.mimeType,
           w: shot.w, h: shot.h, byteSize: shot.byteSize
@@ -431,7 +431,7 @@ const TMPNAME_PAGE_HTML_01 = `<!doctype html>
 </body>
 </html>`;
 
-interface TmpnameShot01 {
+interface UnsavedImageAttachment {
   base64: string;
   mimeType: string;
   w: number;
@@ -460,7 +460,7 @@ function bytesToBase64(value: unknown): string {
   return btoa(binary);
 }
 
-async function askModel(
+async function callLanguageModel(
   env: Env,
   promptText: string,
   shots: { base64: string; mimeType: string }[],
@@ -525,12 +525,12 @@ export default {
           .replace(/>/g, "&gt;")
           .replace(/"/g, "&quot;");
 
-      const page = TMPNAME_PAGE_HTML_01.replace(
-        "__TMPNAME_DEPLOYED_AT_01__",
-        attr(env.TMPNAME_DEPLOYED_AT_01 ?? ""),
+      const page = INDEX_PAGE_DOCUMENT.replace(
+        "__DEPLOYED_AT__",
+        attr(env.DEPLOYED_AT ?? ""),
       ).replace(
-        "__TMPNAME_DEPLOY_BRANCH_01__",
-        attr(env.TMPNAME_DEPLOY_BRANCH_01 ?? ""),
+        "__DEPLOY_BRANCH__",
+        attr(env.DEPLOY_BRANCH ?? ""),
       );
 
       return new Response(page, {
@@ -547,7 +547,7 @@ export default {
       action?: string;
       id?: number;
       prompt?: string;
-      tmpnameShots?: TmpnameShot01[];
+      unsaved_image_attachments?: UnsavedImageAttachment[];
     }>();
 
     try {
@@ -567,7 +567,7 @@ export default {
         return json({ rows: results });
       }
 
-      if (body.action === "load") {
+      if (body.action === "read") {
         const prompt = await db
           .prepare(`SELECT * FROM authored_math_prompt WHERE id = ?`)
           .bind(body.id)
@@ -617,7 +617,7 @@ export default {
 
         // Replayed against the stored model_id and system_prompt, not the
         // current ones, so an old prompt reproduces its original request.
-        const reply = await askModel(
+        const reply = await callLanguageModel(
           env,
           prompt.prompt_text,
           results.map((row: Record<string, unknown>) => ({
@@ -630,15 +630,20 @@ export default {
         return json({ reply });
       }
 
-      // default: run the prompt and save it
-      const shots = body.tmpnameShots ?? [];
+      if (body.action !== "author_and_save") {
+        // Explicit, so a typo'd action can't silently spend an API call and
+        // write a row by falling through to the save path.
+        return json({ error: `unknown action: ${body.action ?? "(none)"}` }, 400);
+      }
+
+      const shots = body.unsaved_image_attachments ?? [];
       const promptText = body.prompt ?? "";
-      const reply = await askModel(
+      const reply = await callLanguageModel(
         env,
         promptText,
         shots,
-        TMPNAME_SYSTEM_PROMPT_01,
-        TMPNAME_MODEL_ID_01,
+        MODEL_INSTRUCTION_PREAMBLE,
+        CURRENT_AUTHORING_MODEL_ID,
       );
 
       const inserted = await db
@@ -646,7 +651,7 @@ export default {
           `INSERT INTO authored_math_prompt (prompt_text, model_id, system_prompt, reply_text)
            VALUES (?, ?, ?, ?) RETURNING id`,
         )
-        .bind(promptText, TMPNAME_MODEL_ID_01, TMPNAME_SYSTEM_PROMPT_01, reply)
+        .bind(promptText, CURRENT_AUTHORING_MODEL_ID, MODEL_INSTRUCTION_PREAMBLE, reply)
         .first<{ id: number }>();
 
       const promptId = inserted!.id;

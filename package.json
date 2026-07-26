@@ -4,7 +4,7 @@
   "type": "module",
   "scripts": {
     "dev": "wrangler dev",
-    "deploy": "wrangler deploy --var TMPNAME_DEPLOY_BRANCH_01:\"$(git rev-parse --abbrev-ref HEAD)\" --var TMPNAME_DEPLOYED_AT_01:\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"",
+    "deploy": "wrangler deploy --var DEPLOY_BRANCH:\"$(git rev-parse --abbrev-ref HEAD)\" --var DEPLOYED_AT:\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
