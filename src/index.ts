@@ -12,18 +12,11 @@ export interface Env {
 
 const CURRENT_AUTHORING_MODEL_ID = "claude-opus-5";
 
-const MODEL_INSTRUCTION_PREAMBLE = [
-  "This is a wiring test for image attachment.",
-  "",
-  "If no images are attached, reply with exactly: no screenshot",
-  "",
-  "If images are attached, reply with one line per image, in order, formatted:",
-  "1: 1280x720",
-  "2: 390x844",
-  "",
-  "Give your best visual estimate of each image's pixel dimensions.",
-  "Reply with nothing else -- no preamble, no explanation, no units.",
-].join("\n");
+// Blank: new prompts go to the model with no system instruction, so the reply
+// answers the prompt itself rather than the old screenshot-probe format.
+// Stored rows keep whatever preamble was in force when they were saved, so
+// replaying an old prompt still reproduces its original request.
+const MODEL_INSTRUCTION_PREAMBLE = "";
 
 const INDEX_PAGE_DOCUMENT = `<!doctype html>
 <html lang="en">
@@ -486,7 +479,9 @@ async function callLanguageModel(
 
   const { text } = await generateText({
     model: anthropic(modelId),
-    system: systemPrompt,
+    // Omitted entirely when blank -- sending an empty system string is not the
+    // same as sending none, and stored rows may legitimately have no preamble.
+    ...(systemPrompt.trim() ? { system: systemPrompt } : {}),
     messages: [
       {
         role: "user",
