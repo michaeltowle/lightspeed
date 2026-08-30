@@ -1,8 +1,8 @@
 import type {
-  TmpnameAnswerRow01,
-  TmpnameProblem01,
-  TmpnameSelfGrade01,
-  TmpnameTrophy01,
+  AnswerRow,
+  MathPracticeProblem,
+  SelfGrade,
+  Trophy,
   UnsavedImageAttachment,
 } from "./types";
 
@@ -19,19 +19,19 @@ async function post<T>(payload: Record<string, unknown>): Promise<T> {
   return data;
 }
 
-export interface TmpnameGeneratedSet01 {
+export interface GeneratedProblemSet {
   set_id: number;
   run_id: number;
-  problems: TmpnameProblem01[];
+  problems: MathPracticeProblem[];
 }
 
-export const tmpnameGenerateProblems01 = (
+export const generateProblems = (
   prompt: string,
   attachments: UnsavedImageAttachment[],
   requestedCount: number,
 ) =>
-  post<TmpnameGeneratedSet01>({
-    action: "tmpname_generate_problems_01",
+  post<GeneratedProblemSet>({
+    action: "generate_problems",
     prompt,
     requested_count: requestedCount,
     unsaved_image_attachments: attachments.map((a) => ({
@@ -43,20 +43,14 @@ export const tmpnameGenerateProblems01 = (
     })),
   });
 
-export const tmpnameReplaySet01 = (setId: number) =>
-  post<TmpnameGeneratedSet01>({
-    action: "tmpname_replay_set_01",
-    set_id: setId,
-  });
-
-export const tmpnameRecordAttempt01 = (
+export const recordAttempt = (
   problemId: number,
   runId: number,
   elapsedMs: number,
   skipped = false,
 ) =>
   post<{ attempt_id: number }>({
-    action: "tmpname_record_attempt_01",
+    action: "record_attempt",
     problem_id: problemId,
     run_id: runId,
     elapsed_ms: elapsedMs,
@@ -66,21 +60,21 @@ export const tmpnameRecordAttempt01 = (
     skipped,
   });
 
-export const tmpnameRevealAnswers01 = (runId: number) =>
-  post<{ rows: TmpnameAnswerRow01[] }>({
-    action: "tmpname_reveal_answers_01",
+export const revealAnswers = (runId: number) =>
+  post<{ rows: AnswerRow[] }>({
+    action: "reveal_answers",
     run_id: runId,
   });
 
-export const tmpnameGradeAttempt01 = (
+export const gradeAttempt = (
   attemptId: number,
-  selfGrade: TmpnameSelfGrade01,
+  selfGrade: SelfGrade,
 ) =>
   post<{ ok: true }>({
-    action: "tmpname_grade_attempt_01",
+    action: "grade_attempt",
     attempt_id: attemptId,
     self_grade: selfGrade,
   });
 
-export const tmpnameTrophyWall01 = () =>
-  post<{ attempts: TmpnameTrophy01[] }>({ action: "tmpname_trophy_wall_01" });
+export const trophyWall = () =>
+  post<{ attempts: Trophy[] }>({ action: "trophy_wall" });

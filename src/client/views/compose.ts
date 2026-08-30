@@ -1,6 +1,6 @@
-import { tmpnameGenerateProblems01 } from "../api";
+import { generateProblems } from "../api";
 import { clear, h } from "../lib/dom";
-import type { TmpnameView01, UnsavedImageAttachment } from "../types";
+import type { View, UnsavedImageAttachment } from "../types";
 
 const MAX_ATTACHMENTS = 8;
 // D1 caps a BLOB at 2,000,000 bytes; stay well under it.
@@ -50,9 +50,9 @@ function reencode(img: HTMLImageElement): UnsavedImageAttachment {
   }
 }
 
-export function tmpnameRenderCompose01(
+export function renderCompose(
   root: HTMLElement,
-  go: (view: TmpnameView01) => void,
+  go: (view: View) => void,
 ): void {
   const attachments: UnsavedImageAttachment[] = [];
 
@@ -141,7 +141,7 @@ export function tmpnameRenderCompose01(
       setStatus("generating...");
       try {
         const count = Math.max(1, Math.min(40, Number(countEl.value) || 10));
-        const set = await tmpnameGenerateProblems01(promptEl.value, attachments, count);
+        const set = await generateProblems(promptEl.value, attachments, count);
         if (!set.problems.length) throw new Error("model returned no problems");
         go({ name: "problem", runId: set.run_id, problems: set.problems, index: 0 });
       } catch (err) {

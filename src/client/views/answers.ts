@@ -1,12 +1,12 @@
-import { tmpnameGradeAttempt01, tmpnameRevealAnswers01 } from "../api";
+import { gradeAttempt, revealAnswers } from "../api";
 import { formatElapsed, h } from "../lib/dom";
-import { tmpnameRenderMathHtml01 } from "../lib/katex-boot";
-import { tmpnameRefreshTrophyWall01 } from "./trophy-wall";
-import type { TmpnameAnswerRow01, TmpnameSelfGrade01, TmpnameView01 } from "../types";
+import { renderMathHtml } from "../lib/katex-boot";
+import { refreshTrophyWall } from "./trophy-wall";
+import type { AnswerRow, SelfGrade, View } from "../types";
 
-const GRADES: TmpnameSelfGrade01[] = ["right", "wrong", "skipped"];
+const GRADES: SelfGrade[] = ["right", "wrong", "skipped"];
 
-function gradeRow(row: TmpnameAnswerRow01): HTMLElement {
+function gradeRow(row: AnswerRow): HTMLElement {
   const buttons = h("div", { class: "acts" });
   let current = row.self_grade;
 
@@ -27,8 +27,8 @@ function gradeRow(row: TmpnameAnswerRow01): HTMLElement {
             current = grade;
             paint();
             try {
-              await tmpnameGradeAttempt01(row.attempt_id, grade);
-              void tmpnameRefreshTrophyWall01();
+              await gradeAttempt(row.attempt_id, grade);
+              void refreshTrophyWall();
             } catch {
               current = previous;
               paint();
@@ -42,9 +42,9 @@ function gradeRow(row: TmpnameAnswerRow01): HTMLElement {
   paint();
 
   const problemEl = h("div", { class: "problem-body" });
-  tmpnameRenderMathHtml01(problemEl, row.problem_html);
+  renderMathHtml(problemEl, row.problem_html);
   const answerEl = h("div", { class: "answer-body" });
-  tmpnameRenderMathHtml01(answerEl, row.answer_html);
+  renderMathHtml(answerEl, row.answer_html);
 
   return h("li", {}, [
     h("div", { class: "meta" }, [
@@ -58,16 +58,16 @@ function gradeRow(row: TmpnameAnswerRow01): HTMLElement {
   ]);
 }
 
-export async function tmpnameRenderAnswers01(
+export async function renderAnswers(
   root: HTMLElement,
   runId: number,
-  go: (view: TmpnameView01) => void,
+  go: (view: View) => void,
 ): Promise<void> {
   root.replaceChildren(h("div", { id: "out" }, ["loading answers..."]));
 
-  let rows: TmpnameAnswerRow01[];
+  let rows: AnswerRow[];
   try {
-    ({ rows } = await tmpnameRevealAnswers01(runId));
+    ({ rows } = await revealAnswers(runId));
   } catch (err) {
     root.replaceChildren(
       h("div", { id: "out", class: "err" }, [

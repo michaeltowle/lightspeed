@@ -1,8 +1,8 @@
-import { tmpnameRecordAttempt01 } from "../api";
+import { recordAttempt } from "../api";
 import { h } from "../lib/dom";
-import { tmpnameRenderMathHtml01 } from "../lib/katex-boot";
-import { tmpnameRefreshTrophyWall01 } from "./trophy-wall";
-import type { TmpnameProblem01, TmpnameView01 } from "../types";
+import { renderMathHtml } from "../lib/katex-boot";
+import { refreshTrophyWall } from "./trophy-wall";
+import type { MathPracticeProblem, View } from "../types";
 
 /**
  * One problem at a time, forward only. Because there is no back navigation each
@@ -11,12 +11,12 @@ import type { TmpnameProblem01, TmpnameView01 } from "../types";
  *
  * Mike works on paper, so this view is display-only: no answer input.
  */
-export function tmpnameRenderProblem01(
+export function renderProblem(
   root: HTMLElement,
   runId: number,
-  problems: TmpnameProblem01[],
+  problems: MathPracticeProblem[],
   index: number,
-  go: (view: TmpnameView01) => void,
+  go: (view: View) => void,
 ): void {
   const problem = problems[index];
   const isLast = index === problems.length - 1;
@@ -24,7 +24,7 @@ export function tmpnameRenderProblem01(
   let advancing = false;
 
   const bodyEl = h("div", { class: "problem-body" });
-  tmpnameRenderMathHtml01(bodyEl, problem.problem_html);
+  renderMathHtml(bodyEl, problem.problem_html);
 
   const statusEl = h("div", { id: "out" });
 
@@ -35,8 +35,8 @@ export function tmpnameRenderProblem01(
 
     try {
       // self_grade is left NULL here; skipping is expressed on the answer page.
-      await tmpnameRecordAttempt01(problem.id, runId, Math.round(elapsed));
-      void tmpnameRefreshTrophyWall01();
+      await recordAttempt(problem.id, runId, Math.round(elapsed));
+      void refreshTrophyWall();
       if (isLast) go({ name: "answers", runId });
       else go({ name: "problem", runId, problems, index: index + 1 });
     } catch (err) {

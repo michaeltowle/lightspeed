@@ -26,7 +26,7 @@ const MODEL_INSTRUCTION_PREAMBLE = "";
 
 // Problem generation is the one path that *does* need a directive, since the
 // output shape is load-bearing.
-const TMPNAME_PROBLEM_DIRECTIVE_01 = [
+const PROBLEM_GENERATION_DIRECTIVE = [
   "You generate math practice problems.",
   "",
   "Return exactly the requested number of problems.",
@@ -39,7 +39,7 @@ const TMPNAME_PROBLEM_DIRECTIVE_01 = [
   "display. Do not use Unicode math symbols or plain-text notation like x^2.",
 ].join("\n");
 
-const TMPNAME_PROBLEM_SCHEMA_01 = z.object({
+const PROBLEM_GENERATION_SCHEMA = z.object({
   problems: z
     .array(
       z.object({
@@ -126,7 +126,7 @@ async function callLanguageModel(
   return text;
 }
 
-async function tmpnameGenerateProblemPairs01(
+async function generateProblemPairs(
   env: Env,
   promptText: string,
   shots: { base64: string; mimeType: string }[],
@@ -134,8 +134,8 @@ async function tmpnameGenerateProblemPairs01(
 ): Promise<{ problem_html: string; answer_html: string }[]> {
   const { object } = await generateObject({
     model: anthropicFor(env)(CURRENT_AUTHORING_MODEL_ID),
-    schema: TMPNAME_PROBLEM_SCHEMA_01,
-    system: TMPNAME_PROBLEM_DIRECTIVE_01,
+    schema: PROBLEM_GENERATION_SCHEMA,
+    system: PROBLEM_GENERATION_DIRECTIVE,
     messages: [
       {
         role: "user",
@@ -385,7 +385,6 @@ export default {
       prompt?: string;
       unsaved_image_attachments?: UnsavedImageAttachment[];
       requested_count?: number;
-      set_id?: number;
       run_id?: number;
       problem_id?: number;
       attempt_id?: number;
@@ -489,12 +488,12 @@ export default {
           return json({ id: promptId, reply });
         }
 
-        case "tmpname_generate_problems_01": {
+        case "generate_problems": {
           const shots = body.unsaved_image_attachments ?? [];
           const promptText = body.prompt ?? "";
           const requested = Math.max(1, Math.min(40, Number(body.requested_count) || 10));
 
-          const pairs = await tmpnameGenerateProblemPairs01(
+          const pairs = await generateProblemPairs(
             env,
             promptText,
             shots,
@@ -506,55 +505,11 @@ export default {
           return json(await openSetAndRun(db, promptId, requested, pairs));
         }
 
-        case "tmpname_replay_set_01": {
-          const set = await db
-            .prepare(
-              `SELECT authored_math_prompt_id, requested_count
-                 FROM tmpname_problem_set_01 WHERE id = ?`,
-            )
-            .bind(body.set_id)
-            .first<{ authored_math_prompt_id: number; requested_count: number }>();
-          if (!set) return json({ error: "no such set" }, 404);
-
-          const prompt = await db
-            .prepare(`SELECT prompt_text FROM authored_math_prompt WHERE id = ?`)
-            .bind(set.authored_math_prompt_id)
-            .first<{ prompt_text: string }>();
-          if (!prompt) return json({ error: "no such prompt" }, 404);
-
-          const { results } = await db
-            .prepare(
-              `SELECT mime_type, image_bytes
-                 FROM math_prompt_image_attachment
-                WHERE authored_math_prompt_id = ?
-                ORDER BY ordinal`,
-            )
-            .bind(set.authored_math_prompt_id)
-            .all();
-
-          const pairs = await tmpnameGenerateProblemPairs01(
-            env,
-            prompt.prompt_text,
-            results.map((row: Record<string, unknown>) => ({
-              base64: bytesToBase64(row.image_bytes),
-              mimeType: String(row.mime_type),
-            })),
-            set.requested_count,
-          );
-          if (!pairs.length) return json({ error: "model returned no problems" }, 502);
-
-          // A replay opens a NEW set against the same prompt; the old set and
-          // its attempts are left untouched.
-          return json(
-            await openSetAndRun(db, set.authored_math_prompt_id, set.requested_count, pairs),
-          );
-        }
-
-        case "tmpname_record_attempt_01": {
+        case "record_attempt": {
           const inserted = await db
             .prepare(
-              `INSERT INTO tmpname_attempt_01
-                 (tmpname_problem_id, tmpname_practice_run_id, elapsed_ms, self_grade)
+              `INSERT INTO problem_attempt
+                 (math_practice_problem_id, practice_run_id, elapsed_ms, self_grade)
                VALUES (?, ?, ?, ?) RETURNING id`,
             )
             .bind(
@@ -567,12 +522,12 @@ export default {
           return json({ attempt_id: inserted!.id });
         }
 
-        case "tmpname_reveal_answers_01": {
+        case "reveal_answers": {
           // Answers are held back until the run asks for them, rather than
           // shipped with the problems and hidden in the DOM.
           await db
             .prepare(
-              `UPDATE tmpname_practice_run_01
+              `UPDATE practice_run
                   SET completed_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
                 WHERE id = ? AND completed_at IS NULL`,
             )
@@ -583,9 +538,9 @@ export default {
             .prepare(
               `SELECT a.id AS attempt_id, p.ordinal, p.problem_html, p.answer_html,
                       a.elapsed_ms, a.self_grade
-                 FROM tmpname_attempt_01 a
-                 JOIN tmpname_problem_01 p ON p.id = a.tmpname_problem_id
-                WHERE a.tmpname_practice_run_id = ?
+                 FROM problem_attempt a
+                 JOIN math_practice_problem p ON p.id = a.math_practice_problem_id
+                WHERE a.practice_run_id = ?
                 ORDER BY p.ordinal`,
             )
             .bind(body.run_id)
@@ -593,23 +548,23 @@ export default {
           return json({ rows: results });
         }
 
-        case "tmpname_grade_attempt_01": {
+        case "grade_attempt": {
           if (!["right", "wrong", "skipped"].includes(String(body.self_grade))) {
             return json({ error: `bad self_grade: ${body.self_grade}` }, 400);
           }
           await db
-            .prepare(`UPDATE tmpname_attempt_01 SET self_grade = ? WHERE id = ?`)
+            .prepare(`UPDATE problem_attempt SET self_grade = ? WHERE id = ?`)
             .bind(body.self_grade, body.attempt_id)
             .run();
           return json({ ok: true });
         }
 
-        case "tmpname_trophy_wall_01": {
+        case "trophy_wall": {
           // Every attempt ever, oldest first -- the wall is permanent.
           const { results } = await db
             .prepare(
               `SELECT id, created_at, self_grade
-                 FROM tmpname_attempt_01
+                 FROM problem_attempt
                 ORDER BY created_at, id`,
             )
             .all();
@@ -680,7 +635,7 @@ async function openSetAndRun(
 }> {
   const set = await db
     .prepare(
-      `INSERT INTO tmpname_problem_set_01 (authored_math_prompt_id, requested_count)
+      `INSERT INTO problem_set (authored_math_prompt_id, requested_count)
        VALUES (?, ?) RETURNING id`,
     )
     .bind(promptId, requestedCount)
@@ -691,8 +646,8 @@ async function openSetAndRun(
     pairs.map((pair, idx) =>
       db
         .prepare(
-          `INSERT INTO tmpname_problem_01
-             (tmpname_problem_set_id, ordinal, problem_html, answer_html)
+          `INSERT INTO math_practice_problem
+             (problem_set_id, ordinal, problem_html, answer_html)
            VALUES (?, ?, ?, ?)`,
         )
         .bind(setId, idx, pair.problem_html, pair.answer_html),
@@ -701,7 +656,7 @@ async function openSetAndRun(
 
   const run = await db
     .prepare(
-      `INSERT INTO tmpname_practice_run_01 (tmpname_problem_set_id)
+      `INSERT INTO practice_run (problem_set_id)
        VALUES (?) RETURNING id`,
     )
     .bind(setId)
@@ -709,8 +664,8 @@ async function openSetAndRun(
 
   const { results } = await db
     .prepare(
-      `SELECT id, ordinal, problem_html FROM tmpname_problem_01
-        WHERE tmpname_problem_set_id = ? ORDER BY ordinal`,
+      `SELECT id, ordinal, problem_html FROM math_practice_problem
+        WHERE problem_set_id = ? ORDER BY ordinal`,
     )
     .bind(setId)
     .all<{ id: number; ordinal: number; problem_html: string }>();

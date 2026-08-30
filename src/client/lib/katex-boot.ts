@@ -5,14 +5,14 @@ import renderMathInElement from "katex/contrib/auto-render";
 // is unwrapped (text kept) or dropped entirely, and every attribute is stripped.
 // KaTeX builds its own markup locally *after* sanitizing, so its spans and
 // styles are never subject to this.
-const TMPNAME_ALLOWED_TAGS_01 = new Set([
+const ALLOWED_TAGS = new Set([
   "P", "BR", "SPAN", "DIV", "EM", "STRONG", "I", "B", "U",
   "SUP", "SUB", "CODE", "PRE", "SMALL",
   "UL", "OL", "LI",
   "TABLE", "THEAD", "TBODY", "TR", "TD", "TH",
 ]);
 
-const TMPNAME_DROPPED_TAGS_01 = new Set([
+const DROPPED_TAGS = new Set([
   "SCRIPT", "STYLE", "IFRAME", "OBJECT", "EMBED", "LINK", "META",
   "FORM", "INPUT", "BUTTON", "TEXTAREA", "SELECT", "SVG", "MATH",
 ]);
@@ -20,7 +20,7 @@ const TMPNAME_DROPPED_TAGS_01 = new Set([
 function scrub(node: Element): void {
   for (const child of Array.from(node.children)) scrub(child);
 
-  if (TMPNAME_DROPPED_TAGS_01.has(node.tagName)) {
+  if (DROPPED_TAGS.has(node.tagName)) {
     node.remove();
     return;
   }
@@ -29,7 +29,7 @@ function scrub(node: Element): void {
     node.removeAttribute(attr.name);
   }
 
-  if (!TMPNAME_ALLOWED_TAGS_01.has(node.tagName)) {
+  if (!ALLOWED_TAGS.has(node.tagName)) {
     // Unwrap: keep the text, discard the element.
     node.replaceWith(...Array.from(node.childNodes));
   }
@@ -39,7 +39,7 @@ function scrub(node: Element): void {
  * Parse model HTML inertly and strip it down to the allowlist. A <template>'s
  * content is inert, so nothing executes and no image/onerror fires while we work.
  */
-export function tmpnameSanitizeModelHtml01(html: string): DocumentFragment {
+export function sanitizeModelHtml(html: string): DocumentFragment {
   const template = document.createElement("template");
   template.innerHTML = html;
   for (const child of Array.from(template.content.children)) scrub(child);
@@ -47,8 +47,8 @@ export function tmpnameSanitizeModelHtml01(html: string): DocumentFragment {
 }
 
 /** Insert sanitized model HTML, then let KaTeX render any math inside it. */
-export function tmpnameRenderMathHtml01(target: HTMLElement, html: string): void {
-  target.replaceChildren(tmpnameSanitizeModelHtml01(html));
+export function renderMathHtml(target: HTMLElement, html: string): void {
+  target.replaceChildren(sanitizeModelHtml(html));
   try {
     renderMathInElement(target, {
       delimiters: [

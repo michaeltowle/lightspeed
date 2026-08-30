@@ -1,24 +1,24 @@
-export interface TmpnameProblem01 {
+export interface MathPracticeProblem {
   id: number;
   ordinal: number;
   problem_html: string;
 }
 
-export interface TmpnameAnswerRow01 {
+export interface AnswerRow {
   attempt_id: number;
   ordinal: number;
   problem_html: string;
   answer_html: string;
   elapsed_ms: number;
-  self_grade: TmpnameSelfGrade01 | null;
+  self_grade: SelfGrade | null;
 }
 
-export type TmpnameSelfGrade01 = "right" | "wrong" | "skipped";
+export type SelfGrade = "right" | "wrong" | "skipped";
 
-export interface TmpnameTrophy01 {
+export interface Trophy {
   id: number;
   created_at: string;
-  self_grade: TmpnameSelfGrade01 | null;
+  self_grade: SelfGrade | null;
 }
 
 export interface UnsavedImageAttachment {
@@ -30,12 +30,12 @@ export interface UnsavedImageAttachment {
   byteSize: number;
 }
 
-export type TmpnameView01 =
+export type View =
   | { name: "compose" }
   | {
       name: "problem";
       runId: number;
-      problems: TmpnameProblem01[];
+      problems: MathPracticeProblem[];
       index: number;
     }
   | { name: "answers"; runId: number };
