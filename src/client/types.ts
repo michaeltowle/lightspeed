@@ -8,7 +8,8 @@ export interface AnswerRow {
   attempt_id: number;
   ordinal: number;
   problem_html: string;
-  answer_html: string;
+  final_answer_html: string;
+  solution_walkthrough_html: string;
   elapsed_ms: number;
   self_grade: SelfGrade | null;
 }

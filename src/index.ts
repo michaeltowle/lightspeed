@@ -30,10 +30,19 @@ const PROBLEM_GENERATION_DIRECTIVE = [
   "You generate math practice problems.",
   "",
   "Return exactly the requested number of problems.",
-  "Each problem gets a self-contained statement and a worked answer.",
+  "Each problem gets three parts: a self-contained statement, the final answer",
+  "on its own, and a worked walkthrough.",
   "",
-  "Emit HTML for both. Keep the markup minimal: p, br, ul, ol, li, sup, sub,",
-  "em, strong. Do not emit script, style, iframe, form, or any attributes.",
+  "The final answer is the result and nothing else -- no working, no restatement",
+  "of the question, no lead-in words. It is read at a glance to check an answer",
+  "already worked out on paper.",
+  "",
+  "The walkthrough shows the steps. Its last element must be a <p> beginning",
+  "with the word \"Hence\" that restates the final answer, so every walkthrough",
+  "lands on its conclusion instead of trailing off.",
+  "",
+  "Emit HTML for all three. Keep the markup minimal: p, br, ul, ol, li, sup,",
+  "sub, em, strong. Do not emit script, style, iframe, form, or any attributes.",
   "",
   "Write all mathematics as LaTeX inside $...$ for inline and $$...$$ for",
   "display. Do not use Unicode math symbols or plain-text notation like x^2.",
@@ -44,11 +53,24 @@ const PROBLEM_GENERATION_SCHEMA = z.object({
     .array(
       z.object({
         problem_html: z.string().describe("The problem statement, as HTML with $...$ math."),
-        answer_html: z.string().describe("The worked answer, as HTML with $...$ math."),
+        final_answer_html: z
+          .string()
+          .describe("The final answer alone, as HTML with $...$ math. No working."),
+        solution_walkthrough_html: z
+          .string()
+          .describe(
+            'The worked steps, as HTML with $...$ math. The last element must be a <p> starting with "Hence" that restates the final answer.',
+          ),
       }),
     )
     .describe("The generated problems, in the order they should be worked."),
 });
+
+interface GeneratedProblemRow {
+  problem_html: string;
+  final_answer_html: string;
+  solution_walkthrough_html: string;
+}
 
 interface UnsavedImageAttachment {
   base64: string;
@@ -126,12 +148,12 @@ async function callLanguageModel(
   return text;
 }
 
-async function generateProblemPairs(
+async function generateProblemsFromPrompt(
   env: Env,
   promptText: string,
   shots: { base64: string; mimeType: string }[],
   requestedCount: number,
-): Promise<{ problem_html: string; answer_html: string }[]> {
+): Promise<GeneratedProblemRow[]> {
   const { object } = await generateObject({
     model: anthropicFor(env)(CURRENT_AUTHORING_MODEL_ID),
     schema: PROBLEM_GENERATION_SCHEMA,
@@ -252,10 +274,28 @@ function indexPageDocument(env: Env): string {
     border: 1px solid rgba(128,128,128,0.35); border-radius: 8px;
     background: rgba(127,127,127,0.05);
   }
-  .answer-body {
-    padding: 0.75rem 1.25rem; margin-bottom: 0.5rem;
-    border-left: 3px solid rgba(120,170,110,0.6);
+  .final-answer {
+    font-size: 1.35rem; font-weight: 600;
+    padding: 0.85rem 1.1rem; margin-bottom: 0.5rem;
+    border: 1px solid rgba(120,170,110,0.55); border-radius: 8px;
+    background: rgba(120,170,110,0.12);
+  }
+  .solution-walkthrough { margin-bottom: 0.6rem; }
+  .solution-walkthrough > summary {
+    cursor: pointer; font-size: 0.75rem; opacity: 0.6;
+    padding: 0.25rem 0; user-select: none;
+  }
+  .walkthrough-body {
+    padding: 0.75rem 1.25rem; margin-top: 0.35rem;
+    border-left: 3px solid rgba(128,128,128,0.35);
     background: rgba(127,127,127,0.04);
+  }
+  /* Every walkthrough closes on a "Hence" line restating the answer, so its
+     last paragraph is the one the eye should land on. */
+  .walkthrough-body > p:last-child {
+    font-weight: 600; margin-bottom: 0;
+    padding: 0.35rem 0.6rem; border-radius: 4px;
+    background: rgba(120,170,110,0.14);
   }
 
   #out {
@@ -493,16 +533,16 @@ export default {
           const promptText = body.prompt ?? "";
           const requested = Math.max(1, Math.min(40, Number(body.requested_count) || 10));
 
-          const pairs = await generateProblemPairs(
+          const generated = await generateProblemsFromPrompt(
             env,
             promptText,
             shots,
             requested,
           );
-          if (!pairs.length) return json({ error: "model returned no problems" }, 502);
+          if (!generated.length) return json({ error: "model returned no problems" }, 502);
 
           const promptId = await insertAuthoredPrompt(db, promptText, null, shots);
-          return json(await openSetAndRun(db, promptId, requested, pairs));
+          return json(await openSetAndRun(db, promptId, requested, generated));
         }
 
         case "record_attempt": {
@@ -536,7 +576,8 @@ export default {
 
           const { results } = await db
             .prepare(
-              `SELECT a.id AS attempt_id, p.ordinal, p.problem_html, p.answer_html,
+              `SELECT a.id AS attempt_id, p.ordinal, p.problem_html,
+                      p.final_answer_html, p.solution_walkthrough_html,
                       a.elapsed_ms, a.self_grade
                  FROM problem_attempt a
                  JOIN math_practice_problem p ON p.id = a.math_practice_problem_id
@@ -627,7 +668,7 @@ async function openSetAndRun(
   db: D1Database,
   promptId: number,
   requestedCount: number,
-  pairs: { problem_html: string; answer_html: string }[],
+  rows: GeneratedProblemRow[],
 ): Promise<{
   set_id: number;
   run_id: number;
@@ -643,14 +684,21 @@ async function openSetAndRun(
   const setId = set!.id;
 
   await db.batch(
-    pairs.map((pair, idx) =>
+    rows.map((row, idx) =>
       db
         .prepare(
           `INSERT INTO math_practice_problem
-             (problem_set_id, ordinal, problem_html, answer_html)
-           VALUES (?, ?, ?, ?)`,
+             (problem_set_id, ordinal, problem_html,
+              final_answer_html, solution_walkthrough_html)
+           VALUES (?, ?, ?, ?, ?)`,
         )
-        .bind(setId, idx, pair.problem_html, pair.answer_html),
+        .bind(
+          setId,
+          idx,
+          row.problem_html,
+          row.final_answer_html,
+          row.solution_walkthrough_html,
+        ),
     ),
   );
 

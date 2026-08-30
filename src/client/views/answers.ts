@@ -43,8 +43,15 @@ function gradeRow(row: AnswerRow): HTMLElement {
 
   const problemEl = h("div", { class: "problem-body" });
   renderMathHtml(problemEl, row.problem_html);
-  const answerEl = h("div", { class: "answer-body" });
-  renderMathHtml(answerEl, row.answer_html);
+
+  // The answer stands alone and always visible -- checking paper against it is
+  // the first thing done on this page. The steps are a second, deliberate look,
+  // so the walkthrough starts folded.
+  const answerEl = h("div", { class: "final-answer" });
+  renderMathHtml(answerEl, row.final_answer_html || "—");
+
+  const walkthroughEl = h("div", { class: "walkthrough-body" });
+  renderMathHtml(walkthroughEl, row.solution_walkthrough_html);
 
   return h("li", {}, [
     h("div", { class: "meta" }, [
@@ -54,6 +61,10 @@ function gradeRow(row: AnswerRow): HTMLElement {
     ]),
     problemEl,
     answerEl,
+    h("details", { class: "solution-walkthrough" }, [
+      h("summary", {}, ["walkthrough"]),
+      walkthroughEl,
+    ]),
     buttons,
   ]);
 }
