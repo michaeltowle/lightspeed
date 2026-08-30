@@ -567,7 +567,7 @@ export default {
         case "generate_problems": {
           const shots = body.unsaved_image_attachments ?? [];
           const promptText = body.prompt ?? "";
-          const requested = Math.max(1, Math.min(40, Number(body.requested_count) || 10));
+          const requested = Math.max(1, Math.min(40, Number(body.requested_count) || 2));
 
           const generated = await generateProblemsFromPrompt(
             env,

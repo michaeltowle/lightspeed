@@ -62,7 +62,7 @@ export function renderCompose(
     type: "number",
     min: 1,
     max: 40,
-    value: 10,
+    value: 2,
   });
   const thumbsEl = h("ul", { class: "shots" });
   const statusEl = h("div", { id: "out" });
@@ -140,7 +140,7 @@ export function renderCompose(
       goEl.disabled = true;
       setStatus("generating...");
       try {
-        const count = Math.max(1, Math.min(40, Number(countEl.value) || 10));
+        const count = Math.max(1, Math.min(40, Number(countEl.value) || 2));
         const set = await generateProblems(promptEl.value, attachments, count);
         if (!set.problems.length) throw new Error("model returned no problems");
         go({ name: "problem", runId: set.run_id, problems: set.problems, index: 0 });
