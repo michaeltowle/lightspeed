@@ -76,5 +76,16 @@ export const gradeAttempt = (
     self_grade: selfGrade,
   });
 
+export const markForFurtherPractice = (attemptId: number, marked: boolean) =>
+  post<{ ok: true }>({
+    action: "mark_for_further_practice",
+    attempt_id: attemptId,
+    marked,
+  });
+
+/** Opens a new set on the same prompt, weighted toward this run's marks. */
+export const furtherPractice = (runId: number) =>
+  post<GeneratedProblemSet>({ action: "further_practice", run_id: runId });
+
 export const trophyWall = () =>
   post<{ attempts: Trophy[] }>({ action: "trophy_wall" });

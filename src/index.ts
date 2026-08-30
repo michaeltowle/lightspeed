@@ -153,7 +153,23 @@ async function generateProblemsFromPrompt(
   promptText: string,
   shots: { base64: string; mimeType: string }[],
   requestedCount: number,
+  emphasisProblemsHtml: string[] = [],
 ): Promise<GeneratedProblemRow[]> {
+  // Exemplars are problems this app generated earlier, fed back verbatim. They
+  // steer the new set without narrowing it: the original prompt still sets the
+  // subject and difficulty, the marks only decide where the weight falls.
+  const emphasis = emphasisProblemsHtml.length
+    ? [
+        "",
+        "",
+        "These problems from the previous set were marked for further practice.",
+        "Hold the subject and difficulty of the prompt above, but weight this set",
+        "toward the kinds of problem shown here:",
+        "",
+        ...emphasisProblemsHtml.map((html, idx) => `${idx + 1}. ${html}`),
+      ].join("\n")
+    : "";
+
   const { object } = await generateObject({
     model: anthropicFor(env)(CURRENT_AUTHORING_MODEL_ID),
     schema: PROBLEM_GENERATION_SCHEMA,
@@ -162,7 +178,7 @@ async function generateProblemsFromPrompt(
       {
         role: "user",
         content: userContent(
-          `${promptText.trim() || "(no prompt)"}\n\nGenerate exactly ${requestedCount} problems.`,
+          `${promptText.trim() || "(no prompt)"}${emphasis}\n\nGenerate exactly ${requestedCount} problems.`,
           shots,
         ),
       },
@@ -314,9 +330,22 @@ function indexPageDocument(env: Env): string {
     padding: 0.75rem 0.9rem; margin-bottom: 0.75rem;
     background: rgba(127,127,127,0.03);
   }
-  .acts { display: flex; gap: 0.4rem; }
+  .acts {
+    display: flex; gap: 0.4rem; align-items: center;
+    flex-wrap: wrap; margin-top: 0.6rem;
+  }
   .acts .grade { font-size: 0.75rem; padding: 0.2rem 0.7rem; opacity: 0.65; }
   .acts .grade-on { opacity: 1; font-weight: 600; border-color: currentColor; }
+  .mark {
+    display: flex; align-items: center; gap: 0.35rem; margin-left: auto;
+    font-size: 0.75rem; opacity: 0.7; cursor: pointer; user-select: none;
+  }
+  .mark input { accent-color: #b06a2c; margin: 0; }
+  #saved > li.marked {
+    border-color: rgba(176,106,44,0.65);
+    background: rgba(176,106,44,0.06);
+  }
+  #saved > li.marked .mark { opacity: 1; font-weight: 600; }
 
   #deploy-badge {
     position: fixed; right: 1rem; bottom: 1rem; z-index: 2;
@@ -431,6 +460,7 @@ export default {
       elapsed_ms?: number;
       skipped?: boolean;
       self_grade?: string;
+      marked?: boolean;
     }>();
 
     try {
@@ -578,7 +608,7 @@ export default {
             .prepare(
               `SELECT a.id AS attempt_id, p.ordinal, p.problem_html,
                       p.final_answer_html, p.solution_walkthrough_html,
-                      a.elapsed_ms, a.self_grade
+                      a.elapsed_ms, a.self_grade, a.marked_for_further_practice
                  FROM problem_attempt a
                  JOIN math_practice_problem p ON p.id = a.math_practice_problem_id
                 WHERE a.practice_run_id = ?
@@ -598,6 +628,91 @@ export default {
             .bind(body.self_grade, body.attempt_id)
             .run();
           return json({ ok: true });
+        }
+
+        case "mark_for_further_practice": {
+          await db
+            .prepare(
+              `UPDATE problem_attempt
+                  SET marked_for_further_practice = ?
+                WHERE id = ?`,
+            )
+            .bind(body.marked ? 1 : 0, body.attempt_id)
+            .run();
+          return json({ ok: true });
+        }
+
+        case "further_practice": {
+          const origin = await db
+            .prepare(
+              `SELECT s.id AS problem_set_id, s.authored_math_prompt_id,
+                      s.requested_count
+                 FROM practice_run r
+                 JOIN problem_set s ON s.id = r.problem_set_id
+                WHERE r.id = ?`,
+            )
+            .bind(body.run_id)
+            .first<{
+              problem_set_id: number;
+              authored_math_prompt_id: number;
+              requested_count: number;
+            }>();
+          if (!origin) return json({ error: "no such run" }, 404);
+
+          const prompt = await db
+            .prepare(`SELECT prompt_text FROM authored_math_prompt WHERE id = ?`)
+            .bind(origin.authored_math_prompt_id)
+            .first<{ prompt_text: string }>();
+          if (!prompt) return json({ error: "no such prompt" }, 404);
+
+          // Marks live on the attempt, so the run is the only thing the client
+          // has to send -- there is no list of ids to keep in sync.
+          const marked = await db
+            .prepare(
+              `SELECT p.problem_html
+                 FROM problem_attempt a
+                 JOIN math_practice_problem p ON p.id = a.math_practice_problem_id
+                WHERE a.practice_run_id = ? AND a.marked_for_further_practice = 1
+                ORDER BY p.ordinal`,
+            )
+            .bind(body.run_id)
+            .all<{ problem_html: string }>();
+
+          const { results: shots } = await db
+            .prepare(
+              `SELECT mime_type, image_bytes
+                 FROM math_prompt_image_attachment
+                WHERE authored_math_prompt_id = ?
+                ORDER BY ordinal`,
+            )
+            .bind(origin.authored_math_prompt_id)
+            .all();
+
+          const generated = await generateProblemsFromPrompt(
+            env,
+            prompt.prompt_text,
+            shots.map((row: Record<string, unknown>) => ({
+              base64: bytesToBase64(row.image_bytes),
+              mimeType: String(row.mime_type),
+            })),
+            origin.requested_count,
+            // No marks is not an error: it just means "more of the same",
+            // which is the old new-set behaviour.
+            marked.results.map((row) => row.problem_html),
+          );
+          if (!generated.length) return json({ error: "model returned no problems" }, 502);
+
+          // Further practice opens a NEW set against the same prompt. The set
+          // just worked, and its attempts, are left untouched.
+          return json(
+            await openSetAndRun(
+              db,
+              origin.authored_math_prompt_id,
+              origin.requested_count,
+              generated,
+              origin.problem_set_id,
+            ),
+          );
         }
 
         case "trophy_wall": {
@@ -669,6 +784,7 @@ async function openSetAndRun(
   promptId: number,
   requestedCount: number,
   rows: GeneratedProblemRow[],
+  precedingProblemSetId: number | null = null,
 ): Promise<{
   set_id: number;
   run_id: number;
@@ -676,10 +792,11 @@ async function openSetAndRun(
 }> {
   const set = await db
     .prepare(
-      `INSERT INTO problem_set (authored_math_prompt_id, requested_count)
-       VALUES (?, ?) RETURNING id`,
+      `INSERT INTO problem_set
+         (authored_math_prompt_id, requested_count, preceding_problem_set_id)
+       VALUES (?, ?, ?) RETURNING id`,
     )
-    .bind(promptId, requestedCount)
+    .bind(promptId, requestedCount, precedingProblemSetId)
     .first<{ id: number }>();
   const setId = set!.id;
 

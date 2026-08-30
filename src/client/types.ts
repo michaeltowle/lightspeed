@@ -12,6 +12,8 @@ export interface AnswerRow {
   solution_walkthrough_html: string;
   elapsed_ms: number;
   self_grade: SelfGrade | null;
+  // SQLite has no boolean; this is 0 or 1.
+  marked_for_further_practice: number;
 }
 
 export type SelfGrade = "right" | "wrong" | "skipped";
