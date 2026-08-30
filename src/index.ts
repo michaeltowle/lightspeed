@@ -722,11 +722,14 @@ export default {
         }
 
         case "trophy_wall": {
-          // Every attempt ever, oldest first -- the wall is permanent.
+          // Every graded attempt ever, oldest first -- the wall is permanent.
+          // A square is earned by grading, not by working: back out of a set
+          // before the answer page and those attempts stay off the wall.
           const { results } = await db
             .prepare(
               `SELECT id, created_at, self_grade
                  FROM problem_attempt
+                WHERE self_grade IS NOT NULL
                 ORDER BY created_at, id`,
             )
             .all();

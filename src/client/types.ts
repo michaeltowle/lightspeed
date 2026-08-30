@@ -21,7 +21,8 @@ export type SelfGrade = "right" | "wrong" | "skipped";
 export interface Trophy {
   id: number;
   created_at: string;
-  self_grade: SelfGrade | null;
+  // Never null: the wall is fed graded attempts only.
+  self_grade: SelfGrade;
 }
 
 export interface UnsavedImageAttachment {

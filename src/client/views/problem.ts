@@ -1,7 +1,6 @@
 import { recordAttempt } from "../api";
 import { h } from "../lib/dom";
 import { renderMathHtml } from "../lib/katex-boot";
-import { refreshTrophyWall } from "./trophy-wall";
 import type { MathPracticeProblem, View } from "../types";
 
 /**
@@ -35,8 +34,8 @@ export function renderProblem(
 
     try {
       // self_grade is left NULL here; skipping is expressed on the answer page.
+      // The trophy wall shows graded attempts only, so nothing appears yet.
       await recordAttempt(problem.id, runId, Math.round(elapsed));
-      void refreshTrophyWall();
       if (isLast) go({ name: "answers", runId });
       else go({ name: "problem", runId, problems, index: index + 1 });
     } catch (err) {

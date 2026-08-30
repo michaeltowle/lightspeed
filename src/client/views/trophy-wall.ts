@@ -14,10 +14,11 @@ export function mountTrophyWall(): HTMLElement {
 }
 
 function square(trophy: Trophy): HTMLElement {
-  // Ungraded attempts still earn a square -- the wall is evidence of work done,
-  // not of work done correctly.
-  const grade = trophy.self_grade ?? "ungraded";
-  return h("i", { class: `trophy trophy-${grade}`, title: trophy.created_at });
+  // The worker sends graded attempts only, so there is no ungraded square.
+  return h("i", {
+    class: `trophy trophy-${trophy.self_grade}`,
+    title: trophy.created_at,
+  });
 }
 
 export async function refreshTrophyWall(): Promise<void> {
