@@ -163,10 +163,16 @@ async function generateProblemsFromPrompt(
         "",
         "",
         "These problems from the previous set were marked for further practice.",
-        "Hold the subject and difficulty of the prompt above, but weight this set",
-        "toward the kinds of problem shown here:",
+        "They are samples of the skill to drill, not problems to reproduce. Hold",
+        "the subject and difficulty of the prompt above and weight this set toward",
+        "the same skill, but write fresh problems: change the numbers, the setup",
+        "and the wording, and vary the structure wherever the skill allows it.",
         "",
         ...emphasisProblemsHtml.map((html, idx) => `${idx + 1}. ${html}`),
+        "",
+        "Do not restate any of the problems above verbatim. Reuse one only if the",
+        "prompt asks for the same problems again, or if the skill admits so few",
+        "forms that there is genuinely nothing to vary but the numbers.",
       ].join("\n")
     : "";
 
