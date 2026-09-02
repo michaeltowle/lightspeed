@@ -30,16 +30,36 @@ const PROBLEM_GENERATION_DIRECTIVE = [
   "You generate math practice problems.",
   "",
   "Return exactly the requested number of problems.",
-  "Each problem gets three parts: a self-contained statement, the final answer",
-  "on its own, and a worked walkthrough.",
+  "Each problem gets three parts: a self-contained statement, a worked",
+  "walkthrough, and the final answer on its own. Produce them in that order:",
+  "work the problem first and read the answer off the finished steps.",
+  "",
+  "The walkthrough shows the steps. Its last element must be a <p> beginning",
+  "with the word \"Hence\" that restates the final answer, so every walkthrough",
+  "lands on its conclusion instead of trailing off.",
   "",
   "The final answer is the result and nothing else -- no working, no restatement",
   "of the question, no lead-in words. It is read at a glance to check an answer",
   "already worked out on paper.",
   "",
-  "The walkthrough shows the steps. Its last element must be a <p> beginning",
-  "with the word \"Hence\" that restates the final answer, so every walkthrough",
-  "lands on its conclusion instead of trailing off.",
+  "Check every answer before you commit to it. For an indefinite integral,",
+  "differentiate your antiderivative and confirm it returns the integrand. For a",
+  "definite integral, confirm the antiderivative the same way, then re-evaluate",
+  "it at both bounds and recheck the subtraction. Verify a substitution by",
+  "back-substituting to the original variable, and confirm the transformed",
+  "limits whenever the bounds changed. For an equation, substitute the solution",
+  "back into the original and confirm it holds.",
+  "",
+  "Sanity-check the result against the problem: the sign, the magnitude, the",
+  "domain (nothing divided by zero, no logarithm of a nonpositive quantity, no",
+  "root of a negative where the problem is real-valued), and the constant of",
+  "integration wherever one belongs. If a check fails, redo the work -- do not",
+  "emit an answer you have already found to be wrong.",
+  "",
+  "Do the checking inside the walkthrough, before the final answer is written.",
+  "The final answer restates what the walkthrough already established -- if the",
+  "check changes the result, correct the walkthrough rather than letting the two",
+  "disagree.",
   "",
   "Emit HTML for all three. Keep the markup minimal: p, br, ul, ol, li, sup,",
   "sub, em, strong. Do not emit script, style, iframe, form, or any attributes.",
@@ -53,13 +73,18 @@ const PROBLEM_GENERATION_SCHEMA = z.object({
     .array(
       z.object({
         problem_html: z.string().describe("The problem statement, as HTML with $...$ math."),
-        final_answer_html: z
-          .string()
-          .describe("The final answer alone, as HTML with $...$ math. No working."),
+        // Ordered before the final answer on purpose: the model emits fields in
+        // schema order, so working the steps first means the answer is read off
+        // finished work rather than guessed at and then justified.
         solution_walkthrough_html: z
           .string()
           .describe(
             'The worked steps, as HTML with $...$ math. The last element must be a <p> starting with "Hence" that restates the final answer.',
+          ),
+        final_answer_html: z
+          .string()
+          .describe(
+            "The final answer alone, as HTML with $...$ math. No working. Must match the walkthrough's closing line.",
           ),
       }),
     )
@@ -68,8 +93,8 @@ const PROBLEM_GENERATION_SCHEMA = z.object({
 
 interface GeneratedProblemRow {
   problem_html: string;
-  final_answer_html: string;
   solution_walkthrough_html: string;
+  final_answer_html: string;
 }
 
 interface UnsavedImageAttachment {
