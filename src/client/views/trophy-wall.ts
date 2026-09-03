@@ -14,7 +14,8 @@ export function mountTrophyWall(): HTMLElement {
 }
 
 function square(trophy: Trophy): HTMLElement {
-  // The worker sends graded attempts only, so there is no ungraded square.
+  // The worker sends answered attempts only, so there is no ungraded square
+  // and no skipped one.
   return h("i", {
     class: `trophy trophy-${trophy.self_grade}`,
     title: trophy.created_at,

@@ -301,7 +301,6 @@ function indexPageDocument(env: Env): string {
   }
   #trophy-wall .trophy-right   { background: rgba(120,170,110,0.55); }
   #trophy-wall .trophy-wrong   { background: rgba(190,110,100,0.50); }
-  #trophy-wall .trophy-skipped { background: rgba(150,150,150,0.32); }
 
   form { display: flex; flex-direction: column; gap: 0.75rem; }
   textarea {
@@ -768,14 +767,17 @@ export default {
         }
 
         case "trophy_wall": {
-          // Every graded attempt ever, oldest first -- the wall is permanent.
+          // Every attempt ever answered, oldest first -- the wall is permanent.
           // A square is earned by grading, not by working: back out of a set
           // before the answer page and those attempts stay off the wall.
+          // A skip earns nothing either. It is a grade, but it records a problem
+          // not attempted, and the wall is a record of problems answered.
           const { results } = await db
             .prepare(
               `SELECT id, created_at, self_grade
                  FROM problem_attempt
                 WHERE self_grade IS NOT NULL
+                  AND self_grade <> 'skipped'
                 ORDER BY created_at, id`,
             )
             .all();
