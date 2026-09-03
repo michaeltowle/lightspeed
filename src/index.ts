@@ -1,5 +1,5 @@
 import { createAnthropic } from "@ai-sdk/anthropic";
-import { generateObject, generateText } from "ai";
+import { generateObject, generateText, NoObjectGeneratedError } from "ai";
 import { z } from "zod";
 import {
   CLIENT_JS,
@@ -201,21 +201,42 @@ async function generateProblemsFromPrompt(
       ].join("\n")
     : "";
 
-  const { object } = await generateObject({
-    model: anthropicFor(env)(CURRENT_AUTHORING_MODEL_ID),
-    schema: PROBLEM_GENERATION_SCHEMA,
-    system: PROBLEM_GENERATION_DIRECTIVE,
-    messages: [
-      {
-        role: "user",
-        content: userContent(
-          `${promptText.trim() || "(no prompt)"}${emphasis}\n\nGenerate exactly ${requestedCount} problems.`,
-          shots,
-        ),
-      },
-    ],
-  });
-  return object.problems;
+  // The provider defaults to 4096 output tokens, which a set of any size runs
+  // past: a worked walkthrough with its verification steps costs several
+  // hundred tokens, and LaTeX inside JSON pays for every backslash twice. When
+  // the cap cuts the reply short, Anthropic still returns the part of the
+  // object it parsed, so the failure surfaces as a schema mismatch rather than
+  // as truncation. Budget per problem instead, and keep the total under the
+  // ceiling where a non-streaming request is still safe.
+  const outputTokenBudget = Math.min(16000, 1000 + requestedCount * 1200);
+
+  try {
+    const { object } = await generateObject({
+      model: anthropicFor(env)(CURRENT_AUTHORING_MODEL_ID),
+      maxTokens: outputTokenBudget,
+      schema: PROBLEM_GENERATION_SCHEMA,
+      system: PROBLEM_GENERATION_DIRECTIVE,
+      messages: [
+        {
+          role: "user",
+          content: userContent(
+            `${promptText.trim() || "(no prompt)"}${emphasis}\n\nGenerate exactly ${requestedCount} problems.`,
+            shots,
+          ),
+        },
+      ],
+    });
+    return object.problems;
+  } catch (err) {
+    // Say which wall was hit. The generic schema-mismatch message reads like the
+    // model went off-format, when the reply was merely cut off mid-set.
+    if (NoObjectGeneratedError.isInstance(err) && err.finishReason === "length") {
+      throw new Error(
+        `the model ran out of room partway through ${requestedCount} problems -- ask for fewer`,
+      );
+    }
+    throw err;
+  }
 }
 
 const json = (body: unknown, status = 200) =>
