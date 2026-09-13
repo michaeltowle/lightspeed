@@ -19,6 +19,16 @@ export interface Env {
 
 const CURRENT_AUTHORING_MODEL_ID = "claude-opus-5";
 
+// How hard the model thinks before it answers. "high" is already the API
+// default, so naming it here changes nothing today -- it pins the setting so a
+// future SDK or API default cannot quietly lower it.
+//
+// Lower it only with evidence. The walkthroughs are the answer key Mike grades
+// himself against, so a cheaper answer that reads right but is wrong is the
+// worst failure this app has: it does not look like a bug, it looks like being
+// wrong about the maths.
+const MODEL_REASONING_EFFORT = "high";
+
 // Blank: authored prompts go to the model with no system instruction, so the
 // reply answers the prompt itself. Stored rows keep whatever preamble was in
 // force when they were saved, so replay reproduces the original request.
@@ -140,6 +150,9 @@ const anthropicFor = (env: Env) =>
         delete body.temperature;
         delete body.top_p;
         delete body.top_k;
+        // ai@4 predates `output_config` and has no way to express effort, so it
+        // is injected here alongside the params that have to be stripped.
+        body.output_config = { ...body.output_config, effort: MODEL_REASONING_EFFORT };
         init = { ...init, body: JSON.stringify(body) };
       }
       return fetch(input, init);
