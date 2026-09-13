@@ -19,6 +19,11 @@ export interface Env {
 
 const CURRENT_AUTHORING_MODEL_ID = "claude-opus-5";
 
+// Naming a practice type is a one-line job that never touches the maths, so it
+// does not need the authoring model. It runs alongside problem generation rather
+// than before it, so the only thing its speed protects is the retry path.
+const CURRENT_NAMING_MODEL_ID = "claude-haiku-4-5-20251001";
+
 // How hard the model thinks before it answers. "high" is already the API
 // default, so naming it here changes nothing today -- it pins the setting so a
 // future SDK or API default cannot quietly lower it.
@@ -28,11 +33,6 @@ const CURRENT_AUTHORING_MODEL_ID = "claude-opus-5";
 // worst failure this app has: it does not look like a bug, it looks like being
 // wrong about the maths.
 const MODEL_REASONING_EFFORT = "high";
-
-// Blank: authored prompts go to the model with no system instruction, so the
-// reply answers the prompt itself. Stored rows keep whatever preamble was in
-// force when they were saved, so replay reproduces the original request.
-const MODEL_INSTRUCTION_PREAMBLE = "";
 
 // Problem generation is the one path that *does* need a directive, since the
 // output shape is load-bearing.
@@ -103,6 +103,26 @@ const PROBLEM_GENERATION_SCHEMA = z.object({
     .describe("The generated problems, in the order they should be worked."),
 });
 
+// The name is what turns a prompt into something Mike can scan on the dashboard
+// and recognise weeks later, so it has to name the *skill*, not echo the request.
+const GENERATOR_NAMING_DIRECTIVE = [
+  "You name kinds of math practice.",
+  "",
+  "Given a prompt asking for practice problems, reply with a short label for the",
+  "skill it drills -- two to five words, lowercase, no trailing punctuation.",
+  "",
+  "Name the skill, not the request: \"u-substitution with new limits\", not",
+  "\"definite integrals please\". Reply with the label alone and nothing else.",
+].join("\n");
+
+const MAX_GENERATOR_NAME_LENGTH = 64;
+
+/** First line of a prompt, squashed to one line -- the fallback when naming fails. */
+function firstLineOfPrompt(promptText: string): string {
+  const line = promptText.replace(/\s+/g, " ").trim();
+  return line.slice(0, MAX_GENERATOR_NAME_LENGTH) || "untitled practice";
+}
+
 interface GeneratedProblemRow {
   problem_html: string;
   solution_walkthrough_html: string;
@@ -141,7 +161,10 @@ function bytesToBase64(value: unknown): string {
 // ai@4 always sends `temperature` (it defaults to 0 rather than being omitted).
 // Anthropic removed the sampling params on Opus 4.7 and later, so they must be
 // stripped from the wire or the request 400s.
-const anthropicFor = (env: Env) =>
+//
+// `effort` is a parameter rather than a constant because it is an Opus-5-era
+// setting: the naming model predates it and 400s on it, so that call passes null.
+const anthropicFor = (env: Env, effort: string | null = MODEL_REASONING_EFFORT) =>
   createAnthropic({
     apiKey: env.ANTHROPIC_API_KEY,
     fetch: async (input, init) => {
@@ -152,7 +175,7 @@ const anthropicFor = (env: Env) =>
         delete body.top_k;
         // ai@4 predates `output_config` and has no way to express effort, so it
         // is injected here alongside the params that have to be stripped.
-        body.output_config = { ...body.output_config, effort: MODEL_REASONING_EFFORT };
+        if (effort) body.output_config = { ...body.output_config, effort };
         init = { ...init, body: JSON.stringify(body) };
       }
       return fetch(input, init);
@@ -171,21 +194,29 @@ const userContent = (
   })),
 ];
 
-async function callLanguageModel(
-  env: Env,
-  promptText: string,
-  shots: { base64: string; mimeType: string }[],
-  systemPrompt: string,
-  modelId: string,
-): Promise<string> {
-  const { text } = await generateText({
-    model: anthropicFor(env)(modelId),
-    // Omitted entirely when blank -- sending an empty system string is not the
-    // same as sending none, and stored rows may legitimately have no preamble.
-    ...(systemPrompt.trim() ? { system: systemPrompt } : {}),
-    messages: [{ role: "user", content: userContent(promptText, shots) }],
-  });
-  return text;
+/**
+ * Ask the model for a short name for the kind of practice a prompt asks for.
+ *
+ * Never throws. A generate that produced good problems must not fail because the
+ * label was unavailable -- the prompt's first line is a serviceable name and the
+ * dashboard lets it be changed anyway.
+ */
+async function suggestGeneratorName(env: Env, promptText: string): Promise<string> {
+  const fallback = firstLineOfPrompt(promptText);
+  if (!promptText.trim()) return fallback;
+
+  try {
+    const { text } = await generateText({
+      model: anthropicFor(env, null)(CURRENT_NAMING_MODEL_ID),
+      maxTokens: 32,
+      system: GENERATOR_NAMING_DIRECTIVE,
+      messages: [{ role: "user", content: promptText.trim() }],
+    });
+    const name = text.replace(/\s+/g, " ").trim().slice(0, MAX_GENERATOR_NAME_LENGTH);
+    return name || fallback;
+  } catch {
+    return fallback;
+  }
 }
 
 async function generateProblemsFromPrompt(
@@ -355,6 +386,10 @@ function indexPageDocument(env: Env): string {
 <style>
   :root { color-scheme: light dark; }
   * { box-sizing: border-box; }
+  /* Every display rule below is a class selector, which ties with the browser's
+     own [hidden] rule and then wins on order -- so without this, setting .hidden
+     on anything laid out with flex or grid does nothing at all. */
+  [hidden] { display: none !important; }
   body {
     font-family: system-ui, -apple-system, sans-serif;
     margin: 0;
@@ -383,14 +418,16 @@ function indexPageDocument(env: Env): string {
     overflow: hidden;
     pointer-events: none;
   }
-  #trophy-wall .trophy {
+  /* Unscoped on purpose: a generator card's strip is the same square as the
+     wall's, so the two always read as one language. */
+  .trophy {
     width: 7px;
     height: 7px;
     border-radius: 1px;
     background: rgba(128,128,128,0.30);
   }
-  #trophy-wall .trophy-right   { background: rgba(120,170,110,0.55); }
-  #trophy-wall .trophy-wrong   { background: rgba(190,110,100,0.50); }
+  .trophy-right   { background: rgba(120,170,110,0.55); }
+  .trophy-wrong   { background: rgba(190,110,100,0.50); }
 
   form { display: flex; flex-direction: column; gap: 0.75rem; }
   textarea {
@@ -421,6 +458,68 @@ function indexPageDocument(env: Env): string {
   ul.shots img { width: 100%; height: 4.5rem; object-fit: contain; display: block; }
   ul.shots .dims { font-variant-numeric: tabular-nums; opacity: 0.75; margin-top: 0.25rem; }
   ul.shots .drop { margin-top: 0.25rem; font-size: 0.75rem; padding: 0.15rem 0.4rem; }
+
+  /* auto-fill + minmax collapses to one column on the phone without a media
+     query, the same way the rest of this sheet stays responsive by shape. */
+  .generator-grid {
+    display: grid; gap: 0.75rem; margin: 1.5rem 0 0; padding: 0; list-style: none;
+    grid-template-columns: repeat(auto-fill, minmax(15rem, 1fr));
+  }
+  .generator-card {
+    position: relative;
+    border: 1px solid rgba(128,128,128,0.35); border-radius: 8px;
+    padding: 0.75rem 0.9rem; background: rgba(127,127,127,0.05);
+    display: flex; flex-direction: column; gap: 0.5rem;
+  }
+  .generator-name {
+    font-weight: 600; font-size: 0.95rem; cursor: text;
+    padding-right: 1.75rem; overflow-wrap: anywhere;
+  }
+  .generator-name-input {
+    width: 100%; padding: 0.3rem 0.4rem; font: inherit; font-weight: 600;
+    color: inherit; border: 1px solid rgba(128,128,128,0.5); border-radius: 6px;
+    background: rgba(127,127,127,0.04);
+  }
+  .generator-strip { display: flex; flex-wrap: wrap; gap: 3px; }
+  .generator-strip:empty { display: none; }
+  .generator-stats {
+    font-size: 0.72rem; opacity: 0.6; font-variant-numeric: tabular-nums;
+  }
+  .generator-stats.err { color: #c0392b; opacity: 1; }
+  .generator-card .row { margin-top: auto; }
+  .generator-card input[type=number] { width: 3.75rem; padding: 0.35rem; }
+  .generator-card .practice { font-weight: 600; padding: 0.35rem 0.9rem; }
+  .generator-prompt {
+    width: 100%; min-height: 6rem; font-size: 0.8rem;
+  }
+
+  /* The menu button is the affordance that works everywhere: right-click is a
+     convenience on the Dells, and the iPhone has no such thing. */
+  .generator-menu-open {
+    position: absolute; top: 0.4rem; right: 0.4rem;
+    padding: 0 0.4rem; line-height: 1.4; font-size: 0.9rem;
+    border-color: transparent; background: none; opacity: 0.5;
+  }
+  .generator-menu-open:hover { opacity: 1; border-color: rgba(128,128,128,0.5); }
+  .generator-menu {
+    position: absolute; top: 2rem; right: 0.4rem; z-index: 3;
+    display: flex; flex-direction: column; align-items: stretch;
+    border: 1px solid rgba(128,128,128,0.5); border-radius: 6px;
+    background: Canvas; overflow: hidden; min-width: 9rem;
+  }
+  .generator-menu button {
+    border: 0; border-radius: 0; background: none; text-align: left;
+    font-size: 0.8rem; padding: 0.45rem 0.7rem;
+  }
+  .generator-menu button:hover { background: rgba(127,127,127,0.12); }
+
+  .archived-drawer { margin-top: 2rem; }
+  .archived-drawer > summary {
+    cursor: pointer; font-size: 0.75rem; opacity: 0.6;
+    padding: 0.25rem 0; user-select: none;
+  }
+  .archived-drawer .generator-card { opacity: 0.72; }
+  .archived-drawer .generator-card:hover { opacity: 1; }
 
   .problem-meta, .meta {
     font-size: 0.75rem; opacity: 0.6; font-variant-numeric: tabular-nums;
@@ -595,6 +694,10 @@ export default {
       prompt?: string;
       unsaved_image_attachments?: UnsavedImageAttachment[];
       requested_count?: number;
+      named_problem_generator_id?: number;
+      name?: string;
+      prompt_text?: string;
+      archived?: boolean;
       run_id?: number;
       problem_id?: number;
       attempt_id?: number;
@@ -606,114 +709,129 @@ export default {
 
     try {
       switch (body.action) {
-        case "list": {
+        case "list_named_problem_generators": {
+          // No aggregates here on purpose. The trophy payload the page already
+          // fetches carries every graded attempt with its generator id, so the
+          // counts, the accuracy and the strip are all derived client-side from
+          // data that was going over the wire regardless.
           const { results } = await db
             .prepare(
-              `SELECT p.id, p.prompt_text, p.model_id, p.reply_text, p.created_at,
+              `SELECT g.id, g.name, g.prompt_text, g.requested_count,
+                      g.archived_at, g.created_at,
                       COUNT(a.id) AS attachment_count
-                 FROM authored_math_prompt p
+                 FROM named_problem_generator g
                  LEFT JOIN math_prompt_image_attachment a
-                   ON a.authored_math_prompt_id = p.id
-                GROUP BY p.id
-                ORDER BY p.id DESC
-                LIMIT 50`,
+                   ON a.named_problem_generator_id = g.id
+                GROUP BY g.id
+                ORDER BY g.id DESC`,
             )
             .all();
-          return json({ rows: results });
+          return json({ generators: results });
         }
 
-        case "read": {
-          const prompt = await db
-            .prepare(`SELECT * FROM authored_math_prompt WHERE id = ?`)
-            .bind(body.id)
-            .first();
-          if (!prompt) return json({ error: "no such prompt" }, 404);
+        case "rename_named_problem_generator": {
+          const name = (body.name ?? "").replace(/\s+/g, " ").trim().slice(0, 64);
+          if (!name) return json({ error: "a generator needs a name" }, 400);
+          await db
+            .prepare(`UPDATE named_problem_generator SET name = ? WHERE id = ?`)
+            .bind(name, body.id)
+            .run();
+          return json({ ok: true, name });
+        }
 
-          const { results } = await db
+        case "revise_named_problem_generator_prompt": {
+          const promptText = (body.prompt_text ?? "").trim();
+          if (!promptText) return json({ error: "a generator needs a prompt" }, 400);
+          // Revised in place. Sets already worked keep the text that made them in
+          // problem_set.prompt_text_as_generated, so editing here cannot rewrite
+          // the history of what was practised.
+          await db
+            .prepare(`UPDATE named_problem_generator SET prompt_text = ? WHERE id = ?`)
+            .bind(promptText, body.id)
+            .run();
+          return json({ ok: true });
+        }
+
+        case "archive_named_problem_generator": {
+          // One verb both directions, the way a mark is set and cleared.
+          await db
             .prepare(
-              `SELECT id, ordinal, mime_type, width_px, height_px, byte_size, image_bytes
-                 FROM math_prompt_image_attachment
-                WHERE authored_math_prompt_id = ?
-                ORDER BY ordinal`,
+              `UPDATE named_problem_generator
+                  SET archived_at = CASE WHEN ?1 = 1
+                        THEN strftime('%Y-%m-%dT%H:%M:%fZ', 'now') ELSE NULL END
+                WHERE id = ?2`,
             )
-            .bind(body.id)
-            .all();
-
-          return json({
-            ...prompt,
-            attachments: results.map((row: Record<string, unknown>) => ({
-              id: row.id,
-              ordinal: row.ordinal,
-              mime_type: row.mime_type,
-              width_px: row.width_px,
-              height_px: row.height_px,
-              byte_size: row.byte_size,
-              base64: bytesToBase64(row.image_bytes),
-            })),
-          });
+            .bind(body.archived ? 1 : 0, body.id)
+            .run();
+          return json({ ok: true });
         }
 
-        case "replay": {
-          const prompt = await db
-            .prepare(`SELECT * FROM authored_math_prompt WHERE id = ?`)
-            .bind(body.id)
-            .first<{ prompt_text: string; model_id: string; system_prompt: string }>();
-          if (!prompt) return json({ error: "no such prompt" }, 404);
-
-          const { results } = await db
-            .prepare(
-              `SELECT mime_type, image_bytes
-                 FROM math_prompt_image_attachment
-                WHERE authored_math_prompt_id = ?
-                ORDER BY ordinal`,
-            )
-            .bind(body.id)
-            .all();
-
-          // Replayed against the stored model_id and system_prompt, not the
-          // current ones, so an old prompt reproduces its original request.
-          const reply = await callLanguageModel(
-            env,
-            prompt.prompt_text,
-            results.map((row: Record<string, unknown>) => ({
-              base64: bytesToBase64(row.image_bytes),
-              mimeType: String(row.mime_type),
-            })),
-            prompt.system_prompt,
-            prompt.model_id,
-          );
-          return json({ reply });
-        }
-
-        case "author_and_save": {
-          const shots = body.unsaved_image_attachments ?? [];
-          const promptText = body.prompt ?? "";
-          const reply = await callLanguageModel(
-            env,
-            promptText,
-            shots,
-            MODEL_INSTRUCTION_PREAMBLE,
-            CURRENT_AUTHORING_MODEL_ID,
-          );
-          const promptId = await insertAuthoredPrompt(db, promptText, reply, shots);
-          return json({ id: promptId, reply });
+        case "suggest_named_problem_generator_name": {
+          return json({ name: await suggestGeneratorName(env, body.prompt_text ?? "") });
         }
 
         case "generate_problems": {
-          const shots = body.unsaved_image_attachments ?? [];
-          const promptText = body.prompt ?? "";
           const requested = Math.max(1, Math.min(40, Number(body.requested_count) || 2));
 
-          const generated = await generateProblemsFromPrompt(
-            env,
-            promptText,
-            shots,
-            requested,
-          );
+          // Two ways in, one verb: an existing generator practised again, or a
+          // prompt typed fresh, which becomes a generator on the way through.
+          if (body.named_problem_generator_id) {
+            const generator = await db
+              .prepare(
+                `SELECT id, prompt_text FROM named_problem_generator WHERE id = ?`,
+              )
+              .bind(body.named_problem_generator_id)
+              .first<{ id: number; prompt_text: string }>();
+            if (!generator) return json({ error: "no such generator" }, 404);
+
+            const shots = await attachmentsForGenerator(db, generator.id);
+            const generated = await generateProblemsFromPrompt(
+              env,
+              generator.prompt_text,
+              shots,
+              requested,
+            );
+            if (!generated.length) return json({ error: "model returned no problems" }, 502);
+
+            // The card remembers what you last asked it for.
+            await db
+              .prepare(`UPDATE named_problem_generator SET requested_count = ? WHERE id = ?`)
+              .bind(requested, generator.id)
+              .run();
+
+            return json(
+              await openSetAndRun(
+                db,
+                generator.id,
+                requested,
+                generated,
+                generator.prompt_text,
+              ),
+            );
+          }
+
+          const shots = body.unsaved_image_attachments ?? [];
+          const promptText = body.prompt ?? "";
+
+          // Named alongside the problems rather than before them: naming is a
+          // cheap call against a small model and generation is neither, so
+          // running them together costs nothing on the clock.
+          const [generated, name] = await Promise.all([
+            generateProblemsFromPrompt(env, promptText, shots, requested),
+            suggestGeneratorName(env, promptText),
+          ]);
           if (!generated.length) return json({ error: "model returned no problems" }, 502);
 
-          const promptId = await insertAuthoredPrompt(db, promptText, null, shots);
-          return json(await openSetAndRun(db, promptId, requested, generated));
+          const generatorId = await insertNamedProblemGenerator(
+            db,
+            name,
+            promptText,
+            requested,
+            shots,
+          );
+          return json(
+            await openSetAndRun(db, generatorId, requested, generated, promptText),
+          );
         }
 
         case "record_attempt": {
@@ -786,7 +904,7 @@ export default {
         case "further_practice": {
           const origin = await db
             .prepare(
-              `SELECT s.id AS problem_set_id, s.authored_math_prompt_id,
+              `SELECT s.id AS problem_set_id, s.named_problem_generator_id,
                       s.requested_count
                  FROM practice_run r
                  JOIN problem_set s ON s.id = r.problem_set_id
@@ -795,16 +913,16 @@ export default {
             .bind(body.run_id)
             .first<{
               problem_set_id: number;
-              authored_math_prompt_id: number;
+              named_problem_generator_id: number;
               requested_count: number;
             }>();
           if (!origin) return json({ error: "no such run" }, 404);
 
           const prompt = await db
-            .prepare(`SELECT prompt_text FROM authored_math_prompt WHERE id = ?`)
-            .bind(origin.authored_math_prompt_id)
+            .prepare(`SELECT prompt_text FROM named_problem_generator WHERE id = ?`)
+            .bind(origin.named_problem_generator_id)
             .first<{ prompt_text: string }>();
-          if (!prompt) return json({ error: "no such prompt" }, 404);
+          if (!prompt) return json({ error: "no such generator" }, 404);
 
           // Marks live on the attempt, so the run is the only thing the client
           // has to send -- there is no list of ids to keep in sync.
@@ -819,23 +937,12 @@ export default {
             .bind(body.run_id)
             .all<{ problem_html: string }>();
 
-          const { results: shots } = await db
-            .prepare(
-              `SELECT mime_type, image_bytes
-                 FROM math_prompt_image_attachment
-                WHERE authored_math_prompt_id = ?
-                ORDER BY ordinal`,
-            )
-            .bind(origin.authored_math_prompt_id)
-            .all();
+          const shots = await attachmentsForGenerator(db, origin.named_problem_generator_id);
 
           const generated = await generateProblemsFromPrompt(
             env,
             prompt.prompt_text,
-            shots.map((row: Record<string, unknown>) => ({
-              base64: bytesToBase64(row.image_bytes),
-              mimeType: String(row.mime_type),
-            })),
+            shots,
             origin.requested_count,
             // No marks is not an error: it just means "more of the same",
             // which is the old new-set behaviour.
@@ -843,14 +950,15 @@ export default {
           );
           if (!generated.length) return json({ error: "model returned no problems" }, 502);
 
-          // Further practice opens a NEW set against the same prompt. The set
+          // Further practice opens a NEW set against the same generator. The set
           // just worked, and its attempts, are left untouched.
           return json(
             await openSetAndRun(
               db,
-              origin.authored_math_prompt_id,
+              origin.named_problem_generator_id,
               origin.requested_count,
               generated,
+              prompt.prompt_text,
               origin.problem_set_id,
             ),
           );
@@ -862,13 +970,20 @@ export default {
           // before the answer page and those attempts stay off the wall.
           // A skip earns nothing either. It is a grade, but it records a problem
           // not attempted, and the wall is a record of problems answered.
+          //
+          // The generator id rides along so this one payload also feeds the
+          // dashboard: every card's strip, count and accuracy is this list
+          // bucketed by generator, which is why no card needs its own query.
           const { results } = await db
             .prepare(
-              `SELECT id, created_at, self_grade
-                 FROM problem_attempt
-                WHERE self_grade IS NOT NULL
-                  AND self_grade <> 'skipped'
-                ORDER BY created_at, id`,
+              `SELECT a.id, a.created_at, a.self_grade,
+                      s.named_problem_generator_id
+                 FROM problem_attempt a
+                 JOIN practice_run r ON r.id = a.practice_run_id
+                 JOIN problem_set s  ON s.id = r.problem_set_id
+                WHERE a.self_grade IS NOT NULL
+                  AND a.self_grade <> 'skipped'
+                ORDER BY a.created_at, a.id`,
             )
             .all();
           return json({ attempts: results });
@@ -885,21 +1000,44 @@ export default {
   },
 };
 
-async function insertAuthoredPrompt(
+/** A generator's screenshots, in the shape the model call wants them. */
+async function attachmentsForGenerator(
   db: D1Database,
+  generatorId: number,
+): Promise<{ base64: string; mimeType: string }[]> {
+  const { results } = await db
+    .prepare(
+      `SELECT mime_type, image_bytes
+         FROM math_prompt_image_attachment
+        WHERE named_problem_generator_id = ?
+        ORDER BY ordinal`,
+    )
+    .bind(generatorId)
+    .all();
+
+  return results.map((row: Record<string, unknown>) => ({
+    base64: bytesToBase64(row.image_bytes),
+    mimeType: String(row.mime_type),
+  }));
+}
+
+async function insertNamedProblemGenerator(
+  db: D1Database,
+  name: string,
   promptText: string,
-  reply: string | null,
+  requestedCount: number,
   shots: UnsavedImageAttachment[],
 ): Promise<number> {
   const inserted = await db
     .prepare(
-      `INSERT INTO authored_math_prompt (prompt_text, model_id, system_prompt, reply_text)
-       VALUES (?, ?, ?, ?) RETURNING id`,
+      `INSERT INTO named_problem_generator
+         (name, prompt_text, requested_count, model_id, system_prompt, reply_text)
+       VALUES (?, ?, ?, ?, '', NULL) RETURNING id`,
     )
-    .bind(promptText, CURRENT_AUTHORING_MODEL_ID, MODEL_INSTRUCTION_PREAMBLE, reply)
+    .bind(name, promptText, requestedCount, CURRENT_AUTHORING_MODEL_ID)
     .first<{ id: number }>();
 
-  const promptId = inserted!.id;
+  const generatorId = inserted!.id;
 
   if (shots.length) {
     await db.batch(
@@ -907,11 +1045,11 @@ async function insertAuthoredPrompt(
         db
           .prepare(
             `INSERT INTO math_prompt_image_attachment
-               (authored_math_prompt_id, ordinal, mime_type, width_px, height_px, byte_size, image_bytes)
+               (named_problem_generator_id, ordinal, mime_type, width_px, height_px, byte_size, image_bytes)
              VALUES (?, ?, ?, ?, ?, ?, ?)`,
           )
           .bind(
-            promptId,
+            generatorId,
             idx,
             shot.mimeType,
             shot.w,
@@ -922,15 +1060,16 @@ async function insertAuthoredPrompt(
       ),
     );
   }
-  return promptId;
+  return generatorId;
 }
 
 /** Persist a generated set, open a run over it, and return the problems without answers. */
 async function openSetAndRun(
   db: D1Database,
-  promptId: number,
+  generatorId: number,
   requestedCount: number,
   rows: GeneratedProblemRow[],
+  promptTextAsGenerated: string,
   precedingProblemSetId: number | null = null,
 ): Promise<{
   set_id: number;
@@ -941,10 +1080,11 @@ async function openSetAndRun(
   const set = await db
     .prepare(
       `INSERT INTO problem_set
-         (authored_math_prompt_id, requested_count, preceding_problem_set_id)
-       VALUES (?, ?, ?) RETURNING id`,
+         (named_problem_generator_id, requested_count, preceding_problem_set_id,
+          prompt_text_as_generated)
+       VALUES (?, ?, ?, ?) RETURNING id`,
     )
-    .bind(promptId, requestedCount, precedingProblemSetId)
+    .bind(generatorId, requestedCount, precedingProblemSetId, promptTextAsGenerated)
     .first<{ id: number }>();
   const setId = set!.id;
 

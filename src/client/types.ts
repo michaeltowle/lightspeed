@@ -23,6 +23,21 @@ export interface Trophy {
   created_at: string;
   // Never null and never "skipped": the wall is fed answered attempts only.
   self_grade: Exclude<SelfGrade, "skipped">;
+  // Which practice type earned it. The wall ignores this; the dashboard buckets
+  // on it, which is why no generator card needs a query of its own.
+  named_problem_generator_id: number;
+}
+
+/** A named, standing prompt: one practice type, worked as often as it is useful. */
+export interface NamedProblemGenerator {
+  id: number;
+  name: string;
+  prompt_text: string;
+  requested_count: number;
+  // An ISO timestamp parks it in the drawer; null puts it on the dashboard.
+  archived_at: string | null;
+  created_at: string;
+  attachment_count: number;
 }
 
 export interface UnsavedImageAttachment {
@@ -35,7 +50,7 @@ export interface UnsavedImageAttachment {
 }
 
 export type View =
-  | { name: "compose" }
+  | { name: "generators" }
   | {
       name: "problem";
       runId: number;

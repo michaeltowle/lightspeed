@@ -167,7 +167,7 @@ export async function renderAnswers(
     h("ul", { id: "saved" }, rows.map(answerRow)),
     h("div", { class: "row" }, [
       furtherEl,
-      h("button", { type: "button", onclick: () => go({ name: "compose" }) }, ["home"]),
+      h("button", { type: "button", onclick: () => go({ name: "generators" }) }, ["home"]),
     ]),
     statusEl,
   );

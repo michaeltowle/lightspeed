@@ -13,7 +13,8 @@ export function mountTrophyWall(): HTMLElement {
   return layer;
 }
 
-function square(trophy: Trophy): HTMLElement {
+/** Exported so a generator card's strip is the same square, not a lookalike. */
+export function square(trophy: Trophy): HTMLElement {
   // The worker sends answered attempts only, so there is no ungraded square
   // and no skipped one.
   return h("i", {

@@ -1,6 +1,7 @@
 import type {
   AnswerRow,
   MathPracticeProblem,
+  NamedProblemGenerator,
   SelfGrade,
   Trophy,
   UnsavedImageAttachment,
@@ -28,6 +29,7 @@ export interface GeneratedProblemSet {
   problems: MathPracticeProblem[];
 }
 
+/** A prompt typed fresh: generates, and becomes a generator on the way through. */
 export const generateProblems = (
   prompt: string,
   attachments: UnsavedImageAttachment[],
@@ -44,6 +46,50 @@ export const generateProblems = (
       h: a.h,
       byteSize: a.byteSize,
     })),
+  });
+
+/** More of a type already named. Same verb, entered by id instead of by text. */
+export const practiceNamedProblemGenerator = (
+  namedProblemGeneratorId: number,
+  requestedCount: number,
+) =>
+  post<GeneratedProblemSet>({
+    action: "generate_problems",
+    named_problem_generator_id: namedProblemGeneratorId,
+    requested_count: requestedCount,
+  });
+
+export const listNamedProblemGenerators = () =>
+  post<{ generators: NamedProblemGenerator[] }>({
+    action: "list_named_problem_generators",
+  });
+
+export const renameNamedProblemGenerator = (id: number, name: string) =>
+  post<{ ok: true; name: string }>({
+    action: "rename_named_problem_generator",
+    id,
+    name,
+  });
+
+export const reviseNamedProblemGeneratorPrompt = (id: number, promptText: string) =>
+  post<{ ok: true }>({
+    action: "revise_named_problem_generator_prompt",
+    id,
+    prompt_text: promptText,
+  });
+
+/** Both directions, the way a mark is set and cleared. */
+export const archiveNamedProblemGenerator = (id: number, archived: boolean) =>
+  post<{ ok: true }>({
+    action: "archive_named_problem_generator",
+    id,
+    archived,
+  });
+
+export const suggestNamedProblemGeneratorName = (promptText: string) =>
+  post<{ name: string }>({
+    action: "suggest_named_problem_generator_name",
+    prompt_text: promptText,
   });
 
 export const recordAttempt = (

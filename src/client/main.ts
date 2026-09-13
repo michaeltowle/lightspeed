@@ -1,6 +1,6 @@
 import { h } from "./lib/dom";
 import { renderAnswers } from "./views/answers";
-import { renderCompose } from "./views/compose";
+import { renderGenerators } from "./views/generators";
 import { renderProblem } from "./views/problem";
 import { mountTrophyWall, refreshTrophyWall } from "./views/trophy-wall";
 import type { View } from "./types";
@@ -12,8 +12,8 @@ function go(view: View): void {
   if (!root) return;
 
   switch (view.name) {
-    case "compose":
-      renderCompose(root, go);
+    case "generators":
+      void renderGenerators(root, go);
       break;
     case "problem":
       renderProblem(
@@ -39,7 +39,7 @@ function boot(): void {
   if (!document.getElementById("app")) {
     document.body.append(h("main", { id: "app" }));
   }
-  go({ name: "compose" });
+  go({ name: "generators" });
 }
 
 if (document.readyState === "loading") {

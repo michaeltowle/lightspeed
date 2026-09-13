@@ -50,13 +50,37 @@ function reencode(img: HTMLImageElement): UnsavedImageAttachment {
   }
 }
 
-export function renderCompose(
-  root: HTMLElement,
-  go: (view: View) => void,
-): void {
+// Bound once, at module scope, and pointed at whichever form is currently on
+// screen. The dashboard re-renders on every rename and archive, so a listener
+// attached per render would stack a new copy each time and paste an image once
+// per render it had survived.
+let acceptPastedFiles: ((files: File[]) => void) | null = null;
+
+document.addEventListener("paste", (event) => {
+  if (!acceptPastedFiles) return;
+  const clipboard = (event as ClipboardEvent).clipboardData;
+  if (!clipboard) return;
+  const files = Array.from(clipboard.items)
+    .filter((item) => item.kind === "file")
+    .map((item) => item.getAsFile())
+    .filter((file): file is File => file !== null);
+  if (files.length) {
+    event.preventDefault();
+    acceptPastedFiles(files);
+  }
+});
+
+/**
+ * The box that turns a typed prompt into a new practice type. Returns its
+ * element rather than owning the page: the dashboard decides where it sits.
+ */
+export function renderNewGeneratorForm(go: (view: View) => void): HTMLElement {
   const attachments: UnsavedImageAttachment[] = [];
 
-  const promptEl = h("textarea", { id: "prompt" });
+  const promptEl = h("textarea", {
+    id: "prompt",
+    placeholder: "describe a kind of problem to practise...",
+  });
   const countEl = h("input", {
     id: "count",
     type: "number",
@@ -120,18 +144,7 @@ export function renderCompose(
   }
 
   // Paste is the only way images get in -- there is no file picker.
-  document.addEventListener("paste", (event) => {
-    const clipboard = (event as ClipboardEvent).clipboardData;
-    if (!clipboard) return;
-    const files = Array.from(clipboard.items)
-      .filter((item) => item.kind === "file")
-      .map((item) => item.getAsFile())
-      .filter((file): file is File => file !== null);
-    if (files.length) {
-      event.preventDefault();
-      void addFiles(files);
-    }
-  });
+  acceptPastedFiles = (files) => void addFiles(files);
 
   const form = h("form", {
     id: "f",
@@ -163,5 +176,5 @@ export function renderCompose(
     h("div", { class: "row" }, [countEl, goEl]),
   );
 
-  root.replaceChildren(h("h1", {}, ["limitations are in the mind"]), form, statusEl);
+  return h("div", {}, [form, statusEl]);
 }

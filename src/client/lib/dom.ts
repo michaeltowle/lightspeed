@@ -34,3 +34,24 @@ export function formatElapsed(ms: number): string {
   const secs = Math.round(total % 60);
   return `${mins}m ${secs}s`;
 }
+
+/**
+ * How long ago, coarsely. The dashboard answers "have I touched this lately",
+ * which wants "3d ago", not a date to do arithmetic on.
+ */
+export function formatAgo(iso: string): string {
+  const then = new Date(iso).getTime();
+  if (isNaN(then)) return "never";
+
+  const mins = Math.floor((Date.now() - then) / 60000);
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins}m ago`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  if (days === 1) return "yesterday";
+  if (days < 30) return `${days}d ago`;
+  const months = Math.floor(days / 30);
+  if (months < 12) return `${months}mo ago`;
+  return `${Math.floor(months / 12)}y ago`;
+}
