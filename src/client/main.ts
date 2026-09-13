@@ -2,7 +2,7 @@ import { h } from "./lib/dom";
 import { renderAnswers } from "./views/answers";
 import { renderGenerators } from "./views/generators";
 import { renderProblem } from "./views/problem";
-import { mountTrophyWall, refreshTrophyWall } from "./views/trophy-wall";
+import { mountTrophyWall, refreshTrophyWall, setTrophyWallVisible } from "./views/trophy-wall";
 import type { View } from "./types";
 
 // Single route, so there is no router -- views are just state. Back navigation
@@ -13,9 +13,11 @@ function go(view: View): void {
 
   switch (view.name) {
     case "generators":
+      setTrophyWallVisible(false);
       void renderGenerators(root, go);
       break;
     case "problem":
+      setTrophyWallVisible(true);
       renderProblem(
         root,
         view.runId,
@@ -26,6 +28,7 @@ function go(view: View): void {
       );
       break;
     case "answers":
+      setTrophyWallVisible(true);
       void renderAnswers(root, view.runId, go);
       break;
   }

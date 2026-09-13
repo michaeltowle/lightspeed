@@ -23,6 +23,16 @@ export function square(trophy: Trophy): HTMLElement {
   });
 }
 
+/**
+ * The wall is hidden on the dashboard, where every card already carries its own
+ * strip of the same squares: one wall behind twenty-nine little walls is noise,
+ * and the cards say which practice earned what, which the wall never could.
+ * It stays up everywhere else.
+ */
+export function setTrophyWallVisible(visible: boolean): void {
+  mountTrophyWall().hidden = !visible;
+}
+
 export async function refreshTrophyWall(): Promise<void> {
   const target = mountTrophyWall();
   try {
