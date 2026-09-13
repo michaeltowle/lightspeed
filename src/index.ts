@@ -144,15 +144,17 @@ function base64ToBytes(base64: string): Uint8Array {
   return bytes;
 }
 
-function bytesToBase64(value: unknown): string {
-  // D1 hands BLOBs back as number[] on some paths and ArrayBuffer on others.
-  const bytes =
-    value instanceof ArrayBuffer
-      ? new Uint8Array(value)
-      : Array.isArray(value)
-        ? Uint8Array.from(value)
-        : new Uint8Array(value as ArrayBufferLike);
+// D1 hands BLOBs back as number[] on some paths and ArrayBuffer on others.
+function blobToBytes(value: unknown): Uint8Array {
+  return value instanceof ArrayBuffer
+    ? new Uint8Array(value)
+    : Array.isArray(value)
+      ? Uint8Array.from(value)
+      : new Uint8Array(value as ArrayBufferLike);
+}
 
+function bytesToBase64(value: unknown): string {
+  const bytes = blobToBytes(value);
   let binary = "";
   for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
   return btoa(binary);
@@ -490,8 +492,31 @@ function indexPageDocument(env: Env): string {
   .generator-card input[type=number] { width: 3.75rem; padding: 0.35rem; }
   .generator-card .practice { font-weight: 600; padding: 0.35rem 0.9rem; }
   .generator-prompt {
-    width: 100%; min-height: 6rem; font-size: 0.8rem;
+    width: 100%; min-height: 6rem; font-size: 0.85rem;
   }
+  /* Editing takes the whole row. A 15rem card is no place to read a screenshot
+     of a maths problem, and the screenshots are half of what is being tuned. */
+  .generator-card.editing { grid-column: 1 / -1; }
+  .prompt-editor { display: grid; gap: 0.6rem; align-items: start; }
+  .prompt-editor .acts { grid-column: 1 / -1; }
+  .prompt-editor .generator-prompt { min-height: 11rem; }
+  .prompt-editor.has-shots { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+  .shots-panel { display: flex; flex-direction: column; gap: 0.35rem; min-width: 0; }
+  /* Editing is a two-Dells job and is laid out for them. Narrow just stacks so
+     it degrades rather than breaks -- it is not a size being designed for. */
+  @media (max-width: 46rem) {
+    .prompt-editor.has-shots { grid-template-columns: 1fr; }
+  }
+  /* Qualified with the tag to outrank the ul.shots li/img rules above, which
+     would otherwise hold these to the compose box's 8.5rem letterboxed
+     thumbnail -- unreadable, and reading them is the whole point here. */
+  ul.generator-shots li { width: auto; max-width: 100%; }
+  /* Let the column width be the only real limit. The height cap is a backstop
+     for a very tall screenshot, not a size Mike should be squinting at. */
+  ul.generator-shots img {
+    width: auto; height: auto; max-width: 100%; max-height: 30rem;
+  }
+  ul.generator-shots a { display: block; }
 
   /* The menu button is the affordance that works everywhere: right-click is a
      convenience on the Dells, and the iPhone has no such thing. */
@@ -512,6 +537,8 @@ function indexPageDocument(env: Env): string {
     font-size: 0.8rem; padding: 0.45rem 0.7rem;
   }
   .generator-menu button:hover { background: rgba(127,127,127,0.12); }
+  .generator-menu button:disabled { opacity: 0.4; cursor: default; }
+  .generator-menu button:disabled:hover { background: none; }
 
   .archived-drawer { margin-top: 2rem; }
   .archived-drawer > summary {
@@ -671,6 +698,25 @@ export default {
         return binaryResponse(data, "font/woff2");
       }
 
+      // A generator's screenshots are part of its prompt, so they have to be
+      // visible while that prompt is being edited. Served here rather than
+      // base64'd into the dashboard payload: the browser caches them, and a
+      // list of 29 generators does not have to carry megabytes it rarely shows.
+      const shot = url.searchParams.get("shot");
+      if (shot) {
+        const row = await env.LIGHTSPEED_APP_RECORDS
+          .prepare(
+            `SELECT mime_type, image_bytes
+               FROM math_prompt_image_attachment WHERE id = ?`,
+          )
+          .bind(Number(shot))
+          .first<{ mime_type: string; image_bytes: unknown }>();
+        if (!row) return new Response("Not found", { status: 404 });
+        return new Response(blobToBytes(row.image_bytes), {
+          headers: { "content-type": row.mime_type, "cache-control": IMMUTABLE },
+        });
+      }
+
       const asset = url.searchParams.get("asset");
       if (asset) {
         const size = asset === "favicon32" ? "32" : asset === "favicon180" ? "180" : null;
@@ -716,17 +762,35 @@ export default {
           // data that was going over the wire regardless.
           const { results } = await db
             .prepare(
-              `SELECT g.id, g.name, g.prompt_text, g.requested_count,
-                      g.archived_at, g.created_at,
-                      COUNT(a.id) AS attachment_count
-                 FROM named_problem_generator g
-                 LEFT JOIN math_prompt_image_attachment a
-                   ON a.named_problem_generator_id = g.id
-                GROUP BY g.id
-                ORDER BY g.id DESC`,
+              `SELECT id, name, prompt_text, requested_count, archived_at, created_at
+                 FROM named_problem_generator
+                ORDER BY id DESC`,
             )
-            .all();
-          return json({ generators: results });
+            .all<{ id: number }>();
+
+          // Ids only -- the bytes are fetched one at a time off "/?shot=", and
+          // only by the panel that actually shows them.
+          const { results: shots } = await db
+            .prepare(
+              `SELECT id, named_problem_generator_id
+                 FROM math_prompt_image_attachment
+                ORDER BY named_problem_generator_id, ordinal`,
+            )
+            .all<{ id: number; named_problem_generator_id: number }>();
+
+          const shotsByGenerator = new Map<number, number[]>();
+          for (const row of shots) {
+            const list = shotsByGenerator.get(row.named_problem_generator_id);
+            if (list) list.push(row.id);
+            else shotsByGenerator.set(row.named_problem_generator_id, [row.id]);
+          }
+
+          return json({
+            generators: results.map((row) => ({
+              ...row,
+              attachment_ids: shotsByGenerator.get(row.id) ?? [],
+            })),
+          });
         }
 
         case "rename_named_problem_generator": {

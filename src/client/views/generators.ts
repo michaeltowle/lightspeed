@@ -16,6 +16,12 @@ import type { NamedProblemGenerator, Trophy, View } from "../types";
 // at phone width.
 const STRIP_LENGTH = 24;
 
+// Prompts are not edited on the phone. A prompt is tuned against the
+// screenshots it was written for, and there is no way to hold both on a 390px
+// screen and still read the maths -- so the door is shut rather than left open
+// onto something unusable. Matches the stacking breakpoint in the stylesheet.
+const WIDE_ENOUGH_TO_EDIT = "(min-width: 46rem)";
+
 // One menu open at a time, closed by the next click anywhere. Bound once at
 // module scope -- the grid repaints on every archive, and a listener attached
 // per render would stack a copy each time.
@@ -201,15 +207,49 @@ export async function renderGenerators(
 
       const cancelEl = h("button", { type: "button", class: "grade" }, ["cancel"]);
       const saveEl = h("button", { type: "button", class: "grade" }, ["save"]);
-      const panel = h("div", {}, [textarea, h("div", { class: "acts" }, [saveEl, cancelEl])]);
+
+      // The screenshots are as much of the prompt as the words are -- several of
+      // these prompts say little more than "problems like this" -- so tuning the
+      // text without seeing them is guesswork. Each links to itself at full size.
+      const shotsEl = h("ul", { class: "shots generator-shots" },
+        generator.attachment_ids.map((id) =>
+          h("li", {}, [
+            h("a", { href: `/?shot=${id}`, target: "_blank", rel: "noreferrer" }, [
+              h("img", { src: `/?shot=${id}`, alt: "" }),
+            ]),
+          ]),
+        ),
+      );
+
+      const count = generator.attachment_ids.length;
+      // Side by side, so the words being tuned and the pictures they refer to
+      // are both on screen at once. Stacked, one of them is always scrolled off.
+      const panel = h("div", { class: count ? "prompt-editor has-shots" : "prompt-editor" }, [
+        textarea,
+        ...(count
+          ? [
+              h("div", { class: "shots-panel" }, [
+                h("div", { class: "generator-stats" }, [
+                  `${count} screenshot${count === 1 ? "" : "s"} the model sees  ·  click to open full size`,
+                ]),
+                shotsEl,
+              ]),
+            ]
+          : []),
+        h("div", { class: "acts" }, [saveEl, cancelEl]),
+      ]);
 
       const hidden = Array.from(card.children) as HTMLElement[];
       for (const child of hidden) child.hidden = true;
+      // Editing takes the whole row: a 15rem card is no place to read a
+      // screenshot of a maths problem.
+      card.classList.add("editing");
       card.append(panel);
       textarea.focus();
 
       const close = () => {
         panel.remove();
+        card.classList.remove("editing");
         for (const child of hidden) child.hidden = false;
       };
 
@@ -255,9 +295,16 @@ export async function renderGenerators(
       const item = (label: string, act: () => void) =>
         h("button", { type: "button", onclick: act }, [label]);
 
+      // Read at open time, not at render time, so a resized window is respected
+      // without repainting the grid.
+      const wideEnough = window.matchMedia(WIDE_ENOUGH_TO_EDIT).matches;
+      const editEl = wideEnough
+        ? item("edit prompt", beginPromptEdit)
+        : h("button", { type: "button", disabled: true }, ["edit prompt (desktop)"]);
+
       const menu = h("div", { class: "generator-menu" }, [
         item("rename", beginRename),
-        item("edit prompt", beginPromptEdit),
+        editEl,
         generator.archived_at
           ? item("restore", () => void setArchived(false))
           : item("archive", () => void setArchived(true)),

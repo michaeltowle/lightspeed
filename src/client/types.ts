@@ -37,7 +37,9 @@ export interface NamedProblemGenerator {
   // An ISO timestamp parks it in the drawer; null puts it on the dashboard.
   archived_at: string | null;
   created_at: string;
-  attachment_count: number;
+  // Ids only, in ordinal order. The bytes come from "/?shot=<id>" when a panel
+  // actually shows them.
+  attachment_ids: number[];
 }
 
 export interface UnsavedImageAttachment {
