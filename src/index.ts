@@ -68,26 +68,28 @@ const PROBLEM_GENERATION_DIRECTIVE = [
   "display. Do not use Unicode math symbols or plain-text notation like x^2.",
 ].join("\n");
 
+// Split out from the set schema so a single problem can be validated on its
+// own -- the salvage path below checks recovered problems one at a time.
+const PROBLEM_GENERATION_ITEM_SCHEMA = z.object({
+  problem_html: z.string().describe("The problem statement, as HTML with $...$ math."),
+  // Ordered before the final answer on purpose: the model emits fields in
+  // schema order, so working the steps first means the answer is read off
+  // finished work rather than guessed at and then justified.
+  solution_walkthrough_html: z
+    .string()
+    .describe(
+      'The worked steps, as HTML with $...$ math. The last element must be a <p> starting with "Hence" that restates the final answer.',
+    ),
+  final_answer_html: z
+    .string()
+    .describe(
+      "The final answer alone, as HTML with $...$ math. No working. Must match the walkthrough's closing line.",
+    ),
+});
+
 const PROBLEM_GENERATION_SCHEMA = z.object({
   problems: z
-    .array(
-      z.object({
-        problem_html: z.string().describe("The problem statement, as HTML with $...$ math."),
-        // Ordered before the final answer on purpose: the model emits fields in
-        // schema order, so working the steps first means the answer is read off
-        // finished work rather than guessed at and then justified.
-        solution_walkthrough_html: z
-          .string()
-          .describe(
-            'The worked steps, as HTML with $...$ math. The last element must be a <p> starting with "Hence" that restates the final answer.',
-          ),
-        final_answer_html: z
-          .string()
-          .describe(
-            "The final answer alone, as HTML with $...$ math. No working. Must match the walkthrough's closing line.",
-          ),
-      }),
-    )
+    .array(PROBLEM_GENERATION_ITEM_SCHEMA)
     .describe("The generated problems, in the order they should be worked."),
 });
 
@@ -203,12 +205,19 @@ async function generateProblemsFromPrompt(
 
   // The provider defaults to 4096 output tokens, which a set of any size runs
   // past: a worked walkthrough with its verification steps costs several
-  // hundred tokens, and LaTeX inside JSON pays for every backslash twice. When
-  // the cap cuts the reply short, Anthropic still returns the part of the
-  // object it parsed, so the failure surfaces as a schema mismatch rather than
-  // as truncation. Budget per problem instead, and keep the total under the
-  // ceiling where a non-streaming request is still safe.
-  const outputTokenBudget = Math.min(16000, 1000 + requestedCount * 1200);
+  // hundred tokens, and LaTeX inside JSON pays for every backslash twice.
+  //
+  // The budget also has to cover reasoning, which is easy to miss. Opus 5 thinks
+  // by default -- omitting the `thinking` parameter meant "off" on Opus 4.7 and
+  // 4.8, but on Opus 5 it means adaptive -- and those tokens come out of this
+  // same cap before a single problem is written. The directive above asks for
+  // the most expensive output there is (differentiate back, re-substitute,
+  // recheck the bounds), so a thin per-problem allowance is spent on the
+  // thinking and the set truncates with nothing to show.
+  //
+  // 16000 is the ceiling where a non-streaming request is still safe. Past five
+  // problems every set sits at it and leans on the salvage below.
+  const outputTokenBudget = Math.min(16000, 2000 + requestedCount * 3000);
 
   try {
     const { object } = await generateObject({
@@ -231,12 +240,80 @@ async function generateProblemsFromPrompt(
     // Say which wall was hit. The generic schema-mismatch message reads like the
     // model went off-format, when the reply was merely cut off mid-set.
     if (NoObjectGeneratedError.isInstance(err) && err.finishReason === "length") {
+      const salvaged = salvageCompleteProblems(err.text);
+      // Every problem that closed before the cut is finished work already paid
+      // for, so the set opens with those rather than failing outright. Only a
+      // cut landing before the first problem closes leaves nothing to keep.
+      if (salvaged.length) return salvaged;
       throw new Error(
-        `the model ran out of room partway through ${requestedCount} problems -- ask for fewer`,
+        `the model ran out of room before it finished a single problem -- ask for fewer`,
       );
     }
     throw err;
   }
+}
+
+/**
+ * Pull the complete problems out of a reply the token cap cut short.
+ *
+ * `generateObject` discards the whole set when the JSON will not parse, but a
+ * truncated reply is only broken at its tail -- every problem that closed
+ * before the cut is intact. Walk the `problems` array and keep each object
+ * whose braces balanced and whose fields still satisfy the schema.
+ */
+function salvageCompleteProblems(partialJson: string | undefined): GeneratedProblemRow[] {
+  if (!partialJson) return [];
+
+  const problemsKeyAt = partialJson.indexOf('"problems"');
+  if (problemsKeyAt < 0) return [];
+  const arrayStart = partialJson.indexOf("[", problemsKeyAt);
+  if (arrayStart < 0) return [];
+
+  const salvaged: GeneratedProblemRow[] = [];
+  let depth = 0;
+  let objectStart = -1;
+  let inString = false;
+  let escaped = false;
+
+  for (let i = arrayStart + 1; i < partialJson.length; i++) {
+    const ch = partialJson[i];
+
+    if (inString) {
+      // The payload is mostly LaTeX, so it is mostly backslashes. Escape
+      // tracking has to be exact here or the scanner loses the closing quote
+      // and reads every brace in the maths as structure.
+      if (escaped) escaped = false;
+      else if (ch === "\\") escaped = true;
+      else if (ch === '"') inString = false;
+      continue;
+    }
+
+    if (ch === '"') {
+      inString = true;
+    } else if (ch === "{") {
+      if (depth === 0) objectStart = i;
+      depth++;
+    } else if (ch === "}") {
+      depth--;
+      if (depth === 0 && objectStart >= 0) {
+        try {
+          const parsed = PROBLEM_GENERATION_ITEM_SCHEMA.safeParse(
+            JSON.parse(partialJson.slice(objectStart, i + 1)),
+          );
+          if (parsed.success) salvaged.push(parsed.data);
+        } catch {
+          // A balanced slice that will not parse means the scan has lost its
+          // place. The problems already collected are still good; stop there.
+          break;
+        }
+        objectStart = -1;
+      }
+    } else if (ch === "]" && depth === 0) {
+      break;
+    }
+  }
+
+  return salvaged;
 }
 
 const json = (body: unknown, status = 200) =>
@@ -845,6 +922,7 @@ async function openSetAndRun(
 ): Promise<{
   set_id: number;
   run_id: number;
+  requested_count: number;
   problems: { id: number; ordinal: number; problem_html: string }[];
 }> {
   const set = await db
@@ -892,5 +970,12 @@ async function openSetAndRun(
     .bind(setId)
     .all<{ id: number; ordinal: number; problem_html: string }>();
 
-  return { set_id: setId, run_id: run!.id, problems: results };
+  // The count travels back so the run can show that a salvaged set came up
+  // short of what was asked for, rather than quietly serving fewer problems.
+  return {
+    set_id: setId,
+    run_id: run!.id,
+    requested_count: requestedCount,
+    problems: results,
+  };
 }

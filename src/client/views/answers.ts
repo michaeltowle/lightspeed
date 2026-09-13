@@ -142,7 +142,13 @@ export async function renderAnswers(
         try {
           const set = await furtherPractice(runId);
           if (!set.problems.length) throw new Error("model returned no problems");
-          go({ name: "problem", runId: set.run_id, problems: set.problems, index: 0 });
+          go({
+            name: "problem",
+            runId: set.run_id,
+            requestedCount: set.requested_count,
+            problems: set.problems,
+            index: 0,
+          });
         } catch (err) {
           statusEl.textContent = err instanceof Error ? err.message : String(err);
           statusEl.className = "err";

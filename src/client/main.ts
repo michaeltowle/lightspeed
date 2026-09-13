@@ -16,7 +16,14 @@ function go(view: View): void {
       renderCompose(root, go);
       break;
     case "problem":
-      renderProblem(root, view.runId, view.problems, view.index, go);
+      renderProblem(
+        root,
+        view.runId,
+        view.requestedCount,
+        view.problems,
+        view.index,
+        go,
+      );
       break;
     case "answers":
       void renderAnswers(root, view.runId, go);

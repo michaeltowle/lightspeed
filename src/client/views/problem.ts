@@ -13,11 +13,16 @@ import type { MathPracticeProblem, View } from "../types";
 export function renderProblem(
   root: HTMLElement,
   runId: number,
+  requestedCount: number,
   problems: MathPracticeProblem[],
   index: number,
   go: (view: View) => void,
 ): void {
   const problem = problems[index];
+  // A set can arrive shorter than it was asked for: when the model runs out of
+  // room mid-set the finished problems are kept and the rest are lost. Say so,
+  // rather than leaving the count to look like a miscount.
+  const shortfall = requestedCount - problems.length;
   const isLast = index === problems.length - 1;
   const startedAt = performance.now();
   let advancing = false;
@@ -37,7 +42,7 @@ export function renderProblem(
       // The trophy wall shows graded attempts only, so nothing appears yet.
       await recordAttempt(problem.id, runId, Math.round(elapsed));
       if (isLast) go({ name: "answers", runId });
-      else go({ name: "problem", runId, problems, index: index + 1 });
+      else go({ name: "problem", runId, requestedCount, problems, index: index + 1 });
     } catch (err) {
       statusEl.textContent = err instanceof Error ? err.message : String(err);
       statusEl.className = "err";
@@ -46,7 +51,12 @@ export function renderProblem(
   }
 
   root.replaceChildren(
-    h("div", { class: "problem-meta" }, [`${index + 1} of ${problems.length}`]),
+    h("div", { class: "problem-meta" }, [
+      `${index + 1} of ${problems.length}`,
+      ...(shortfall > 0
+        ? [`  ·  asked for ${requestedCount}, the model had room for ${problems.length}`]
+        : []),
+    ]),
     bodyEl,
     h("div", { class: "row" }, [
       h("button", { type: "button", id: "go", onclick: () => void advance() }, [

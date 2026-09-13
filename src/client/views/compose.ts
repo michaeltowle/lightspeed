@@ -143,7 +143,13 @@ export function renderCompose(
         const count = Math.max(1, Math.min(40, Number(countEl.value) || 2));
         const set = await generateProblems(promptEl.value, attachments, count);
         if (!set.problems.length) throw new Error("model returned no problems");
-        go({ name: "problem", runId: set.run_id, problems: set.problems, index: 0 });
+        go({
+          name: "problem",
+          runId: set.run_id,
+          requestedCount: set.requested_count,
+          problems: set.problems,
+          index: 0,
+        });
       } catch (err) {
         setStatus(err instanceof Error ? err.message : String(err), true);
         goEl.disabled = false;

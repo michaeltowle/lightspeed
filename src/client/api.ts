@@ -22,6 +22,9 @@ async function post<T>(payload: Record<string, unknown>): Promise<T> {
 export interface GeneratedProblemSet {
   set_id: number;
   run_id: number;
+  // What was asked for, which is not always what arrived: a set cut short by
+  // the token cap opens with the problems that finished.
+  requested_count: number;
   problems: MathPracticeProblem[];
 }
 

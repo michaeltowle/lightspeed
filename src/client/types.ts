@@ -39,6 +39,7 @@ export type View =
   | {
       name: "problem";
       runId: number;
+      requestedCount: number;
       problems: MathPracticeProblem[];
       index: number;
     }
