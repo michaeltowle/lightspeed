@@ -556,11 +556,15 @@ function indexPageDocument(env: Env): string {
   .col-menu { width: 1.8rem; position: relative; }
   td.generator-name { min-width: 9rem; overflow-wrap: anywhere; }
 
-  /* A week without practice is the thing worth noticing on this page, so it is
-     marked on the row itself rather than left to be worked out from a date. */
-  .generator-row.is-gone-cold { background: rgba(214, 196, 158, 0.22); }
-  .generator-row.is-gone-cold:hover { background: rgba(214, 196, 158, 0.34); }
-  .generator-row.is-gone-cold.is-selected { background: rgba(214, 196, 158, 0.45); }
+  /* Time away from a type is the thing worth noticing on this page, so it is
+     marked on the row itself rather than left to be worked out from a date.
+     Two depths of the same beige: a few days off, and a week or more. */
+  .generator-row.is-going-cold { background: rgba(214, 196, 158, 0.10); }
+  .generator-row.is-going-cold:hover { background: rgba(214, 196, 158, 0.20); }
+  .generator-row.is-going-cold.is-selected { background: rgba(214, 196, 158, 0.30); }
+  .generator-row.is-gone-cold { background: rgba(214, 196, 158, 0.26); }
+  .generator-row.is-gone-cold:hover { background: rgba(214, 196, 158, 0.38); }
+  .generator-row.is-gone-cold.is-selected { background: rgba(214, 196, 158, 0.48); }
   /* The phone selects what to practise; it does not tag and it does not read the
      record. Six columns at 390px leave the name -- the one column you actually
      select on -- a few characters a line, so everything but the class goes.
@@ -610,19 +614,23 @@ function indexPageDocument(env: Env): string {
   }
 
   .compose-fields {
-    display: grid; gap: 0.6rem;
+    display: grid; gap: 0.7rem; align-items: start;
     grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr));
   }
-  .compose-fields label {
-    display: flex; flex-direction: column; gap: 0.2rem;
-    font-size: 0.68rem; opacity: 0.55;
-  }
+  .compose-field { display: flex; flex-direction: column; gap: 0.25rem; }
+  /* The dimming sits on the label alone. On the column it would multiply down
+     into the chips, and no opacity on a child can undo an ancestor's. */
+  .compose-field-name { font-size: 0.68rem; opacity: 0.55; }
   .compose-fields input {
     width: 100%; padding: 0.4rem 0.5rem; font: inherit; font-size: 0.85rem;
-    color: inherit; opacity: 1;
+    color: inherit;
     border: 1px solid rgba(128,128,128,0.5); border-radius: 6px;
     background: rgba(127,127,127,0.04);
   }
+  /* Everything the field already holds, one click away. Typing still works --
+     these only edit the box above them. */
+  .compose-field-chips { display: flex; flex-wrap: wrap; gap: 0.2rem; }
+  .compose-field-chips:empty { display: none; }
 
   /* One practice button for the table, acting on whichever row is lit. */
   .practice-launch-control { margin-top: 0.85rem; }
@@ -654,12 +662,12 @@ ${chipColorPaletteCss}
     font-size: 0.65rem; opacity: 0.4; margin-left: 0.6rem;
   }
   .study-context-tag-filter .field-label:first-child { margin-left: 0; }
-  button.study-context-tag-chip {
-    cursor: pointer; background: none; color: inherit; padding: 0.12rem 0.6rem;
-  }
+  /* No background or colour of its own: every chip button carries a palette
+     class, and an element-plus-class selector here would outrank it. Being
+     chosen shows as a ring, since the fill is already saying which tag it is. */
+  button.study-context-tag-chip { cursor: pointer; padding: 0.12rem 0.6rem; }
   button.study-context-tag-chip.is-on {
-    opacity: 1; font-weight: 600; border-color: currentColor;
-    background: rgba(127,127,127,0.14);
+    font-weight: 600; border-color: currentColor;
   }
 
   /* The editor takes a row of its own beneath the one being tuned: a table cell
@@ -1089,8 +1097,30 @@ export default {
           return json({ ok: true });
         }
 
-        case "suggest_named_problem_generator_name": {
-          return json({ name: await suggestGeneratorName(env, body.prompt_text ?? "") });
+        case "save_named_problem_generator": {
+          const promptText = (body.prompt ?? "").trim();
+          const shots = body.unsaved_image_attachments ?? [];
+          // A generator is its prompt and its screenshots. With neither, there
+          // is nothing to generate from later.
+          if (!promptText && !shots.length) {
+            return json({ error: "a generator needs a prompt or a screenshot" }, 400);
+          }
+
+          const requested = Math.max(1, Math.min(40, Number(body.requested_count) || 2));
+          const typedName = (body.name ?? "").replace(/\s+/g, " ").trim().slice(0, 64);
+          // Naming is not generating, so it still happens -- it is a one-line
+          // call against the small model and the table is unreadable without it.
+          const name = typedName || (await suggestGeneratorName(env, promptText));
+
+          const generatorId = await insertNamedProblemGenerator(
+            db,
+            name,
+            promptText,
+            requested,
+            shots,
+          );
+          await setAllTagFields(db, generatorId, body.study_context_tags_by_field);
+          return json({ named_problem_generator_id: generatorId, name });
         }
 
         case "generate_problems": {

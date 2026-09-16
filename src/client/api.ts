@@ -55,6 +55,33 @@ export const generateProblems = (
     })),
   });
 
+/**
+ * The same prompt, filed without spending a generate on it. Everything a fresh
+ * generate would record is recorded -- name, screenshots, fields, the count it
+ * should ask for -- and the model is only asked for a name if none was typed.
+ */
+export const saveNamedProblemGenerator = (
+  prompt: string,
+  attachments: UnsavedImageAttachment[],
+  requestedCount: number,
+  name: string,
+  tagsByField: Partial<Record<StudyContextTagField, string[]>>,
+) =>
+  post<{ named_problem_generator_id: number; name: string }>({
+    action: "save_named_problem_generator",
+    prompt,
+    requested_count: requestedCount,
+    name,
+    study_context_tags_by_field: tagsByField,
+    unsaved_image_attachments: attachments.map((a) => ({
+      base64: a.base64,
+      mimeType: a.mimeType,
+      w: a.w,
+      h: a.h,
+      byteSize: a.byteSize,
+    })),
+  });
+
 /** More of a type already named. Same verb, entered by id instead of by text. */
 export const practiceNamedProblemGenerator = (
   namedProblemGeneratorId: number,
@@ -108,12 +135,6 @@ export const archiveNamedProblemGenerator = (id: number, archived: boolean) =>
     action: "archive_named_problem_generator",
     id,
     archived,
-  });
-
-export const suggestNamedProblemGeneratorName = (promptText: string) =>
-  post<{ name: string }>({
-    action: "suggest_named_problem_generator_name",
-    prompt_text: promptText,
   });
 
 export const recordAttempt = (

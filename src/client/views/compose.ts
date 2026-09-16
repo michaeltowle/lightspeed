@@ -1,7 +1,12 @@
-import { generateProblems } from "../api";
+import { generateProblems, saveNamedProblemGenerator } from "../api";
 import { clear, h } from "../lib/dom";
 import { STUDY_CONTEXT_TAG_FIELDS } from "../types";
-import type { StudyContextTagField, View, UnsavedImageAttachment } from "../types";
+import type {
+  StudyContextTag,
+  StudyContextTagField,
+  View,
+  UnsavedImageAttachment,
+} from "../types";
 
 /** A typed comma list into tag names: trimmed, squashed, de-duplicated. */
 export function parseTagNames(raw: string): string[] {
@@ -86,10 +91,19 @@ document.addEventListener("paste", (event) => {
 });
 
 /**
- * The box that turns a typed prompt into a new practice type. Returns its
- * element rather than owning the page: the dashboard decides where it sits.
+ * The box that turns a typed prompt into a new practice type.
+ *
+ * Returns its element rather than owning the page -- the dashboard decides where
+ * it sits -- alongside a repaint for the tag chips, which go stale whenever a
+ * tag is created or retired from the table while this form is already built.
+ *
+ * The catalogue arrives as a getter for the same reason: it is read at paint
+ * time, not captured once when the form is made.
  */
-export function renderNewGeneratorForm(go: (view: View) => void): HTMLElement {
+export function renderNewGeneratorForm(
+  go: (view: View) => void,
+  getTagCatalogue: () => StudyContextTag[],
+): { el: HTMLElement; refreshTagChips: () => void } {
   const attachments: UnsavedImageAttachment[] = [];
 
   const promptEl = h("textarea", { id: "prompt" });
@@ -100,6 +114,58 @@ export function renderNewGeneratorForm(go: (view: View) => void): HTMLElement {
   const fieldInputs = new Map<StudyContextTagField, HTMLInputElement>(
     STUDY_CONTEXT_TAG_FIELDS.map((field) => [field, h("input", { type: "text" })]),
   );
+  const fieldChipRows = new Map<StudyContextTagField, HTMLElement>(
+    STUDY_CONTEXT_TAG_FIELDS.map((field) => [
+      field,
+      h("div", { class: "compose-field-chips" }),
+    ]),
+  );
+
+  /**
+   * Every tag the field already has, as a chip that puts its name into the box
+   * or takes it out again. The box stays the single source of truth -- a chip
+   * only edits the text in it -- so a name typed by hand and one clicked in are
+   * the same thing by the time anything is sent.
+   */
+  function paintTagChips(): void {
+    const catalogue = getTagCatalogue();
+    for (const field of STUDY_CONTEXT_TAG_FIELDS) {
+      const input = fieldInputs.get(field)!;
+      const row = fieldChipRows.get(field)!;
+      const chosen = new Set(parseTagNames(input.value).map((n) => n.toLowerCase()));
+
+      row.replaceChildren(
+        ...catalogue
+          .filter((tag) => tag.field === field)
+          .map((tag) =>
+            h(
+              "button",
+              {
+                type: "button",
+                class: `study-context-tag-chip chip-color-${tag.chip_color_ordinal}${
+                  chosen.has(tag.name.toLowerCase()) ? " is-on" : ""
+                }`,
+                onclick: () => {
+                  const names = parseTagNames(input.value);
+                  const at = names.findIndex(
+                    (n) => n.toLowerCase() === tag.name.toLowerCase(),
+                  );
+                  if (at >= 0) names.splice(at, 1);
+                  else names.push(tag.name);
+                  input.value = names.join(", ");
+                  paintTagChips();
+                },
+              },
+              [tag.name],
+            ),
+          ),
+      );
+    }
+  }
+
+  for (const input of fieldInputs.values()) {
+    input.addEventListener("input", paintTagChips);
+  }
   const countEl = h("input", {
     id: "count",
     type: "number",
@@ -110,6 +176,7 @@ export function renderNewGeneratorForm(go: (view: View) => void): HTMLElement {
   const thumbsEl = h("ul", { class: "shots" });
   const statusEl = h("div", { id: "out" });
   const goEl = h("button", { type: "submit", id: "go" }, ["generate"]);
+  const saveEl = h("button", { type: "button", id: "save" }, ["save"]);
 
   const setStatus = (text: string, isError = false) => {
     statusEl.textContent = text;
@@ -165,26 +232,52 @@ export function renderNewGeneratorForm(go: (view: View) => void): HTMLElement {
   // Paste is the only way images get in -- there is no file picker.
   acceptPastedFiles = (files) => void addFiles(files);
 
+  /** Everything typed into the box, in the shape both buttons send. */
+  function composed() {
+    const tagsByField: Partial<Record<StudyContextTagField, string[]>> = {};
+    for (const [field, input] of fieldInputs) {
+      const names = parseTagNames(input.value);
+      if (names.length) tagsByField[field] = names;
+    }
+    return {
+      prompt: promptEl.value,
+      count: Math.max(1, Math.min(40, Number(countEl.value) || 2)),
+      name: nameEl.value.replace(/\s+/g, " ").trim().slice(0, 64),
+      tagsByField,
+    };
+  }
+
+  const setBusy = (busy: boolean) => {
+    goEl.disabled = busy;
+    saveEl.disabled = busy;
+  };
+
+  // Files the type away without spending a generate on it. Everything else is
+  // the same -- prompt, name, screenshots, fields, remembered count -- so it
+  // lands in the table ready to be practised whenever it is wanted.
+  saveEl.addEventListener("click", async () => {
+    setBusy(true);
+    setStatus("saving...");
+    try {
+      const { prompt, count, name, tagsByField } = composed();
+      await saveNamedProblemGenerator(prompt, attachments, count, name, tagsByField);
+      // Re-entering the view refetches, and the table is the tab it opens on.
+      go({ name: "generators" });
+    } catch (err) {
+      setStatus(err instanceof Error ? err.message : String(err), true);
+      setBusy(false);
+    }
+  });
+
   const form = h("form", {
     id: "f",
     onsubmit: async (event: Event) => {
       event.preventDefault();
-      goEl.disabled = true;
+      setBusy(true);
       setStatus("generating...");
       try {
-        const count = Math.max(1, Math.min(40, Number(countEl.value) || 2));
-        const tagsByField: Partial<Record<StudyContextTagField, string[]>> = {};
-        for (const [field, input] of fieldInputs) {
-          const names = parseTagNames(input.value);
-          if (names.length) tagsByField[field] = names;
-        }
-        const set = await generateProblems(
-          promptEl.value,
-          attachments,
-          count,
-          nameEl.value.replace(/\s+/g, " ").trim().slice(0, 64),
-          tagsByField,
-        );
+        const { prompt, count, name, tagsByField } = composed();
+        const set = await generateProblems(prompt, attachments, count, name, tagsByField);
         if (!set.problems.length) throw new Error("model returned no problems");
         go({
           name: "problem",
@@ -195,7 +288,7 @@ export function renderNewGeneratorForm(go: (view: View) => void): HTMLElement {
         });
       } catch (err) {
         setStatus(err instanceof Error ? err.message : String(err), true);
-        goEl.disabled = false;
+        setBusy(false);
       }
     },
   });
@@ -204,13 +297,25 @@ export function renderNewGeneratorForm(go: (view: View) => void): HTMLElement {
     promptEl,
     thumbsEl,
     h("div", { class: "compose-fields" }, [
-      h("label", {}, ["name", nameEl]),
+      h("div", { class: "compose-field" }, [
+        h("span", { class: "compose-field-name" }, ["name"]),
+        nameEl,
+      ]),
       ...STUDY_CONTEXT_TAG_FIELDS.map((field) =>
-        h("label", {}, [field, fieldInputs.get(field)!]),
+        h("div", { class: "compose-field" }, [
+          h("span", { class: "compose-field-name" }, [field]),
+          fieldInputs.get(field)!,
+          fieldChipRows.get(field)!,
+        ]),
       ),
     ]),
-    h("div", { class: "row" }, [countEl, goEl]),
+    h("div", { class: "row" }, [countEl, goEl, saveEl]),
   );
 
-  return h("div", {}, [form, statusEl]);
+  paintTagChips();
+
+  return {
+    el: h("div", {}, [form, statusEl]),
+    refreshTagChips: paintTagChips,
+  };
 }

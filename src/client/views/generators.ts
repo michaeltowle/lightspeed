@@ -5,7 +5,6 @@ import {
   renameNamedProblemGenerator,
   retagNamedProblemGenerator,
   reviseNamedProblemGeneratorPrompt,
-  suggestNamedProblemGeneratorName,
   trophyWall,
 } from "../api";
 import { h } from "../lib/dom";
@@ -31,7 +30,12 @@ const STRIP_LENGTH = 12;
 const WIDE_ENOUGH_TO_EDIT = "(min-width: 46rem)";
 
 const ROLLING_WEEK_DAYS = 7;
-const GONE_COLD_AFTER_MS = 7 * 24 * 60 * 60 * 1000;
+
+// Both counted in whole days, not elapsed time: something worked on Monday
+// evening and something worked on Monday morning are the same number of days
+// ago on Thursday, and neither should tip a row over on the hour.
+const GONE_COLD_AFTER_DAYS = 7;
+const GOING_COLD_AFTER_DAYS = 2;
 
 // Select, name, four fields, strip, menu.
 const TABLE_COLUMN_COUNT = 8;
@@ -70,6 +74,19 @@ function standingOf(trophies: Trophy[] | undefined): {
 /** Which calendar day a timestamp fell on *here*, which is the only day Mike has. */
 function localDayKey(date: Date): string {
   return `${date.getFullYear()}-${date.getMonth()}-${date.getDate()}`;
+}
+
+/**
+ * Whole local days from one date to another, with the clock discarded.
+ *
+ * Rounded rather than floored because a day is not always 86400 seconds: across
+ * a daylight-saving boundary one of them is an hour short or an hour long, and
+ * truncating would quietly lose or gain a day.
+ */
+function daysBetween(from: Date, to: Date): number {
+  const start = new Date(from.getFullYear(), from.getMonth(), from.getDate());
+  const end = new Date(to.getFullYear(), to.getMonth(), to.getDate());
+  return Math.round((end.getTime() - start.getTime()) / 86400000);
 }
 
 /**
@@ -205,9 +222,7 @@ export async function renderGenerators(
   const practiceEl = h("button", { type: "button", class: "practice", disabled: true }, [
     "practice",
   ]);
-  const practiceStatusEl = h("div", { class: "generator-stats" }, [
-    "select a practice type",
-  ]);
+  const practiceStatusEl = h("div", { class: "generator-stats" });
 
   const setPracticeStatus = (text: string, isError = false) => {
     practiceStatusEl.textContent = text;
@@ -255,7 +270,7 @@ export async function renderGenerators(
       practiceCountEl.value = String(selected.requested_count);
       setPracticeStatus(selected.name);
     } else {
-      setPracticeStatus("select a practice type");
+      setPracticeStatus("");
     }
   }
 
@@ -364,10 +379,14 @@ export async function renderGenerators(
 
     // Never practised counts as gone cold: it is at least as far from being
     // worked as something last touched a fortnight ago.
-    const goneCold =
-      !standing.lastWorkedAt ||
-      Date.now() - new Date(standing.lastWorkedAt).getTime() > GONE_COLD_AFTER_MS;
-    if (goneCold) row.classList.add("is-gone-cold");
+    const daysSinceWorked = standing.lastWorkedAt
+      ? daysBetween(new Date(standing.lastWorkedAt), new Date())
+      : null;
+    if (daysSinceWorked === null || daysSinceWorked >= GONE_COLD_AFTER_DAYS) {
+      row.classList.add("is-gone-cold");
+    } else if (daysSinceWorked > GOING_COLD_AFTER_DAYS) {
+      row.classList.add("is-going-cold");
+    }
 
     const radioEl = h("input", {
       type: "radio",
@@ -389,29 +408,7 @@ export async function renderGenerators(
     // ---- rename ------------------------------------------------------------
     function beginRename(): void {
       const input = h("input", { class: "generator-name-input", value: generator.name });
-      const suggestEl = h(
-        "button",
-        {
-          type: "button",
-          class: "grade",
-          onclick: async () => {
-            suggestEl.disabled = true;
-            suggestEl.textContent = "thinking...";
-            try {
-              const { name } = await suggestNamedProblemGeneratorName(generator.prompt_text);
-              input.value = name;
-            } catch {
-              // Naming is a convenience; typing one is always available.
-            }
-            suggestEl.disabled = false;
-            suggestEl.textContent = "suggest";
-            input.focus();
-          },
-        },
-        ["suggest"],
-      );
-
-      nameCell.replaceChildren(input, h("div", { class: "acts" }, [suggestEl]));
+      nameCell.replaceChildren(input);
       input.focus();
       input.select();
 
@@ -443,13 +440,7 @@ export async function renderGenerators(
           void finish(false);
         }
       });
-      // A click on "suggest" blurs the input; settling on blur would close the
-      // box before the suggestion could land in it.
-      input.addEventListener("blur", () => {
-        setTimeout(() => {
-          if (document.activeElement !== suggestEl) void finish(true);
-        }, 0);
-      });
+      input.addEventListener("blur", () => void finish(true));
     }
 
     // ---- one cell per field ------------------------------------------------
@@ -676,7 +667,8 @@ export async function renderGenerators(
   }
 
   // ---- tabs ----------------------------------------------------------------
-  const generatePane = h("div", {}, [renderNewGeneratorForm(go)]);
+  const composeForm = renderNewGeneratorForm(go, () => tagCatalogue);
+  const generatePane = h("div", {}, [composeForm.el]);
   const tablePane = h("div", {}, [
     filterEl,
     tableEl,
@@ -686,9 +678,10 @@ export async function renderGenerators(
     drawerEl,
   ]);
 
-  const tabs = [
-    { label: "generate", pane: generatePane },
+  const tabs: { label: string; pane: HTMLElement; onShow?: () => void }[] = [
     { label: "table", pane: tablePane },
+    // Tags created or retired in the table while this form sat hidden.
+    { label: "generate", pane: generatePane, onShow: composeForm.refreshTagChips },
   ];
   const tabEls = tabs.map(({ label }) => h("button", { type: "button", class: "tab" }, [label]));
 
@@ -697,6 +690,7 @@ export async function renderGenerators(
       pane.hidden = i !== index;
       tabEls[i].classList.toggle("is-on", i === index);
     });
+    tabs[index].onShow?.();
   }
   tabEls.forEach((el, i) => el.addEventListener("click", () => showTab(i)));
 
@@ -704,13 +698,13 @@ export async function renderGenerators(
   paintAll();
   // The table opens: most visits are to pick something to practise, not to make
   // a new type.
-  showTab(1);
+  showTab(0);
 
   root.replaceChildren(
     renderRollingWeekPracticeLedger(trophies),
     h("div", { class: "tab-strip" }, tabEls),
-    generatePane,
     tablePane,
+    generatePane,
     ...catalogueEls.values(),
     h("div", { class: "lightspeed-motto-line" }, ["limitations are in the mind"]),
   );
