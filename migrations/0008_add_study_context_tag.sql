@@ -1,10 +1,9 @@
--- A study context is the class a practice type belongs to: a course number, a
--- textbook, an exam. A type belongs to as many as apply -- 6801 and Casella and
--- Exam 1 all at once -- which is why membership is a table of its own and not a
--- column on the generator.
+-- A study context is where a practice type sits in the study. A type belongs to
+-- as many as apply at once, which is why membership is a table of its own and
+-- not a column on the generator.
 
--- COLLATE NOCASE on the unique name is what stops "Casella" and "casella"
--- becoming two tags that look identical on the dashboard and filter apart.
+-- COLLATE NOCASE on the unique name is what stops two spellings that differ
+-- only in case becoming two tags that look identical and filter apart.
 CREATE TABLE study_context_tag (
   id         INTEGER PRIMARY KEY AUTOINCREMENT,
   name       TEXT    NOT NULL COLLATE NOCASE UNIQUE,

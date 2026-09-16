@@ -1,6 +1,21 @@
 import { generateProblems } from "../api";
 import { clear, h } from "../lib/dom";
-import type { View, UnsavedImageAttachment } from "../types";
+import { STUDY_CONTEXT_TAG_FIELDS } from "../types";
+import type { StudyContextTagField, View, UnsavedImageAttachment } from "../types";
+
+/** A typed comma list into tag names: trimmed, squashed, de-duplicated. */
+export function parseTagNames(raw: string): string[] {
+  const seen = new Set<string>();
+  const names: string[] = [];
+  for (const part of raw.split(",")) {
+    const name = part.replace(/\s+/g, " ").trim().slice(0, 32);
+    if (!name || seen.has(name.toLowerCase())) continue;
+    seen.add(name.toLowerCase());
+    names.push(name);
+    if (names.length === 8) break;
+  }
+  return names;
+}
 
 const MAX_ATTACHMENTS = 8;
 // D1 caps a BLOB at 2,000,000 bytes; stay well under it.
@@ -78,6 +93,13 @@ export function renderNewGeneratorForm(go: (view: View) => void): HTMLElement {
   const attachments: UnsavedImageAttachment[] = [];
 
   const promptEl = h("textarea", { id: "prompt" });
+  const nameEl = h("input", { id: "name", type: "text" });
+
+  // The same four fields the table carries, so a type arrives already placed
+  // rather than needing a second pass over the dashboard to file it.
+  const fieldInputs = new Map<StudyContextTagField, HTMLInputElement>(
+    STUDY_CONTEXT_TAG_FIELDS.map((field) => [field, h("input", { type: "text" })]),
+  );
   const countEl = h("input", {
     id: "count",
     type: "number",
@@ -151,7 +173,18 @@ export function renderNewGeneratorForm(go: (view: View) => void): HTMLElement {
       setStatus("generating...");
       try {
         const count = Math.max(1, Math.min(40, Number(countEl.value) || 2));
-        const set = await generateProblems(promptEl.value, attachments, count);
+        const tagsByField: Partial<Record<StudyContextTagField, string[]>> = {};
+        for (const [field, input] of fieldInputs) {
+          const names = parseTagNames(input.value);
+          if (names.length) tagsByField[field] = names;
+        }
+        const set = await generateProblems(
+          promptEl.value,
+          attachments,
+          count,
+          nameEl.value.replace(/\s+/g, " ").trim().slice(0, 64),
+          tagsByField,
+        );
         if (!set.problems.length) throw new Error("model returned no problems");
         go({
           name: "problem",
@@ -170,6 +203,12 @@ export function renderNewGeneratorForm(go: (view: View) => void): HTMLElement {
   form.append(
     promptEl,
     thumbsEl,
+    h("div", { class: "compose-fields" }, [
+      h("label", {}, ["name", nameEl]),
+      ...STUDY_CONTEXT_TAG_FIELDS.map((field) =>
+        h("label", {}, [field, fieldInputs.get(field)!]),
+      ),
+    ]),
     h("div", { class: "row" }, [countEl, goEl]),
   );
 

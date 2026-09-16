@@ -120,12 +120,54 @@ const MAX_GENERATOR_NAME_LENGTH = 64;
 const MAX_TAG_NAME_LENGTH = 32;
 const MAX_TAGS_PER_GENERATOR = 8;
 
+const STUDY_CONTEXT_TAG_FIELDS = ["class", "source", "target", "status"] as const;
+type StudyContextTagField = (typeof STUDY_CONTEXT_TAG_FIELDS)[number];
+
+const isStudyContextTagField = (value: unknown): value is StudyContextTagField =>
+  STUDY_CONTEXT_TAG_FIELDS.includes(value as StudyContextTagField);
+
+/**
+ * Pale ground, saturated text of the same hue -- the shape Microsoft Lists gives
+ * a choice pill. Its actual defaults are not published anywhere citable and have
+ * changed at least once, so these are built to the same rule rather than copied,
+ * and ordered the way Lists runs: cool hues first, warm after, neutral last.
+ *
+ * A new tag takes the next entry round, so the first ten in a field are all
+ * distinguishable before any colour repeats. Dark pairs are the same hues
+ * re-seated for a dark ground -- a pale pill on black glares.
+ */
+const CHIP_COLOR_PALETTE = [
+  { light: ["#E8E6F8", "#4F52B2"], dark: ["#31325C", "#B9BCF0"] },
+  { light: ["#DDECF9", "#0F6CBD"], dark: ["#17354F", "#8FC4EE"] },
+  { light: ["#D5EFEF", "#0B6B6B"], dark: ["#123C3C", "#86D3D3"] },
+  { light: ["#DCF2E3", "#0E7A42"], dark: ["#133A26", "#86D6A6"] },
+  { light: ["#FAF0CE", "#7D6206"], dark: ["#40360D", "#E0C868"] },
+  { light: ["#FCE6D4", "#A54C08"], dark: ["#4A2C14", "#F0B183"] },
+  { light: ["#FBDCD8", "#B3303F"], dark: ["#4C1F22", "#F0A099"] },
+  { light: ["#FADAE9", "#A3007F"], dark: ["#47162F", "#EFA3CE"] },
+  { light: ["#EEDDF3", "#7A4FA8"], dark: ["#3A2749", "#CBA8E4"] },
+  { light: ["#E6E8EB", "#4A5560"], dark: ["#2B3138", "#B6C0C9"] },
+];
+
+const chipColorPaletteCss = [
+  ...CHIP_COLOR_PALETTE.map(
+    (entry, i) =>
+      `  .chip-color-${i} { background: ${entry.light[0]}; color: ${entry.light[1]}; border-color: ${entry.light[0]}; }`,
+  ),
+  "  @media (prefers-color-scheme: dark) {",
+  ...CHIP_COLOR_PALETTE.map(
+    (entry, i) =>
+      `    .chip-color-${i} { background: ${entry.dark[0]}; color: ${entry.dark[1]}; border-color: ${entry.dark[0]}; }`,
+  ),
+  "  }",
+].join("\n");
+
 /**
  * Trim, squash and de-duplicate a typed tag list.
  *
  * De-duplication is case-insensitive to match the column's NOCASE uniqueness:
- * without it, "6801, 6801" would be two rows to insert and the second would
- * collide with the first on the way in.
+ * without it a name typed twice in one list is two rows to insert, and the
+ * second collides with the first on the way in.
  */
 function normalizeTagNames(raw: unknown): string[] {
   if (!Array.isArray(raw)) return [];
@@ -512,21 +554,25 @@ function indexPageDocument(env: Env): string {
   .col-select input { margin: 0; accent-color: #b06a2c; }
   .col-strip { width: 8.5rem; }
   .col-menu { width: 1.8rem; position: relative; }
-  .col-num {
-    text-align: right; white-space: nowrap;
-    font-size: 0.75rem; opacity: 0.65; font-variant-numeric: tabular-nums;
-  }
   td.generator-name { min-width: 9rem; overflow-wrap: anywhere; }
-  /* The phone selects what to practise; it does not tag and it does not read
-     the record. Both columns dropped here are authoring surfaces, and between
-     them they were squeezing the name -- the one column you actually select on
-     -- down to a few characters a line. Filtering survives as the chips above. */
+
+  /* A week without practice is the thing worth noticing on this page, so it is
+     marked on the row itself rather than left to be worked out from a date. */
+  .generator-row.is-gone-cold { background: rgba(214, 196, 158, 0.22); }
+  .generator-row.is-gone-cold:hover { background: rgba(214, 196, 158, 0.34); }
+  .generator-row.is-gone-cold.is-selected { background: rgba(214, 196, 158, 0.45); }
+  /* The phone selects what to practise; it does not tag and it does not read the
+     record. Six columns at 390px leave the name -- the one column you actually
+     select on -- a few characters a line, so everything but the class goes.
+     Filtering on any field survives as the chips above the table. */
   @media (max-width: 40rem) {
     .generator-table { font-size: 0.78rem; }
     .generator-table th, .generator-table td {
       padding-left: 0.2rem; padding-right: 0.2rem;
     }
-    .col-strip, .col-tags { display: none; }
+    .col-strip, .col-field-source, .col-field-target, .col-field-status {
+      display: none;
+    }
     td.generator-name { min-width: 0; }
   }
   .generator-name-input {
@@ -543,29 +589,71 @@ function indexPageDocument(env: Env): string {
     width: 100%; min-height: 6rem; font-size: 0.85rem;
   }
 
+  /* Only one pane is up at a time, so the page is either for making a practice
+     type or for choosing one, never both at once. */
+  .tab-strip {
+    display: flex; gap: 0.25rem; align-items: flex-end;
+    border-bottom: 1px solid rgba(128,128,128,0.35); margin-bottom: 1.1rem;
+  }
+  .tab {
+    padding: 0.4rem 1.2rem; font-size: 0.8rem; cursor: pointer; color: inherit;
+    border: 1px solid rgba(128,128,128,0.35); border-bottom: none;
+    border-radius: 8px 8px 0 0; background: rgba(127,127,127,0.07);
+    opacity: 0.6; margin-bottom: -1px;
+  }
+  .tab:hover { opacity: 0.9; }
+  /* Sitting a pixel low with a background-coloured bottom edge is what makes the
+     lit tab read as part of the pane rather than a button above it. */
+  .tab.is-on {
+    opacity: 1; font-weight: 600;
+    background: Canvas; border-bottom: 1px solid Canvas;
+  }
+
+  .compose-fields {
+    display: grid; gap: 0.6rem;
+    grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr));
+  }
+  .compose-fields label {
+    display: flex; flex-direction: column; gap: 0.2rem;
+    font-size: 0.68rem; opacity: 0.55;
+  }
+  .compose-fields input {
+    width: 100%; padding: 0.4rem 0.5rem; font: inherit; font-size: 0.85rem;
+    color: inherit; opacity: 1;
+    border: 1px solid rgba(128,128,128,0.5); border-radius: 6px;
+    background: rgba(127,127,127,0.04);
+  }
+
   /* One practice button for the table, acting on whichever row is lit. */
   .practice-launch-control { margin-top: 0.85rem; }
   .practice-launch-control input[type=number] { width: 3.75rem; padding: 0.4rem; }
   .practice-launch-control .practice { font-weight: 600; }
 
-  /* Tags: what class a type belongs to -- a course number, a textbook, an exam.
-     The same chip reads the row and, as a button, filters the table. */
-  .study-context-tag-cell { cursor: text; min-width: 7rem; }
+  /* The same chip reads a row and, as a button, filters the table. */
+  .study-context-tag-cell { cursor: text; min-width: 5rem; }
   .study-context-tag-chip {
     display: inline-block; padding: 0.05rem 0.45rem; margin: 0.1rem 0.2rem 0.1rem 0;
     border: 1px solid rgba(128,128,128,0.4); border-radius: 999px;
-    font-size: 0.7rem; opacity: 0.85; white-space: nowrap;
+    font-size: 0.7rem; white-space: nowrap;
   }
   .study-context-tag-empty { opacity: 0.25; }
   .generator-row:hover .study-context-tag-empty { opacity: 0.6; }
+
+  /* Palette, emitted from the table the worker keeps so the two cannot drift. */
+${chipColorPaletteCss}
   .study-context-tag-input {
     width: 100%; padding: 0.2rem 0.35rem; font: inherit; font-size: 0.75rem;
     color: inherit; border: 1px solid rgba(128,128,128,0.5); border-radius: 6px;
     background: rgba(127,127,127,0.04);
   }
   .study-context-tag-filter {
-    display: flex; flex-wrap: wrap; gap: 0.3rem; margin-top: 1.25rem;
+    display: flex; flex-wrap: wrap; gap: 0.3rem; align-items: center;
+    margin-top: 0.25rem;
   }
+  .study-context-tag-filter .field-label {
+    font-size: 0.65rem; opacity: 0.4; margin-left: 0.6rem;
+  }
+  .study-context-tag-filter .field-label:first-child { margin-left: 0; }
   button.study-context-tag-chip {
     cursor: pointer; background: none; color: inherit; padding: 0.12rem 0.6rem;
   }
@@ -874,7 +962,9 @@ export default {
       named_problem_generator_id?: number;
       name?: string;
       prompt_text?: string;
+      field?: unknown;
       study_context_tag_names?: unknown;
+      study_context_tags_by_field?: Record<string, unknown>;
       archived?: boolean;
       run_id?: number;
       problem_id?: number;
@@ -919,10 +1009,8 @@ export default {
 
           // The whole tag catalogue rides along with the list. It is a handful
           // of short strings, and the dashboard needs all of them anyway to
-          // draw the filter and to autocomplete the editor.
-          const { results: tags } = await db
-            .prepare(`SELECT id, name FROM study_context_tag ORDER BY name`)
-            .all<{ id: number; name: string }>();
+          // draw the filter and to autocomplete the editors.
+          const tags = await tagCatalogue(db);
 
           const { results: links } = await db
             .prepare(
@@ -951,70 +1039,17 @@ export default {
         case "retag_named_problem_generator": {
           const generatorId = Number(body.id);
           if (!generatorId) return json({ error: "no such generator" }, 404);
-
-          // The whole set arrives at once and replaces what was there. One verb
-          // covers adding, removing and renaming, and the client never has to
-          // work out which of the three it is doing.
-          const names = normalizeTagNames(body.study_context_tag_names ?? []);
-
-          if (names.length) {
-            await db.batch(
-              names.map((name) =>
-                db
-                  .prepare(`INSERT OR IGNORE INTO study_context_tag (name) VALUES (?)`)
-                  .bind(name),
-              ),
-            );
+          if (!isStudyContextTagField(body.field)) {
+            return json({ error: `bad field: ${String(body.field)}` }, 400);
           }
 
-          await db
-            .prepare(
-              `DELETE FROM study_context_tag_membership
-                WHERE named_problem_generator_id = ?`,
-            )
-            .bind(generatorId)
-            .run();
-
-          if (names.length) {
-            // Bound placeholders, never interpolated names -- the strings are
-            // typed by hand and go nowhere near the SQL text.
-            const placeholders = names.map(() => "?").join(", ");
-            await db
-              .prepare(
-                `INSERT INTO study_context_tag_membership
-                   (named_problem_generator_id, study_context_tag_id)
-                 SELECT ?, id FROM study_context_tag WHERE name IN (${placeholders})`,
-              )
-              .bind(generatorId, ...names)
-              .run();
-          }
-
-          // A tag exists only as long as something wears it. Clearing the last
-          // generator off "Exam 1" retires it rather than leaving it in the
-          // filter row with nothing behind it.
-          await db
-            .prepare(
-              `DELETE FROM study_context_tag
-                WHERE id NOT IN (SELECT study_context_tag_id FROM study_context_tag_membership)`,
-            )
-            .run();
-
-          const { results: tags } = await db
-            .prepare(`SELECT id, name FROM study_context_tag ORDER BY name`)
-            .all<{ id: number; name: string }>();
-
-          const { results: mine } = await db
-            .prepare(
-              `SELECT study_context_tag_id FROM study_context_tag_membership
-                WHERE named_problem_generator_id = ?`,
-            )
-            .bind(generatorId)
-            .all<{ study_context_tag_id: number }>();
-
-          return json({
-            study_context_tags: tags,
-            study_context_tag_ids: mine.map((row) => row.study_context_tag_id),
-          });
+          await setTagsForField(
+            db,
+            generatorId,
+            body.field,
+            normalizeTagNames(body.study_context_tag_names ?? []),
+          );
+          return json(await tagStateFor(db, generatorId));
         }
 
         case "rename_named_problem_generator": {
@@ -1100,14 +1135,17 @@ export default {
 
           const shots = body.unsaved_image_attachments ?? [];
           const promptText = body.prompt ?? "";
+          const typedName = (body.name ?? "").replace(/\s+/g, " ").trim().slice(0, 64);
 
-          // Named alongside the problems rather than before them: naming is a
-          // cheap call against a small model and generation is neither, so
-          // running them together costs nothing on the clock.
-          const [generated, name] = await Promise.all([
+          // A name typed on the way in is the name. The model is asked only when
+          // the box was left empty, and then alongside the problems rather than
+          // before them -- naming is a cheap call against a small model and
+          // generation is neither, so running them together costs no clock.
+          const [generated, suggested] = await Promise.all([
             generateProblemsFromPrompt(env, promptText, shots, requested),
-            suggestGeneratorName(env, promptText),
+            typedName ? Promise.resolve(typedName) : suggestGeneratorName(env, promptText),
           ]);
+          const name = typedName || suggested;
           if (!generated.length) return json({ error: "model returned no problems" }, 502);
 
           const generatorId = await insertNamedProblemGenerator(
@@ -1117,6 +1155,7 @@ export default {
             requested,
             shots,
           );
+          await setAllTagFields(db, generatorId, body.study_context_tags_by_field);
           return json(
             await openSetAndRun(db, generatorId, requested, generated, promptText),
           );
@@ -1287,6 +1326,120 @@ export default {
     }
   },
 };
+
+interface StudyContextTagRow {
+  id: number;
+  field: StudyContextTagField;
+  name: string;
+  chip_color_ordinal: number;
+}
+
+/** Every tag there is, already grouped by field so the dashboard need not sort. */
+async function tagCatalogue(db: D1Database): Promise<StudyContextTagRow[]> {
+  const { results } = await db
+    .prepare(
+      `SELECT id, field, name, chip_color_ordinal
+         FROM study_context_tag ORDER BY field, name`,
+    )
+    .all<StudyContextTagRow>();
+  return results;
+}
+
+/**
+ * Replace one field's tags on one generator, leaving the other fields alone --
+ * editing the source must not silently clear the class.
+ *
+ * A name this field has not seen before is created here and takes the next
+ * colour round; a tag left wearing nothing afterwards is retired.
+ */
+async function setTagsForField(
+  db: D1Database,
+  generatorId: number,
+  field: StudyContextTagField,
+  names: string[],
+): Promise<void> {
+  // Each field starts at a different point in the palette, so tags differ from
+  // their neighbours down a column and a row of four chips is not four of the
+  // same colour.
+  const fieldOffset = STUDY_CONTEXT_TAG_FIELDS.indexOf(field) * 3;
+
+  for (const name of names) {
+    // The colour is chosen inside the insert rather than read out first, so two
+    // tags created together cannot both claim the same count.
+    await db
+      .prepare(
+        `INSERT OR IGNORE INTO study_context_tag (field, name, chip_color_ordinal)
+         VALUES (?1, ?2,
+                 (?4 + (SELECT COUNT(*) FROM study_context_tag WHERE field = ?1))
+                 % ?3)`,
+      )
+      .bind(field, name, CHIP_COLOR_PALETTE.length, fieldOffset)
+      .run();
+  }
+
+  await db
+    .prepare(
+      `DELETE FROM study_context_tag_membership
+        WHERE named_problem_generator_id = ?1
+          AND study_context_tag_id IN
+              (SELECT id FROM study_context_tag WHERE field = ?2)`,
+    )
+    .bind(generatorId, field)
+    .run();
+
+  if (names.length) {
+    // Bound placeholders, never interpolated names -- the strings are typed by
+    // hand and go nowhere near the SQL text.
+    const placeholders = names.map(() => "?").join(", ");
+    await db
+      .prepare(
+        `INSERT INTO study_context_tag_membership
+           (named_problem_generator_id, study_context_tag_id)
+         SELECT ?, id FROM study_context_tag
+          WHERE field = ? AND name IN (${placeholders})`,
+      )
+      .bind(generatorId, field, ...names)
+      .run();
+  }
+
+  // A tag exists only as long as something wears it.
+  await db
+    .prepare(
+      `DELETE FROM study_context_tag
+        WHERE id NOT IN
+              (SELECT study_context_tag_id FROM study_context_tag_membership)`,
+    )
+    .run();
+}
+
+/** The catalogue plus one generator's tag ids -- what an edit hands back. */
+async function tagStateFor(db: D1Database, generatorId: number) {
+  const tags = await tagCatalogue(db);
+  const { results } = await db
+    .prepare(
+      `SELECT study_context_tag_id FROM study_context_tag_membership
+        WHERE named_problem_generator_id = ?`,
+    )
+    .bind(generatorId)
+    .all<{ study_context_tag_id: number }>();
+  return {
+    study_context_tags: tags,
+    study_context_tag_ids: results.map((row) => row.study_context_tag_id),
+  };
+}
+
+/** Apply every field's tags at once, the way a fresh generate supplies them. */
+async function setAllTagFields(
+  db: D1Database,
+  generatorId: number,
+  byField: Record<string, unknown> | undefined,
+): Promise<void> {
+  if (!byField) return;
+  for (const field of STUDY_CONTEXT_TAG_FIELDS) {
+    const names = normalizeTagNames(byField[field] ?? []);
+    if (names.length) await setTagsForField(db, generatorId, field, names);
+  }
+}
 
 /** A generator's screenshots, in the shape the model call wants them. */
 async function attachmentsForGenerator(

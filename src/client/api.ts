@@ -4,6 +4,7 @@ import type {
   NamedProblemGenerator,
   SelfGrade,
   StudyContextTag,
+  StudyContextTagField,
   Trophy,
   UnsavedImageAttachment,
 } from "./types";
@@ -35,11 +36,16 @@ export const generateProblems = (
   prompt: string,
   attachments: UnsavedImageAttachment[],
   requestedCount: number,
+  name: string,
+  tagsByField: Partial<Record<StudyContextTagField, string[]>>,
 ) =>
   post<GeneratedProblemSet>({
     action: "generate_problems",
     prompt,
     requested_count: requestedCount,
+    // Empty means "ask the model for one" on the worker side.
+    name,
+    study_context_tags_by_field: tagsByField,
     unsaved_image_attachments: attachments.map((a) => ({
       base64: a.base64,
       mimeType: a.mimeType,
@@ -66,14 +72,19 @@ export const listNamedProblemGenerators = () =>
   });
 
 /**
- * Replace a generator's tags with the set given. Names, not ids: one that has
- * never been used before is created on the way through, and one left wearing
- * nothing is retired. Returns the catalogue as it stands afterwards.
+ * Replace one field's tags on a generator, leaving the other fields alone.
+ * Names, not ids: one the field has not seen is created on the way through and
+ * one left wearing nothing is retired. Returns the catalogue as it then stands.
  */
-export const retagNamedProblemGenerator = (id: number, names: string[]) =>
+export const retagNamedProblemGenerator = (
+  id: number,
+  field: StudyContextTagField,
+  names: string[],
+) =>
   post<{ study_context_tags: StudyContextTag[]; study_context_tag_ids: number[] }>({
     action: "retag_named_problem_generator",
     id,
+    field,
     study_context_tag_names: names,
   });
 

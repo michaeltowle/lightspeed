@@ -44,10 +44,22 @@ export interface NamedProblemGenerator {
   study_context_tag_ids: number[];
 }
 
-/** What class a practice type belongs to: a course number, a textbook, an exam. */
+export const STUDY_CONTEXT_TAG_FIELDS = [
+  "class",
+  "source",
+  "target",
+  "status",
+] as const;
+
+export type StudyContextTagField = (typeof STUDY_CONTEXT_TAG_FIELDS)[number];
+
+/** Where a practice type sits in the study. Unique by name within its field. */
 export interface StudyContextTag {
   id: number;
+  field: StudyContextTagField;
   name: string;
+  // Index into the worker's palette, fixed when the tag is created.
+  chip_color_ordinal: number;
 }
 
 export interface UnsavedImageAttachment {

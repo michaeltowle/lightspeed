@@ -3,18 +3,25 @@ import {
   listNamedProblemGenerators,
   practiceNamedProblemGenerator,
   renameNamedProblemGenerator,
+  retagNamedProblemGenerator,
   reviseNamedProblemGeneratorPrompt,
   suggestNamedProblemGeneratorName,
-  retagNamedProblemGenerator,
   trophyWall,
 } from "../api";
-import { formatAgo, h } from "../lib/dom";
-import { renderNewGeneratorForm } from "./compose";
+import { h } from "../lib/dom";
+import { parseTagNames, renderNewGeneratorForm } from "./compose";
 import { square } from "./trophy-wall";
-import type { NamedProblemGenerator, StudyContextTag, Trophy, View } from "../types";
+import { STUDY_CONTEXT_TAG_FIELDS } from "../types";
+import type {
+  NamedProblemGenerator,
+  StudyContextTag,
+  StudyContextTagField,
+  Trophy,
+  View,
+} from "../types";
 
-// Enough squares to read a streak off, few enough to sit in one cell beside six
-// other columns.
+// Enough squares to read a streak off, few enough to sit in one cell beside the
+// four field columns.
 const STRIP_LENGTH = 12;
 
 // Prompts are not edited on the phone. A prompt is tuned against the
@@ -24,11 +31,9 @@ const STRIP_LENGTH = 12;
 const WIDE_ENOUGH_TO_EDIT = "(min-width: 46rem)";
 
 const ROLLING_WEEK_DAYS = 7;
-const MAX_TAGS_PER_GENERATOR = 8;
-const MAX_TAG_NAME_LENGTH = 32;
-const TAG_CATALOGUE_LIST_ID = "study-context-tag-catalogue";
+const GONE_COLD_AFTER_MS = 7 * 24 * 60 * 60 * 1000;
 
-// Every row spans this when the prompt editor opens beneath it.
+// Select, name, four fields, strip, menu.
 const TABLE_COLUMN_COUNT = 8;
 
 const WEEKDAY_NAMES = [
@@ -41,24 +46,21 @@ const WEEKDAY_NAMES = [
   "saturday",
 ];
 
+const catalogueListId = (field: StudyContextTagField) => `tag-catalogue-${field}`;
+
 // One menu open at a time, closed by the next click anywhere. Bound once at
 // module scope -- the table repaints on every archive, and a listener attached
 // per render would stack a copy each time.
 let closeOpenMenu: (() => void) | null = null;
 document.addEventListener("click", () => closeOpenMenu?.());
 
-interface GeneratorStanding {
-  worked: number;
-  right: number;
+/** The most recent graded attempt against a type, and the squares to show for it. */
+function standingOf(trophies: Trophy[] | undefined): {
   lastWorkedAt: string | null;
   strip: Trophy[];
-}
-
-function standingOf(trophies: Trophy[] | undefined): GeneratorStanding {
+} {
   const list = trophies ?? [];
   return {
-    worked: list.length,
-    right: list.filter((t) => t.self_grade === "right").length,
     // The worker sends them oldest first, so the last one is the most recent.
     lastWorkedAt: list.length ? list[list.length - 1].created_at : null,
     strip: list.slice(-STRIP_LENGTH),
@@ -105,9 +107,7 @@ function renderRollingWeekPracticeLedger(trophies: Trophy[]): HTMLElement {
   return h("aside", { class: "rolling-week-practice-ledger" }, [
     h("div", { class: "ledger-title" }, ["last 7 days"]),
     ...days.map((day) =>
-      h("div", {
-        class: day.isToday ? "ledger-day is-today" : "ledger-day",
-      }, [
+      h("div", { class: day.isToday ? "ledger-day is-today" : "ledger-day" }, [
         h("span", { class: "day-name" }, [day.label]),
         h("span", { class: "day-track" }, [
           h("span", {
@@ -127,30 +127,15 @@ function buildGeneratorTable(body: HTMLElement): HTMLElement {
       h("tr", {}, [
         h("th", { class: "col-select" }, []),
         h("th", {}, ["practice type"]),
-        h("th", { class: "col-tags" }, ["tags"]),
+        ...STUDY_CONTEXT_TAG_FIELDS.map((field) =>
+          h("th", { class: `col-field-${field}` }, [field]),
+        ),
         h("th", { class: "col-strip" }, []),
-        h("th", { class: "col-num" }, ["worked"]),
-        h("th", { class: "col-num" }, ["right"]),
-        h("th", { class: "col-num" }, ["last"]),
         h("th", { class: "col-menu" }, []),
       ]),
     ]),
     body,
   ]);
-}
-
-/** A typed "6801, Casella, Exam 1" into the names the worker expects. */
-function parseTagNames(raw: string): string[] {
-  const seen = new Set<string>();
-  const names: string[] = [];
-  for (const part of raw.split(",")) {
-    const name = part.replace(/\s+/g, " ").trim().slice(0, MAX_TAG_NAME_LENGTH);
-    if (!name || seen.has(name.toLowerCase())) continue;
-    seen.add(name.toLowerCase());
-    names.push(name);
-    if (names.length === MAX_TAGS_PER_GENERATOR) break;
-  }
-  return names;
 }
 
 export async function renderGenerators(
@@ -164,7 +149,7 @@ export async function renderGenerators(
   let trophies: Trophy[];
   try {
     // Both in flight together: neither depends on the other, and the trophy
-    // payload is what the strips and the day ledger are built from.
+    // payload is what the strips and the ledger are built from.
     const [listed, walled] = await Promise.all([
       listNamedProblemGenerators(),
       trophyWall(),
@@ -197,9 +182,17 @@ export async function renderGenerators(
   const bodyEl = h("tbody");
   const drawerBodyEl = h("tbody");
   const tableEl = buildGeneratorTable(bodyEl);
-  const emptyEl = h("div", { class: "generator-stats" }, ["nothing tagged that"]);
+  const emptyEl = h("div", { class: "generator-stats" }, ["nothing filed under that"]);
   const filterEl = h("div", { class: "study-context-tag-filter" });
-  const catalogueEl = h("datalist", { id: TAG_CATALOGUE_LIST_ID });
+
+  // One list per field: completing a source against the catalogue of classes
+  // would offer names that cannot belong there.
+  const catalogueEls = new Map<StudyContextTagField, HTMLElement>(
+    STUDY_CONTEXT_TAG_FIELDS.map((field) => [
+      field,
+      h("datalist", { id: catalogueListId(field) }),
+    ]),
+  );
 
   const drawerSummaryEl = h("summary", {}, ["unsorted"]);
   const drawerEl = h("details", { class: "archived-drawer" }, [
@@ -267,41 +260,66 @@ export async function renderGenerators(
   }
 
   // ---- tags ----------------------------------------------------------------
-  function tagNamesOf(generator: NamedProblemGenerator): string[] {
-    const byId = new Map(tagCatalogue.map((tag) => [tag.id, tag.name]));
+  const tagById = () => new Map(tagCatalogue.map((tag) => [tag.id, tag]));
+
+  function tagsOf(
+    generator: NamedProblemGenerator,
+    field: StudyContextTagField,
+  ): StudyContextTag[] {
+    const byId = tagById();
     return generator.study_context_tag_ids
       .map((id) => byId.get(id))
-      .filter((name): name is string => Boolean(name))
-      .sort((a, b) => a.localeCompare(b));
+      .filter((tag): tag is StudyContextTag => Boolean(tag) && tag!.field === field)
+      .sort((a, b) => a.name.localeCompare(b.name));
   }
 
+  const chipOf = (tag: StudyContextTag, extra = "") =>
+    h("span", { class: `study-context-tag-chip chip-color-${tag.chip_color_ordinal}${extra}` }, [
+      tag.name,
+    ]);
+
   function paintTagCatalogue(): void {
-    catalogueEl.replaceChildren(
-      ...tagCatalogue.map((tag) => h("option", { value: tag.name })),
-    );
-    filterEl.replaceChildren(
-      ...tagCatalogue.map((tag) =>
-        h(
-          "button",
-          {
-            type: "button",
-            class:
-              tag.id === filterTagId
-                ? "study-context-tag-chip is-on"
-                : "study-context-tag-chip",
-            onclick: () => {
-              // A second click on the lit chip is how the filter is cleared --
-              // there is no "all" chip to hunt for.
-              filterTagId = filterTagId === tag.id ? null : tag.id;
-              paintTagCatalogue();
-              paintAll();
+    for (const field of STUDY_CONTEXT_TAG_FIELDS) {
+      catalogueEls
+        .get(field)!
+        .replaceChildren(
+          ...tagCatalogue
+            .filter((tag) => tag.field === field)
+            .map((tag) => h("option", { value: tag.name })),
+        );
+    }
+
+    // Grouped by field, so a filter row of two dozen chips still says what each
+    // of them is filtering on.
+    const groups: (Node | string)[] = [];
+    for (const field of STUDY_CONTEXT_TAG_FIELDS) {
+      const inField = tagCatalogue.filter((tag) => tag.field === field);
+      if (!inField.length) continue;
+      groups.push(h("span", { class: "field-label" }, [field]));
+      for (const tag of inField) {
+        groups.push(
+          h(
+            "button",
+            {
+              type: "button",
+              class: `study-context-tag-chip chip-color-${tag.chip_color_ordinal}${
+                tag.id === filterTagId ? " is-on" : ""
+              }`,
+              onclick: () => {
+                // A second click on the lit chip clears the filter -- there is
+                // no "all" chip to hunt for.
+                filterTagId = filterTagId === tag.id ? null : tag.id;
+                paintTagCatalogue();
+                paintAll();
+              },
             },
-          },
-          [tag.name],
-        ),
-      ),
-    );
-    filterEl.hidden = !tagCatalogue.length;
+            [tag.name],
+          ),
+        );
+      }
+    }
+    filterEl.replaceChildren(...groups);
+    filterEl.hidden = !groups.length;
   }
 
   function shownIn(list: NamedProblemGenerator[]): NamedProblemGenerator[] {
@@ -344,6 +362,13 @@ export async function renderGenerators(
     const row = h("tr", { class: "generator-row" });
     const standing = standingOf(byGenerator.get(generator.id));
 
+    // Never practised counts as gone cold: it is at least as far from being
+    // worked as something last touched a fortnight ago.
+    const goneCold =
+      !standing.lastWorkedAt ||
+      Date.now() - new Date(standing.lastWorkedAt).getTime() > GONE_COLD_AFTER_MS;
+    if (goneCold) row.classList.add("is-gone-cold");
+
     const radioEl = h("input", {
       type: "radio",
       name: "selected-practice-type",
@@ -353,7 +378,6 @@ export async function renderGenerators(
     const nameCell = h("td", { class: "generator-name", title: generator.prompt_text }, [
       generator.name,
     ]);
-    const tagsCell = h("td", { class: "study-context-tag-cell col-tags" });
     const menuCell = h("td", { class: "col-menu" });
 
     rowsById.set(generator.id, { row, radio: radioEl });
@@ -428,73 +452,76 @@ export async function renderGenerators(
       });
     }
 
-    // ---- tags --------------------------------------------------------------
-    function paintTags(): void {
-      const names = tagNamesOf(generator);
-      tagsCell.replaceChildren(
-        ...(names.length
-          ? names.map((name) => h("span", { class: "study-context-tag-chip" }, [name]))
-          : [h("span", { class: "study-context-tag-empty" }, ["+"])]),
-      );
-    }
+    // ---- one cell per field ------------------------------------------------
+    function fieldCell(field: StudyContextTagField): HTMLElement {
+      const cell = h("td", { class: `study-context-tag-cell col-field-${field}` });
 
-    function beginTagEdit(): void {
-      const before = tagNamesOf(generator);
-      const input = h("input", {
-        class: "study-context-tag-input",
-        list: TAG_CATALOGUE_LIST_ID,
-        value: before.join(", "),
-        placeholder: "6801, Casella, Exam 1",
-      });
-      tagsCell.replaceChildren(input);
-      input.focus();
-      input.select();
+      function paint(): void {
+        const tags = tagsOf(generator, field);
+        cell.replaceChildren(
+          ...(tags.length
+            ? tags.map((tag) => chipOf(tag))
+            : [h("span", { class: "study-context-tag-empty" }, ["+"])]),
+        );
+      }
 
-      let settled = false;
-      const finish = async (save: boolean): Promise<void> => {
-        if (settled) return;
-        settled = true;
-        const next = parseTagNames(input.value);
-        paintTags();
-        const unchanged =
-          next.length === before.length && next.every((n, i) => n === before[i]);
-        if (!save || unchanged) return;
+      function beginEdit(): void {
+        const before = tagsOf(generator, field).map((tag) => tag.name);
+        const input = h("input", {
+          class: "study-context-tag-input",
+          list: catalogueListId(field),
+          value: before.join(", "),
+        });
+        cell.replaceChildren(input);
+        input.focus();
+        input.select();
 
-        try {
-          const result = await retagNamedProblemGenerator(generator.id, next);
-          tagCatalogue = result.study_context_tags;
-          generator.study_context_tag_ids = result.study_context_tag_ids;
-          paintTagCatalogue();
-          // A tag that has just been retired cannot go on being the filter.
-          if (filterTagId !== null && !tagCatalogue.some((t) => t.id === filterTagId)) {
-            filterTagId = null;
+        let settled = false;
+        const finish = async (save: boolean): Promise<void> => {
+          if (settled) return;
+          settled = true;
+          const next = parseTagNames(input.value);
+          paint();
+          const unchanged =
+            next.length === before.length && next.every((n, i) => n === before[i]);
+          if (!save || unchanged) return;
+
+          try {
+            const result = await retagNamedProblemGenerator(generator.id, field, next);
+            tagCatalogue = result.study_context_tags;
+            generator.study_context_tag_ids = result.study_context_tag_ids;
+            // A tag just retired cannot go on being the filter.
+            if (filterTagId !== null && !tagCatalogue.some((t) => t.id === filterTagId)) {
+              filterTagId = null;
+            }
             paintTagCatalogue();
+            paintAll();
+          } catch (err) {
+            setPracticeStatus(err instanceof Error ? err.message : String(err), true);
+            paint();
           }
-          paintAll();
-        } catch (err) {
-          setPracticeStatus(err instanceof Error ? err.message : String(err), true);
-          paintTags();
-        }
-      };
+        };
 
-      input.addEventListener("click", (event) => event.stopPropagation());
-      input.addEventListener("keydown", (event) => {
-        const key = (event as KeyboardEvent).key;
-        if (key === "Enter") {
-          event.preventDefault();
-          void finish(true);
-        } else if (key === "Escape") {
-          void finish(false);
-        }
+        input.addEventListener("click", (event) => event.stopPropagation());
+        input.addEventListener("keydown", (event) => {
+          const key = (event as KeyboardEvent).key;
+          if (key === "Enter") {
+            event.preventDefault();
+            void finish(true);
+          } else if (key === "Escape") {
+            void finish(false);
+          }
+        });
+        input.addEventListener("blur", () => void finish(true));
+      }
+
+      paint();
+      cell.addEventListener("click", (event) => {
+        event.stopPropagation();
+        if (!cell.querySelector("input")) beginEdit();
       });
-      input.addEventListener("blur", () => void finish(true));
+      return cell;
     }
-
-    paintTags();
-    tagsCell.addEventListener("click", (event) => {
-      event.stopPropagation();
-      if (!tagsCell.querySelector("input")) beginTagEdit();
-    });
 
     // ---- edit prompt -------------------------------------------------------
     function beginPromptEdit(): void {
@@ -531,7 +558,7 @@ export async function renderGenerators(
           ? [
               h("div", { class: "shots-panel" }, [
                 h("div", { class: "generator-stats" }, [
-                  `${count} screenshot${count === 1 ? "" : "s"} the model sees  ·  click to open full size`,
+                  `${count} screenshot${count === 1 ? "" : "s"} the model sees`,
                 ]),
                 shotsEl,
               ]),
@@ -540,8 +567,6 @@ export async function renderGenerators(
         h("div", { class: "acts" }, [saveEl, cancelEl, statusEl]),
       ]);
 
-      // A 15rem column is no place to read a screenshot of a maths problem, so
-      // the editor takes a row of its own under the one being edited.
       const editorRow = h("tr", { class: "prompt-editor-row" }, [
         h("td", { colspan: TABLE_COLUMN_COUNT }, [panel]),
       ]);
@@ -601,7 +626,6 @@ export async function renderGenerators(
 
       const menu = h("div", { class: "generator-menu" }, [
         item("rename", beginRename),
-        item("tags", beginTagEdit),
         editEl,
         generator.archived_at
           ? item("restore", () => void setArchived(false))
@@ -639,40 +663,55 @@ export async function renderGenerators(
       openMenu();
     });
 
-    const accuracy = standing.worked
-      ? `${Math.round((standing.right / standing.worked) * 100)}%`
-      : "--";
-
     row.append(
       h("td", { class: "col-select" }, [radioEl]),
       nameCell,
-      tagsCell,
+      ...STUDY_CONTEXT_TAG_FIELDS.map(fieldCell),
       h("td", { class: "col-strip" }, [
         h("span", { class: "generator-strip" }, standing.strip.map(square)),
-      ]),
-      h("td", { class: "col-num" }, [standing.worked ? String(standing.worked) : "--"]),
-      h("td", { class: "col-num" }, [accuracy]),
-      h("td", { class: "col-num" }, [
-        standing.lastWorkedAt ? formatAgo(standing.lastWorkedAt) : "never",
       ]),
       menuCell,
     );
     return row;
   }
 
-  paintTagCatalogue();
-  paintAll();
-
-  root.replaceChildren(
-    renderRollingWeekPracticeLedger(trophies),
-    renderNewGeneratorForm(go),
+  // ---- tabs ----------------------------------------------------------------
+  const generatePane = h("div", {}, [renderNewGeneratorForm(go)]);
+  const tablePane = h("div", {}, [
     filterEl,
     tableEl,
     emptyEl,
     h("div", { class: "row practice-launch-control" }, [practiceCountEl, practiceEl]),
     practiceStatusEl,
     drawerEl,
-    catalogueEl,
+  ]);
+
+  const tabs = [
+    { label: "generate", pane: generatePane },
+    { label: "table", pane: tablePane },
+  ];
+  const tabEls = tabs.map(({ label }) => h("button", { type: "button", class: "tab" }, [label]));
+
+  function showTab(index: number): void {
+    tabs.forEach(({ pane }, i) => {
+      pane.hidden = i !== index;
+      tabEls[i].classList.toggle("is-on", i === index);
+    });
+  }
+  tabEls.forEach((el, i) => el.addEventListener("click", () => showTab(i)));
+
+  paintTagCatalogue();
+  paintAll();
+  // The table opens: most visits are to pick something to practise, not to make
+  // a new type.
+  showTab(1);
+
+  root.replaceChildren(
+    renderRollingWeekPracticeLedger(trophies),
+    h("div", { class: "tab-strip" }, tabEls),
+    generatePane,
+    tablePane,
+    ...catalogueEls.values(),
     h("div", { class: "lightspeed-motto-line" }, ["limitations are in the mind"]),
   );
 }
