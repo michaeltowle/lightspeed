@@ -77,10 +77,7 @@ document.addEventListener("paste", (event) => {
 export function renderNewGeneratorForm(go: (view: View) => void): HTMLElement {
   const attachments: UnsavedImageAttachment[] = [];
 
-  const promptEl = h("textarea", {
-    id: "prompt",
-    placeholder: "describe a kind of problem to practise...",
-  });
+  const promptEl = h("textarea", { id: "prompt" });
   const countEl = h("input", {
     id: "count",
     type: "number",

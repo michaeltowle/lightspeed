@@ -117,6 +117,30 @@ const GENERATOR_NAMING_DIRECTIVE = [
 
 const MAX_GENERATOR_NAME_LENGTH = 64;
 
+const MAX_TAG_NAME_LENGTH = 32;
+const MAX_TAGS_PER_GENERATOR = 8;
+
+/**
+ * Trim, squash and de-duplicate a typed tag list.
+ *
+ * De-duplication is case-insensitive to match the column's NOCASE uniqueness:
+ * without it, "6801, 6801" would be two rows to insert and the second would
+ * collide with the first on the way in.
+ */
+function normalizeTagNames(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return [];
+  const seen = new Set<string>();
+  const names: string[] = [];
+  for (const entry of raw) {
+    const name = String(entry).replace(/\s+/g, " ").trim().slice(0, MAX_TAG_NAME_LENGTH);
+    if (!name || seen.has(name.toLowerCase())) continue;
+    seen.add(name.toLowerCase());
+    names.push(name);
+    if (names.length === MAX_TAGS_PER_GENERATOR) break;
+  }
+  return names;
+}
+
 /** First line of a prompt, squashed to one line -- the fallback when naming fails. */
 function firstLineOfPrompt(promptText: string): string {
   const line = promptText.replace(/\s+/g, " ").trim();
@@ -461,42 +485,101 @@ function indexPageDocument(env: Env): string {
   ul.shots .dims { font-variant-numeric: tabular-nums; opacity: 0.75; margin-top: 0.25rem; }
   ul.shots .drop { margin-top: 0.25rem; font-size: 0.75rem; padding: 0.15rem 0.4rem; }
 
-  /* auto-fill + minmax collapses to one column on the phone without a media
-     query, the same way the rest of this sheet stays responsive by shape. */
-  .generator-grid {
-    display: grid; gap: 0.75rem; margin: 1.5rem 0 0; padding: 0; list-style: none;
-    grid-template-columns: repeat(auto-fill, minmax(15rem, 1fr));
+  /* One row per practice type. A table because these are rows of the same few
+     facts -- worked, right, last -- and columns let the eye run down one fact
+     at a time, which a wall of boxes never allowed. */
+  .generator-table {
+    width: 100%; border-collapse: collapse; margin: 1.25rem 0 0;
+    font-size: 0.85rem;
   }
-  .generator-card {
-    position: relative;
-    border: 1px solid rgba(128,128,128,0.35); border-radius: 8px;
-    padding: 0.75rem 0.9rem; background: rgba(127,127,127,0.05);
-    display: flex; flex-direction: column; gap: 0.5rem;
+  .generator-table th {
+    text-align: left; font-weight: 500; font-size: 0.68rem; opacity: 0.5;
+    padding: 0 0.4rem 0.3rem;
+    border-bottom: 1px solid rgba(128,128,128,0.35);
   }
-  .generator-name {
-    font-weight: 600; font-size: 0.95rem; cursor: text;
-    padding-right: 1.75rem; overflow-wrap: anywhere;
+  .generator-table th.col-num { text-align: right; }
+  .generator-table td {
+    padding: 0.3rem 0.4rem; vertical-align: middle;
+    border-bottom: 1px solid rgba(128,128,128,0.18);
+  }
+  /* The whole row is the selection target, so it has to look like one. */
+  .generator-row { cursor: pointer; }
+  .generator-row:hover { background: rgba(127,127,127,0.07); }
+  .generator-row.is-selected { background: rgba(127,127,127,0.15); }
+  .generator-row.is-selected td.generator-name { font-weight: 600; }
+
+  .col-select { width: 1.4rem; }
+  .col-select input { margin: 0; accent-color: #b06a2c; }
+  .col-strip { width: 8.5rem; }
+  .col-menu { width: 1.8rem; position: relative; }
+  .col-num {
+    text-align: right; white-space: nowrap;
+    font-size: 0.75rem; opacity: 0.65; font-variant-numeric: tabular-nums;
+  }
+  td.generator-name { min-width: 9rem; overflow-wrap: anywhere; }
+  /* The phone selects what to practise; it does not tag and it does not read
+     the record. Both columns dropped here are authoring surfaces, and between
+     them they were squeezing the name -- the one column you actually select on
+     -- down to a few characters a line. Filtering survives as the chips above. */
+  @media (max-width: 40rem) {
+    .generator-table { font-size: 0.78rem; }
+    .generator-table th, .generator-table td {
+      padding-left: 0.2rem; padding-right: 0.2rem;
+    }
+    .col-strip, .col-tags { display: none; }
+    td.generator-name { min-width: 0; }
   }
   .generator-name-input {
-    width: 100%; padding: 0.3rem 0.4rem; font: inherit; font-weight: 600;
+    width: 100%; padding: 0.25rem 0.4rem; font: inherit; font-weight: 600;
     color: inherit; border: 1px solid rgba(128,128,128,0.5); border-radius: 6px;
     background: rgba(127,127,127,0.04);
   }
-  .generator-strip { display: flex; flex-wrap: wrap; gap: 3px; }
-  .generator-strip:empty { display: none; }
+  .generator-strip { display: inline-flex; flex-wrap: wrap; gap: 3px; }
   .generator-stats {
     font-size: 0.72rem; opacity: 0.6; font-variant-numeric: tabular-nums;
   }
   .generator-stats.err { color: #c0392b; opacity: 1; }
-  .generator-card .row { margin-top: auto; }
-  .generator-card input[type=number] { width: 3.75rem; padding: 0.35rem; }
-  .generator-card .practice { font-weight: 600; padding: 0.35rem 0.9rem; }
   .generator-prompt {
     width: 100%; min-height: 6rem; font-size: 0.85rem;
   }
-  /* Editing takes the whole row. A 15rem card is no place to read a screenshot
-     of a maths problem, and the screenshots are half of what is being tuned. */
-  .generator-card.editing { grid-column: 1 / -1; }
+
+  /* One practice button for the table, acting on whichever row is lit. */
+  .practice-launch-control { margin-top: 0.85rem; }
+  .practice-launch-control input[type=number] { width: 3.75rem; padding: 0.4rem; }
+  .practice-launch-control .practice { font-weight: 600; }
+
+  /* Tags: what class a type belongs to -- a course number, a textbook, an exam.
+     The same chip reads the row and, as a button, filters the table. */
+  .study-context-tag-cell { cursor: text; min-width: 7rem; }
+  .study-context-tag-chip {
+    display: inline-block; padding: 0.05rem 0.45rem; margin: 0.1rem 0.2rem 0.1rem 0;
+    border: 1px solid rgba(128,128,128,0.4); border-radius: 999px;
+    font-size: 0.7rem; opacity: 0.85; white-space: nowrap;
+  }
+  .study-context-tag-empty { opacity: 0.25; }
+  .generator-row:hover .study-context-tag-empty { opacity: 0.6; }
+  .study-context-tag-input {
+    width: 100%; padding: 0.2rem 0.35rem; font: inherit; font-size: 0.75rem;
+    color: inherit; border: 1px solid rgba(128,128,128,0.5); border-radius: 6px;
+    background: rgba(127,127,127,0.04);
+  }
+  .study-context-tag-filter {
+    display: flex; flex-wrap: wrap; gap: 0.3rem; margin-top: 1.25rem;
+  }
+  button.study-context-tag-chip {
+    cursor: pointer; background: none; color: inherit; padding: 0.12rem 0.6rem;
+  }
+  button.study-context-tag-chip.is-on {
+    opacity: 1; font-weight: 600; border-color: currentColor;
+    background: rgba(127,127,127,0.14);
+  }
+
+  /* The editor takes a row of its own beneath the one being tuned: a table cell
+     is no place to read a screenshot of a maths problem, and the screenshots are
+     half of what is being tuned. */
+  .prompt-editor-row { cursor: default; }
+  .prompt-editor-row:hover { background: none; }
+  .prompt-editor-row > td { padding: 0.7rem 0.4rem 1rem; }
   .prompt-editor { display: grid; gap: 0.6rem; align-items: start; }
   .prompt-editor .acts { grid-column: 1 / -1; }
   .prompt-editor .generator-prompt { min-height: 11rem; }
@@ -521,13 +604,14 @@ function indexPageDocument(env: Env): string {
   /* The menu button is the affordance that works everywhere: right-click is a
      convenience on the Dells, and the iPhone has no such thing. */
   .generator-menu-open {
-    position: absolute; top: 0.4rem; right: 0.4rem;
-    padding: 0 0.4rem; line-height: 1.4; font-size: 0.9rem;
-    border-color: transparent; background: none; opacity: 0.5;
+    padding: 0 0.3rem; line-height: 1.3; font-size: 0.9rem;
+    border-color: transparent; background: none; opacity: 0.45;
   }
   .generator-menu-open:hover { opacity: 1; border-color: rgba(128,128,128,0.5); }
+  /* Anchored to its own cell, which is the only element in a table row that can
+     be relied on to hold an absolutely positioned child. */
   .generator-menu {
-    position: absolute; top: 2rem; right: 0.4rem; z-index: 3;
+    position: absolute; top: 1.8rem; right: 0.2rem; z-index: 3;
     display: flex; flex-direction: column; align-items: stretch;
     border: 1px solid rgba(128,128,128,0.5); border-radius: 6px;
     background: Canvas; overflow: hidden; min-width: 9rem;
@@ -545,8 +629,55 @@ function indexPageDocument(env: Env): string {
     cursor: pointer; font-size: 0.75rem; opacity: 0.6;
     padding: 0.25rem 0; user-select: none;
   }
-  .archived-drawer .generator-card { opacity: 0.72; }
-  .archived-drawer .generator-card:hover { opacity: 1; }
+  .archived-drawer .generator-row { opacity: 0.72; }
+  .archived-drawer .generator-row:hover { opacity: 1; }
+
+  /* What was worked on each of the last seven days. A fixed rail on the Dells,
+     where there is gutter going spare beside a 52rem column; above the table on
+     anything narrower, since there is nowhere else for it to be. */
+  .rolling-week-practice-ledger {
+    position: fixed; left: 1rem; top: 1rem; width: 10rem; z-index: 2;
+    padding: 0.55rem 0.65rem; font-size: 0.7rem;
+    border: 1px solid rgba(128,128,128,0.3); border-radius: 8px;
+    background: rgba(127,127,127,0.06);
+  }
+  /* Scoped to the ledger: these names describe its innards, not anything the
+     rest of the sheet is entitled to. */
+  .rolling-week-practice-ledger .ledger-title { opacity: 0.5; margin-bottom: 0.3rem; }
+  .rolling-week-practice-ledger .ledger-day {
+    display: grid; grid-template-columns: 4.2rem 1fr 1.2rem;
+    align-items: center; gap: 0.3rem; line-height: 1.75;
+  }
+  .rolling-week-practice-ledger .day-name {
+    opacity: 0.7; overflow: hidden; text-overflow: ellipsis;
+  }
+  .rolling-week-practice-ledger .ledger-day.is-today .day-name {
+    opacity: 1; font-weight: 600;
+  }
+  .rolling-week-practice-ledger .day-track {
+    display: block; height: 5px; border-radius: 2px;
+    background: rgba(128,128,128,0.18);
+  }
+  .rolling-week-practice-ledger .day-bar {
+    display: block; height: 100%; border-radius: 2px;
+    background: rgba(120,170,110,0.65);
+  }
+  .rolling-week-practice-ledger .day-count {
+    text-align: right; opacity: 0.8; font-variant-numeric: tabular-nums;
+  }
+  /* 52rem of column plus a 10rem rail and its margins. Below that the gutter is
+     gone and the rail would sit on top of the table. */
+  @media (max-width: 76rem) {
+    .rolling-week-practice-ledger {
+      position: static; width: 100%; max-width: 18rem; margin: 0 0 1.25rem;
+    }
+  }
+
+  .lightspeed-motto-line {
+    position: fixed; left: 0; right: 0; bottom: 0.6rem; z-index: 2;
+    text-align: center; font-size: 0.68rem;
+    color: rgba(128,128,128,0.8); pointer-events: none;
+  }
 
   .problem-meta, .meta {
     font-size: 0.75rem; opacity: 0.6; font-variant-numeric: tabular-nums;
@@ -743,6 +874,7 @@ export default {
       named_problem_generator_id?: number;
       name?: string;
       prompt_text?: string;
+      study_context_tag_names?: unknown;
       archived?: boolean;
       run_id?: number;
       problem_id?: number;
@@ -785,11 +917,103 @@ export default {
             else shotsByGenerator.set(row.named_problem_generator_id, [row.id]);
           }
 
+          // The whole tag catalogue rides along with the list. It is a handful
+          // of short strings, and the dashboard needs all of them anyway to
+          // draw the filter and to autocomplete the editor.
+          const { results: tags } = await db
+            .prepare(`SELECT id, name FROM study_context_tag ORDER BY name`)
+            .all<{ id: number; name: string }>();
+
+          const { results: links } = await db
+            .prepare(
+              `SELECT named_problem_generator_id, study_context_tag_id
+                 FROM study_context_tag_membership`,
+            )
+            .all<{ named_problem_generator_id: number; study_context_tag_id: number }>();
+
+          const tagsByGenerator = new Map<number, number[]>();
+          for (const link of links) {
+            const list = tagsByGenerator.get(link.named_problem_generator_id);
+            if (list) list.push(link.study_context_tag_id);
+            else tagsByGenerator.set(link.named_problem_generator_id, [link.study_context_tag_id]);
+          }
+
           return json({
             generators: results.map((row) => ({
               ...row,
               attachment_ids: shotsByGenerator.get(row.id) ?? [],
+              study_context_tag_ids: tagsByGenerator.get(row.id) ?? [],
             })),
+            study_context_tags: tags,
+          });
+        }
+
+        case "retag_named_problem_generator": {
+          const generatorId = Number(body.id);
+          if (!generatorId) return json({ error: "no such generator" }, 404);
+
+          // The whole set arrives at once and replaces what was there. One verb
+          // covers adding, removing and renaming, and the client never has to
+          // work out which of the three it is doing.
+          const names = normalizeTagNames(body.study_context_tag_names ?? []);
+
+          if (names.length) {
+            await db.batch(
+              names.map((name) =>
+                db
+                  .prepare(`INSERT OR IGNORE INTO study_context_tag (name) VALUES (?)`)
+                  .bind(name),
+              ),
+            );
+          }
+
+          await db
+            .prepare(
+              `DELETE FROM study_context_tag_membership
+                WHERE named_problem_generator_id = ?`,
+            )
+            .bind(generatorId)
+            .run();
+
+          if (names.length) {
+            // Bound placeholders, never interpolated names -- the strings are
+            // typed by hand and go nowhere near the SQL text.
+            const placeholders = names.map(() => "?").join(", ");
+            await db
+              .prepare(
+                `INSERT INTO study_context_tag_membership
+                   (named_problem_generator_id, study_context_tag_id)
+                 SELECT ?, id FROM study_context_tag WHERE name IN (${placeholders})`,
+              )
+              .bind(generatorId, ...names)
+              .run();
+          }
+
+          // A tag exists only as long as something wears it. Clearing the last
+          // generator off "Exam 1" retires it rather than leaving it in the
+          // filter row with nothing behind it.
+          await db
+            .prepare(
+              `DELETE FROM study_context_tag
+                WHERE id NOT IN (SELECT study_context_tag_id FROM study_context_tag_membership)`,
+            )
+            .run();
+
+          const { results: tags } = await db
+            .prepare(`SELECT id, name FROM study_context_tag ORDER BY name`)
+            .all<{ id: number; name: string }>();
+
+          const { results: mine } = await db
+            .prepare(
+              `SELECT study_context_tag_id FROM study_context_tag_membership
+                WHERE named_problem_generator_id = ?`,
+            )
+            .bind(generatorId)
+            .all<{ study_context_tag_id: number }>();
+
+          return json({
+            study_context_tags: tags,
+            study_context_tag_ids: mine.map((row) => row.study_context_tag_id),
           });
         }
 

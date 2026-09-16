@@ -40,6 +40,14 @@ export interface NamedProblemGenerator {
   // Ids only, in ordinal order. The bytes come from "/?shot=<id>" when a panel
   // actually shows them.
   attachment_ids: number[];
+  // Ids into the catalogue that arrives with the same payload, unordered.
+  study_context_tag_ids: number[];
+}
+
+/** What class a practice type belongs to: a course number, a textbook, an exam. */
+export interface StudyContextTag {
+  id: number;
+  name: string;
 }
 
 export interface UnsavedImageAttachment {
