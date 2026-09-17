@@ -781,8 +781,17 @@ ${chipColorPaletteCss}
     background: rgba(128,128,128,0.18);
   }
   .rolling-week-practice-ledger .day-bar {
-    display: block; height: 100%; border-radius: 2px;
-    background: rgba(120,170,110,0.65);
+    display: flex; gap: 1px; height: 100%; border-radius: 2px; overflow: hidden;
+  }
+  /* One segment per class. Classless work is grey; a class takes its chip's
+     class and uses the lettering colour as the fill -- the saturated half of
+     the pair, since the pale ground would vanish against the track -- which
+     follows the chip into dark mode as well. */
+  .rolling-week-practice-ledger .day-bar > span {
+    flex: 1 1 0; background: rgba(128,128,128,0.55);
+  }
+  .rolling-week-practice-ledger .day-bar > [class*="chip-color-"] {
+    background: currentColor;
   }
   .rolling-week-practice-ledger .day-count {
     text-align: right; opacity: 0.8; font-variant-numeric: tabular-nums;

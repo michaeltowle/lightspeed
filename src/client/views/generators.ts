@@ -96,15 +96,46 @@ function daysBetween(from: Date, to: Date): number {
  * the page has already fetched -- so this costs no round trip of its own. It
  * measures problems *answered*: back out of a set before the answer page and
  * nothing here moves, which is the same bargain the wall makes.
+ *
+ * Each bar is split by class, in the ink that class's chip is lettered in.
  */
-function renderRollingWeekPracticeLedger(trophies: Trophy[]): HTMLElement {
-  const perDay = new Map<string, number>();
+function renderRollingWeekPracticeLedger(
+  trophies: Trophy[],
+  generators: NamedProblemGenerator[],
+  tagCatalogue: StudyContextTag[],
+): HTMLElement {
+  const classTags = tagCatalogue
+    .filter((tag) => tag.field === "class")
+    .sort((a, b) => a.name.localeCompare(b.name));
+  const classesOf = new Map(
+    generators.map((g) => [
+      g.id,
+      classTags.filter((tag) => g.study_context_tag_ids.includes(tag.id)),
+    ]),
+  );
+
+  // Keyed by class id, null for work on a type filed under no class. That work
+  // keeps a grey segment of its own: leaving it out would make a day look
+  // lighter than it was. A type in two classes splits its problems between
+  // them rather than counting twice, so the segments still add up to the day.
+  const perDay = new Map<string, { count: number; byClass: Map<number | null, number> }>();
   for (const trophy of trophies) {
     const when = new Date(trophy.created_at);
     if (isNaN(when.getTime())) continue;
     const key = localDayKey(when);
-    perDay.set(key, (perDay.get(key) ?? 0) + 1);
+    const tally = perDay.get(key) ?? { count: 0, byClass: new Map() };
+    perDay.set(key, tally);
+    tally.count += 1;
+    const classes = classesOf.get(trophy.named_problem_generator_id) ?? [];
+    if (!classes.length) tally.byClass.set(null, (tally.byClass.get(null) ?? 0) + 1);
+    for (const tag of classes) {
+      tally.byClass.set(tag.id, (tally.byClass.get(tag.id) ?? 0) + 1 / classes.length);
+    }
   }
+
+  // Classes in name order, classless last, the same on every day -- so a colour
+  // sits at the same end of the bar all week.
+  const segmentOrder: (StudyContextTag | null)[] = [...classTags, null];
 
   // Bucketed in local time rather than UTC: a set worked at 9pm belongs to that
   // evening, not to the next morning in Greenwich.
@@ -112,10 +143,15 @@ function renderRollingWeekPracticeLedger(trophies: Trophy[]): HTMLElement {
   const days = Array.from({ length: ROLLING_WEEK_DAYS }, (_, back) => {
     const day = new Date(today);
     day.setDate(today.getDate() - back);
+    const tally = perDay.get(localDayKey(day));
+    const segments = segmentOrder
+      .map((tag) => ({ tag, share: tally?.byClass.get(tag?.id ?? null) ?? 0 }))
+      .filter((segment) => segment.share > 0);
     return {
       isToday: back === 0,
       label: back === 0 ? "today" : WEEKDAY_NAMES[day.getDay()],
-      count: perDay.get(localDayKey(day)) ?? 0,
+      count: tally?.count ?? 0,
+      segments,
     };
   });
 
@@ -124,16 +160,35 @@ function renderRollingWeekPracticeLedger(trophies: Trophy[]): HTMLElement {
   return h("aside", { class: "rolling-week-practice-ledger" }, [
     h("div", { class: "ledger-title" }, ["last 7 days"]),
     ...days.map((day) =>
-      h("div", { class: day.isToday ? "ledger-day is-today" : "ledger-day" }, [
-        h("span", { class: "day-name" }, [day.label]),
-        h("span", { class: "day-track" }, [
-          h("span", {
-            class: "day-bar",
-            style: `width:${Math.round((day.count / busiest) * 100)}%`,
-          }),
-        ]),
-        h("span", { class: "day-count" }, [String(day.count)]),
-      ]),
+      h(
+        "div",
+        {
+          class: day.isToday ? "ledger-day is-today" : "ledger-day",
+          // On the row rather than the segments: a 5px bar is too thin to aim at.
+          title: day.segments
+            .map((s) => `${s.tag?.name ?? "no class"}: ${Math.round(s.share)}`)
+            .join(" · "),
+        },
+        [
+          h("span", { class: "day-name" }, [day.label]),
+          h("span", { class: "day-track" }, [
+            h(
+              "span",
+              {
+                class: "day-bar",
+                style: `width:${Math.round((day.count / busiest) * 100)}%`,
+              },
+              day.segments.map((s) =>
+                h("span", {
+                  class: s.tag ? `chip-color-${s.tag.chip_color_ordinal}` : "",
+                  style: `flex-grow:${s.share}`,
+                }),
+              ),
+            ),
+          ]),
+          h("span", { class: "day-count" }, [String(day.count)]),
+        ],
+      ),
     ),
   ]);
 }
@@ -211,7 +266,9 @@ export async function renderGenerators(
     ]),
   );
 
-  const drawerSummaryEl = h("summary", {}, ["unsorted"]);
+  let ledgerEl = renderRollingWeekPracticeLedger(trophies, generators, tagCatalogue);
+
+  const drawerSummaryEl = h("summary", {}, ["archived"]);
   const drawerEl = h("details", { class: "archived-drawer" }, [
     drawerSummaryEl,
     buildGeneratorTable(drawerBodyEl),
@@ -367,7 +424,12 @@ export async function renderGenerators(
     tableEl.hidden = !active.length;
     emptyEl.hidden = Boolean(active.length) || filterTagId === null;
     drawerEl.hidden = !archived.length;
-    drawerSummaryEl.textContent = `unsorted (${archived.length})`;
+    drawerSummaryEl.textContent = `archived (${archived.length})`;
+
+    // Recoloured with the table, since a retag can move a type between classes.
+    const nextLedgerEl = renderRollingWeekPracticeLedger(trophies, generators, tagCatalogue);
+    ledgerEl.replaceWith(nextLedgerEl);
+    ledgerEl = nextLedgerEl;
 
     // A selection the filter has just hidden is not a selection any more.
     select(selectedId !== null && rowsById.has(selectedId) ? selectedId : null);
@@ -701,7 +763,7 @@ export async function renderGenerators(
   showTab(0);
 
   root.replaceChildren(
-    renderRollingWeekPracticeLedger(trophies),
+    ledgerEl,
     h("div", { class: "tab-strip" }, tabEls),
     tablePane,
     generatePane,
