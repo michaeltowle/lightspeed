@@ -293,6 +293,7 @@ async function generateProblemsFromPrompt(
   shots: { base64: string; mimeType: string }[],
   requestedCount: number,
   emphasisProblemsHtml: string[] = [],
+  problemsNotToRepeatHtml: string[] = [],
 ): Promise<GeneratedProblemRow[]> {
   // Exemplars are problems this app generated earlier, fed back verbatim. They
   // steer the new set without narrowing it: the original prompt still sets the
@@ -312,6 +313,31 @@ async function generateProblemsFromPrompt(
         "Do not restate any of the problems above verbatim. Reuse one only if the",
         "prompt asks for the same problems again, or if the skill admits so few",
         "forms that there is genuinely nothing to vary but the numbers.",
+      ].join("\n")
+    : "";
+
+  // The same guard as the marks, without the steering. These are what the
+  // generator has already handed out, so they only say what not to repeat --
+  // the prompt alone decides what to practise. The exception is spelled out
+  // because some prompts ask for particular problems exactly as stated, and
+  // those have to keep coming back verbatim every time.
+  const history = problemsNotToRepeatHtml.length
+    ? [
+        "",
+        "",
+        "These problems were already given for this prompt in earlier sets. They",
+        "are a record of what has been practised, not samples to steer by: the",
+        "prompt above alone sets the subject, the skill and the difficulty. Write",
+        "fresh problems: change the numbers, the setup and the wording, and vary",
+        "the structure wherever the skill allows it.",
+        "",
+        ...problemsNotToRepeatHtml.map((html, idx) => `${idx + 1}. ${html}`),
+        "",
+        "Do not restate any of the problems above verbatim. The one exception is a",
+        "prompt that asks for particular problems exactly as stated -- the problems",
+        "in an attached screenshot, say. Then give exactly those, whether or not",
+        "they appear above. If the skill admits so few forms that only the numbers",
+        "can change, change the numbers.",
       ].join("\n")
     : "";
 
@@ -341,7 +367,7 @@ async function generateProblemsFromPrompt(
         {
           role: "user",
           content: userContent(
-            `${promptText.trim() || "(no prompt)"}${emphasis}\n\nGenerate exactly ${requestedCount} problems.`,
+            `${promptText.trim() || "(no prompt)"}${emphasis}${history}\n\nGenerate exactly ${requestedCount} problems.`,
             shots,
           ),
         },
@@ -1138,11 +1164,32 @@ export default {
             if (!generator) return json({ error: "no such generator" }, 404);
 
             const shots = await attachmentsForGenerator(db, generator.id);
+
+            // Practising again started from nothing, so the model drifted back
+            // to the same few problems set after set. Capped at the largest set
+            // that can be asked for, which keeps all of the last set in view
+            // however big it was. Statements only: the walkthroughs would
+            // multiply the cost and add nothing to telling problems apart.
+            const given = await db
+              .prepare(
+                `SELECT p.problem_html
+                   FROM math_practice_problem p
+                   JOIN problem_set s ON s.id = p.problem_set_id
+                  WHERE s.named_problem_generator_id = ?
+                  ORDER BY s.id DESC, p.ordinal
+                  LIMIT 40`,
+              )
+              .bind(generator.id)
+              .all<{ problem_html: string }>();
+
             const generated = await generateProblemsFromPrompt(
               env,
               generator.prompt_text,
               shots,
               requested,
+              // No marks: this is not further practice.
+              [],
+              given.results.map((row) => row.problem_html),
             );
             if (!generated.length) return json({ error: "model returned no problems" }, 502);
 
