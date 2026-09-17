@@ -97,16 +97,28 @@ function daysBetween(from: Date, to: Date): number {
  * measures problems *answered*: back out of a set before the answer page and
  * nothing here moves, which is the same bargain the wall makes.
  *
- * Each bar is split by class, in the ink that class's chip is lettered in.
+ * Each bar is split by class, with a key beneath naming the colours. The fills
+ * are the ledger's own rather than the chips': chip hues sit too close together
+ * to tell apart in a sliver of bar, and their inks and grounds are too heavy and
+ * too faint respectively.
  */
 function renderRollingWeekPracticeLedger(
   trophies: Trophy[],
   generators: NamedProblemGenerator[],
   tagCatalogue: StudyContextTag[],
 ): HTMLElement {
+  // Creation order -- ids only grow -- so a new class takes the next colour
+  // instead of repainting the ones already on screen.
   const classTags = tagCatalogue
     .filter((tag) => tag.field === "class")
-    .sort((a, b) => a.name.localeCompare(b.name));
+    .sort((a, b) => a.id - b.id);
+
+  // Six class fills in the stylesheet. A seventh class wraps round, which only
+  // collides if two classes six apart are both worked in the same week.
+  const fillOf = (tag: StudyContextTag | null) =>
+    tag
+      ? `var(--ledger-class-fill-${(classTags.indexOf(tag) % 6) + 1})`
+      : "var(--ledger-no-class-fill)";
   const classesOf = new Map(
     generators.map((g) => [
       g.id,
@@ -133,8 +145,8 @@ function renderRollingWeekPracticeLedger(
     }
   }
 
-  // Classes in name order, classless last, the same on every day -- so a colour
-  // sits at the same end of the bar all week.
+  // Classes in colour order, classless last, the same on every day -- so a
+  // colour sits at the same end of the bar all week.
   const segmentOrder: (StudyContextTag | null)[] = [...classTags, null];
 
   // Bucketed in local time rather than UTC: a set worked at 9pm belongs to that
@@ -157,6 +169,12 @@ function renderRollingWeekPracticeLedger(
 
   const busiest = Math.max(1, ...days.map((day) => day.count));
 
+  // Only what the week holds -- a key for a class not worked since last month
+  // names a colour that is nowhere on screen.
+  const inKey = segmentOrder.filter((tag) =>
+    days.some((day) => day.segments.some((s) => s.tag === tag)),
+  );
+
   return h("aside", { class: "rolling-week-practice-ledger" }, [
     h("div", { class: "ledger-title" }, ["last 7 days"]),
     ...days.map((day) =>
@@ -164,7 +182,7 @@ function renderRollingWeekPracticeLedger(
         "div",
         {
           class: day.isToday ? "ledger-day is-today" : "ledger-day",
-          // On the row rather than the segments: a 5px bar is too thin to aim at.
+          // On the row rather than the segments: a bar this thin is hard to aim at.
           title: day.segments
             .map((s) => `${s.tag?.name ?? "no class"}: ${Math.round(s.share)}`)
             .join(" · "),
@@ -179,10 +197,7 @@ function renderRollingWeekPracticeLedger(
                 style: `width:${Math.round((day.count / busiest) * 100)}%`,
               },
               day.segments.map((s) =>
-                h("span", {
-                  class: s.tag ? `chip-color-${s.tag.chip_color_ordinal}` : "",
-                  style: `flex-grow:${s.share}`,
-                }),
+                h("span", { style: `flex-grow:${s.share};background:${fillOf(s.tag)}` }),
               ),
             ),
           ]),
@@ -190,6 +205,20 @@ function renderRollingWeekPracticeLedger(
         ],
       ),
     ),
+    ...(inKey.length
+      ? [
+          h(
+            "div",
+            { class: "ledger-key" },
+            inKey.map((tag) =>
+              h("span", { class: "key-entry" }, [
+                h("span", { class: "key-swatch", style: `background:${fillOf(tag)}` }),
+                tag?.name ?? "no class",
+              ]),
+            ),
+          ),
+        ]
+      : []),
   ]);
 }
 
@@ -252,9 +281,11 @@ export async function renderGenerators(
   const rowsById = new Map<number, { row: HTMLElement; radio: HTMLInputElement }>();
 
   const bodyEl = h("tbody");
-  const drawerBodyEl = h("tbody");
+  const archivedBodyEl = h("tbody");
   const tableEl = buildGeneratorTable(bodyEl);
+  const archivedTableEl = buildGeneratorTable(archivedBodyEl);
   const emptyEl = h("div", { class: "generator-stats" }, ["nothing filed under that"]);
+  const archivedEmptyEl = h("div", { class: "generator-stats" });
   const filterEl = h("div", { class: "study-context-tag-filter" });
 
   // One list per field: completing a source against the catalogue of classes
@@ -267,12 +298,6 @@ export async function renderGenerators(
   );
 
   let ledgerEl = renderRollingWeekPracticeLedger(trophies, generators, tagCatalogue);
-
-  const drawerSummaryEl = h("summary", {}, ["archived"]);
-  const drawerEl = h("details", { class: "archived-drawer" }, [
-    drawerSummaryEl,
-    buildGeneratorTable(drawerBodyEl),
-  ]);
 
   // ---- the practice control, one for the whole table -----------------------
   const practiceCountEl = h("input", { type: "number", min: 1, max: 40, value: 2 });
@@ -419,12 +444,15 @@ export async function renderGenerators(
 
     rowsById.clear();
     bodyEl.replaceChildren(...active.map(generatorRow));
-    drawerBodyEl.replaceChildren(...archived.map(generatorRow));
+    archivedBodyEl.replaceChildren(...archived.map(generatorRow));
 
     tableEl.hidden = !active.length;
     emptyEl.hidden = Boolean(active.length) || filterTagId === null;
-    drawerEl.hidden = !archived.length;
-    drawerSummaryEl.textContent = `archived (${archived.length})`;
+    archivedTableEl.hidden = !archived.length;
+    archivedEmptyEl.hidden = Boolean(archived.length);
+    archivedEmptyEl.textContent =
+      filterTagId === null ? "nothing archived" : "nothing filed under that";
+    archivedTabEl.textContent = `archived (${archived.length})`;
 
     // Recoloured with the table, since a retag can move a type between classes.
     const nextLedgerEl = renderRollingWeekPracticeLedger(trophies, generators, tagCatalogue);
@@ -444,10 +472,14 @@ export async function renderGenerators(
     const daysSinceWorked = standing.lastWorkedAt
       ? daysBetween(new Date(standing.lastWorkedAt), new Date())
       : null;
-    if (daysSinceWorked === null || daysSinceWorked >= GONE_COLD_AFTER_DAYS) {
-      row.classList.add("is-gone-cold");
-    } else if (daysSinceWorked > GOING_COLD_AFTER_DAYS) {
-      row.classList.add("is-going-cold");
+    // Archived types are not meant to be kept warm, and tinting them would
+    // paint nearly the whole archived tab.
+    if (!generator.archived_at) {
+      if (daysSinceWorked === null || daysSinceWorked >= GONE_COLD_AFTER_DAYS) {
+        row.classList.add("is-gone-cold");
+      } else if (daysSinceWorked > GOING_COLD_AFTER_DAYS) {
+        row.classList.add("is-going-cold");
+      }
     }
 
     const radioEl = h("input", {
@@ -731,21 +763,38 @@ export async function renderGenerators(
   // ---- tabs ----------------------------------------------------------------
   const composeForm = renderNewGeneratorForm(go, () => tagCatalogue);
   const generatePane = h("div", {}, [composeForm.el]);
+  const practiceLaunchEl = h("div", { class: "row practice-launch-control" }, [
+    practiceCountEl,
+    practiceEl,
+  ]);
   const tablePane = h("div", {}, [
     filterEl,
     tableEl,
     emptyEl,
-    h("div", { class: "row practice-launch-control" }, [practiceCountEl, practiceEl]),
+    practiceLaunchEl,
     practiceStatusEl,
-    drawerEl,
   ]);
+  const archivedPane = h("div", {}, [archivedTableEl, archivedEmptyEl]);
+
+  // Both lists share one filter and one practice button, carried into whichever
+  // pane is opened -- so a filter set on one list is still visibly set on the
+  // other, and an archived type can be practised without restoring it first.
+  // The selection is dropped on the way, or the button would act on a row in
+  // the pane just left.
+  const showList = (pane: HTMLElement) => () => {
+    pane.prepend(filterEl);
+    pane.append(practiceLaunchEl, practiceStatusEl);
+    select(null);
+  };
 
   const tabs: { label: string; pane: HTMLElement; onShow?: () => void }[] = [
-    { label: "table", pane: tablePane },
+    { label: "table", pane: tablePane, onShow: showList(tablePane) },
     // Tags created or retired in the table while this form sat hidden.
     { label: "generate", pane: generatePane, onShow: composeForm.refreshTagChips },
+    { label: "archived", pane: archivedPane, onShow: showList(archivedPane) },
   ];
   const tabEls = tabs.map(({ label }) => h("button", { type: "button", class: "tab" }, [label]));
+  const archivedTabEl = tabEls[2];
 
   function showTab(index: number): void {
     tabs.forEach(({ pane }, i) => {
@@ -767,6 +816,7 @@ export async function renderGenerators(
     h("div", { class: "tab-strip" }, tabEls),
     tablePane,
     generatePane,
+    archivedPane,
     ...catalogueEls.values(),
     h("div", { class: "lightspeed-motto-line" }, ["limitations are in the mind"]),
   );

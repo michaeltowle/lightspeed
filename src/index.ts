@@ -746,14 +746,6 @@ ${chipColorPaletteCss}
   .generator-menu button:disabled { opacity: 0.4; cursor: default; }
   .generator-menu button:disabled:hover { background: none; }
 
-  .archived-drawer { margin-top: 2rem; }
-  .archived-drawer > summary {
-    cursor: pointer; font-size: 0.75rem; opacity: 0.6;
-    padding: 0.25rem 0; user-select: none;
-  }
-  .archived-drawer .generator-row { opacity: 0.72; }
-  .archived-drawer .generator-row:hover { opacity: 1; }
-
   /* What was worked on each of the last seven days. A fixed rail on the Dells,
      where there is gutter going spare beside a 52rem column; above the table on
      anything narrower, since there is nowhere else for it to be. */
@@ -762,6 +754,31 @@ ${chipColorPaletteCss}
     padding: 0.55rem 0.65rem; font-size: 0.7rem;
     border: 1px solid rgba(128,128,128,0.3); border-radius: 8px;
     background: rgba(127,127,127,0.06);
+
+    /* The bar fills, all one tone: every class at the same OKLCH lightness and
+       chroma (0.66 / 0.12), with hues spread so neighbours come apart -- checked
+       under simulated protan and deutan vision as well as normal. Grey is the
+       one step off the tone: at the colours' own lightness it sits too close to
+       them to tell apart, so it recedes toward the ground instead. */
+    --ledger-class-fill-1: #4b99d7;
+    --ledger-class-fill-2: #69a45c;
+    --ledger-class-fill-3: #c673a3;
+    --ledger-class-fill-4: #b8892d;
+    --ledger-class-fill-5: #9284d6;
+    --ledger-class-fill-6: #d2736c;
+    --ledger-no-class-fill: #b4b4b4;
+  }
+  /* Same hues re-stepped for the dark ground (lightness 0.64), grey darker. */
+  @media (prefers-color-scheme: dark) {
+    .rolling-week-practice-ledger {
+      --ledger-class-fill-1: #4493d0;
+      --ledger-class-fill-2: #639e56;
+      --ledger-class-fill-3: #bf6d9d;
+      --ledger-class-fill-4: #b28324;
+      --ledger-class-fill-5: #8c7ed0;
+      --ledger-class-fill-6: #cb6d67;
+      --ledger-no-class-fill: #636363;
+    }
   }
   /* Scoped to the ledger: these names describe its innards, not anything the
      rest of the sheet is entitled to. */
@@ -777,21 +794,26 @@ ${chipColorPaletteCss}
     opacity: 1; font-weight: 600;
   }
   .rolling-week-practice-ledger .day-track {
-    display: block; height: 5px; border-radius: 2px;
+    display: block; height: 7px; border-radius: 3px;
     background: rgba(128,128,128,0.18);
   }
   .rolling-week-practice-ledger .day-bar {
-    display: flex; height: 100%; border-radius: 2px; overflow: hidden;
+    display: flex; height: 100%; border-radius: 3px; overflow: hidden;
   }
-  /* One segment per class, filled with its chip's ground -- the chip class
-     paints it, and follows the chip into dark mode. The lettering colour was
-     tried first and read far too heavy. Classless work is grey. */
+  /* One segment per class, its fill set inline from the variables above. */
   .rolling-week-practice-ledger .day-bar > span { flex: 1 1 0; }
-  .rolling-week-practice-ledger .day-bar > span:not([class*="chip-color-"]) {
-    background: rgba(128,128,128,0.55);
-  }
   .rolling-week-practice-ledger .day-count {
     text-align: right; opacity: 0.8; font-variant-numeric: tabular-nums;
+  }
+  .rolling-week-practice-ledger .ledger-key {
+    display: flex; flex-wrap: wrap; gap: 0.1rem 0.6rem;
+    margin-top: 0.4rem; opacity: 0.75;
+  }
+  .rolling-week-practice-ledger .key-entry {
+    display: inline-flex; align-items: center; gap: 0.3rem;
+  }
+  .rolling-week-practice-ledger .key-swatch {
+    width: 0.55rem; height: 0.55rem; border-radius: 2px;
   }
   /* 52rem of column plus a 10rem rail and its margins. Below that the gutter is
      gone and the rail would sit on top of the table. */
