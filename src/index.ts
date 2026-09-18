@@ -756,27 +756,27 @@ ${chipColorPaletteCss}
     background: rgba(127,127,127,0.06);
 
     /* The bar fills, all one tone: every class at the same OKLCH lightness and
-       chroma (0.66 / 0.12), with hues spread so neighbours come apart -- checked
+       chroma (0.73 / 0.11, pastel), with hues spread so neighbours come apart -- checked
        under simulated protan and deutan vision as well as normal. Grey is the
        one step off the tone: at the colours' own lightness it sits too close to
        them to tell apart, so it recedes toward the ground instead. */
-    --ledger-class-fill-1: #4b99d7;
-    --ledger-class-fill-2: #69a45c;
-    --ledger-class-fill-3: #c673a3;
-    --ledger-class-fill-4: #b8892d;
-    --ledger-class-fill-5: #9284d6;
-    --ledger-class-fill-6: #d2736c;
-    --ledger-no-class-fill: #b4b4b4;
+    --ledger-class-fill-1: #69afe8;
+    --ledger-class-fill-2: #82b976;
+    --ledger-class-fill-3: #d98bb8;
+    --ledger-class-fill-4: #cca051;
+    --ledger-class-fill-5: #a79ce8;
+    --ledger-class-fill-6: #e58c84;
+    --ledger-no-class-fill: #cecece;
   }
-  /* Same hues re-stepped for the dark ground (lightness 0.64), grey darker. */
+  /* Same hues re-stepped for the dark ground (lightness 0.68), grey darker. */
   @media (prefers-color-scheme: dark) {
     .rolling-week-practice-ledger {
-      --ledger-class-fill-1: #4493d0;
-      --ledger-class-fill-2: #639e56;
-      --ledger-class-fill-3: #bf6d9d;
-      --ledger-class-fill-4: #b28324;
-      --ledger-class-fill-5: #8c7ed0;
-      --ledger-class-fill-6: #cb6d67;
+      --ledger-class-fill-1: #599fd8;
+      --ledger-class-fill-2: #73a967;
+      --ledger-class-fill-3: #c87ca8;
+      --ledger-class-fill-4: #bc9041;
+      --ledger-class-fill-5: #978cd7;
+      --ledger-class-fill-6: #d47c76;
       --ledger-no-class-fill: #636363;
     }
   }
@@ -795,7 +795,7 @@ ${chipColorPaletteCss}
   }
   .rolling-week-practice-ledger .day-track {
     display: block; height: 7px; border-radius: 3px;
-    background: rgba(128,128,128,0.18);
+    background: rgba(128,128,128,0.11);
   }
   .rolling-week-practice-ledger .day-bar {
     display: flex; height: 100%; border-radius: 3px; overflow: hidden;
@@ -806,11 +806,13 @@ ${chipColorPaletteCss}
     text-align: right; opacity: 0.8; font-variant-numeric: tabular-nums;
   }
   .rolling-week-practice-ledger .ledger-key {
-    display: flex; flex-wrap: wrap; gap: 0.1rem 0.6rem;
-    margin-top: 0.4rem; opacity: 0.75;
+    display: flex; flex-wrap: wrap; gap: 0.1rem 0.6rem; margin-top: 0.4rem;
   }
+  /* The text is muted, not the entry: faded as a whole, the swatches came out
+     paler than the bars they name. */
   .rolling-week-practice-ledger .key-entry {
     display: inline-flex; align-items: center; gap: 0.3rem;
+    color: color-mix(in srgb, currentColor 75%, transparent);
   }
   .rolling-week-practice-ledger .key-swatch {
     width: 0.55rem; height: 0.55rem; border-radius: 2px;

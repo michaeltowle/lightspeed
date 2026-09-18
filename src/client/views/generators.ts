@@ -169,9 +169,10 @@ function renderRollingWeekPracticeLedger(
 
   const busiest = Math.max(1, ...days.map((day) => day.count));
 
-  // Only what the week holds -- a key for a class not worked since last month
-  // names a colour that is nowhere on screen.
-  const inKey = segmentOrder.filter((tag) =>
+  // Only classes the week holds -- a key for a class not worked since last month
+  // names a colour that is nowhere on screen. Grey goes unlabelled: it is the
+  // one fill that is not a colour, so it needs no name.
+  const inKey = classTags.filter((tag) =>
     days.some((day) => day.segments.some((s) => s.tag === tag)),
   );
 
@@ -213,7 +214,7 @@ function renderRollingWeekPracticeLedger(
             inKey.map((tag) =>
               h("span", { class: "key-entry" }, [
                 h("span", { class: "key-swatch", style: `background:${fillOf(tag)}` }),
-                tag?.name ?? "no class",
+                tag.name,
               ]),
             ),
           ),
