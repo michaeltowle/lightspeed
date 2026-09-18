@@ -52,6 +52,32 @@ const WEEKDAY_NAMES = [
 
 const catalogueListId = (field: StudyContextTagField) => `tag-catalogue-${field}`;
 
+// Filing a type under a class and then working that class is a week's habit, not
+// a visit's, so the filter outlives the tab. Kept per-device rather than on the
+// server: the phone practises and the laptop authors, and they are rarely
+// pointed at the same class.
+const STANDING_STUDY_CONTEXT_TAG_FILTER_KEY = "lightspeed.standing-study-context-tag-filter";
+
+function readStandingStudyContextTagFilter(): number | null {
+  try {
+    const raw = localStorage.getItem(STANDING_STUDY_CONTEXT_TAG_FILTER_KEY);
+    const id = raw === null ? NaN : Number(raw);
+    return Number.isInteger(id) ? id : null;
+  } catch {
+    // Storage walled off. The filter still works, it just stops being sticky.
+    return null;
+  }
+}
+
+function writeStandingStudyContextTagFilter(id: number | null): void {
+  try {
+    if (id === null) localStorage.removeItem(STANDING_STUDY_CONTEXT_TAG_FILTER_KEY);
+    else localStorage.setItem(STANDING_STUDY_CONTEXT_TAG_FILTER_KEY, String(id));
+  } catch {
+    // As above.
+  }
+}
+
 // One menu open at a time, closed by the next click anywhere. Bound once at
 // module scope -- the table repaints on every archive, and a listener attached
 // per render would stack a copy each time.
@@ -278,7 +304,19 @@ export async function renderGenerators(
   // One type is practised at a time, so the table is a list of radio buttons in
   // all but appearance and the button beneath it acts on whichever is lit.
   let selectedId: number | null = null;
-  let filterTagId: number | null = null;
+
+  // A tag retired since the last visit cannot go on being the filter: it would
+  // empty the table with no lit chip to explain why.
+  const remembered = readStandingStudyContextTagFilter();
+  let filterTagId: number | null =
+    remembered !== null && tagCatalogue.some((t) => t.id === remembered) ? remembered : null;
+  if (filterTagId !== remembered) writeStandingStudyContextTagFilter(filterTagId);
+
+  const setFilterTagId = (id: number | null): void => {
+    filterTagId = id;
+    writeStandingStudyContextTagFilter(id);
+  };
+
   const rowsById = new Map<number, { row: HTMLElement; radio: HTMLInputElement }>();
 
   const bodyEl = h("tbody");
@@ -406,7 +444,7 @@ export async function renderGenerators(
               onclick: () => {
                 // A second click on the lit chip clears the filter -- there is
                 // no "all" chip to hunt for.
-                filterTagId = filterTagId === tag.id ? null : tag.id;
+                setFilterTagId(filterTagId === tag.id ? null : tag.id);
                 paintTagCatalogue();
                 paintAll();
               },
@@ -578,7 +616,7 @@ export async function renderGenerators(
             generator.study_context_tag_ids = result.study_context_tag_ids;
             // A tag just retired cannot go on being the filter.
             if (filterTagId !== null && !tagCatalogue.some((t) => t.id === filterTagId)) {
-              filterTagId = null;
+              setFilterTagId(null);
             }
             paintTagCatalogue();
             paintAll();
