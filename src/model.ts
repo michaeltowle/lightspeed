@@ -5,9 +5,11 @@ import type { Env } from "./env";
 
 export const CURRENT_AUTHORING_MODEL_ID = "claude-opus-5";
 
-// How hard the model thinks before it answers. "high" is already the API
-// default, so naming it here changes nothing today -- it pins the setting so a
-// future SDK or API default cannot quietly lower it.
+// How hard the model thinks before it answers. "high" is the API default, so
+// this pins the setting rather than raising it -- but it only bites at all
+// because the forced tool call is swapped out below. While the object was
+// being asked for as a tool call, every table came back with
+// `thinking_tokens: 0` and this constant did nothing.
 //
 // Lower it only with evidence. The maneuver tables are the answer key Mike
 // grades himself against, so a cheaper answer that reads right but is wrong is
@@ -96,19 +98,20 @@ const BREAK_INTO_MANEUVERS_DIRECTIVE = [
   "A maneuver is one step that produces something. Return them in the order",
   "they are carried out. The last maneuver is the final answer.",
   "",
-  "Each maneuver has three parts:",
+  "Each maneuver has three parts. These are the field names to return them",
+  "under, spelled exactly as written here:",
   "",
-  '  name    what the step is, as an imperative: "find the support",',
-  '          "calculate the rejection region". Two to six words.',
-  "  method  how to arrive at it, in plain English. No mathematics, no symbols,",
-  "          no formulae, no variable names -- describe the move in words a",
-  "          reader could follow before picking up a pen.",
-  "  result  the value or expression the step produces.",
+  '  name         what the step is, as an imperative: "find the support",',
+  '               "calculate the rejection region". Two to six words.',
+  "  method_text  how to arrive at it, in plain English. No mathematics, no",
+  "               symbols, no formulae, no variable names -- describe the move",
+  "               in words a reader could follow before picking up a pen.",
+  "  result_html  the value or expression the step produces.",
   "",
-  "A step with nothing to put in `result` is not a maneuver. Do not return",
+  "A step with nothing to put in `result_html` is not a maneuver. Do not return",
   'narration, orientation, or "now we consider the other case" -- if it does not',
-  "produce a value or an expression, fold it into the `method` of the step it",
-  "belongs to.",
+  "produce a value or an expression, fold it into the `method_text` of the step",
+  "it belongs to.",
   "",
   "Work the problem and check it before you write any of this down. For an",
   "indefinite integral, differentiate your antiderivative and confirm it returns",
@@ -129,9 +132,10 @@ const BREAK_INTO_MANEUVERS_DIRECTIVE = [
   "of its own unless the problem actually asks for the check, in which case it",
   "is part of the method like any other step.",
   "",
-  "`name` and `method` are plain text, not HTML, and carry no mathematics.",
-  "`result` is HTML: minimal markup (sup, sub, em, strong) with all mathematics",
-  "as LaTeX inside $...$. No Unicode math symbols, no plain-text notation.",
+  "`name` and `method_text` are plain text, not HTML, and carry no mathematics.",
+  "`result_html` is HTML: minimal markup (sup, sub, em, strong) with all",
+  "mathematics as LaTeX inside $...$. No Unicode math symbols, no plain-text",
+  "notation.",
 ].join("\n");
 
 const STATEMENT_ITEM_SCHEMA = z.object({
@@ -197,6 +201,9 @@ const anthropicFor = (env: Env, effort: string | null = MODEL_REASONING_EFFORT) 
   createAnthropic({
     apiKey: env.ANTHROPIC_API_KEY,
     fetch: async (input, init) => {
+      // Set when the request was rewritten, naming the tool the reply has to
+      // impersonate on the way back.
+      let askedAs: string | null = null;
       if (typeof init?.body === "string") {
         const body = JSON.parse(init.body);
         delete body.temperature;
@@ -205,9 +212,80 @@ const anthropicFor = (env: Env, effort: string | null = MODEL_REASONING_EFFORT) 
         // ai@4 predates `output_config` and has no way to express effort, so it
         // is injected here alongside the params that have to be stripped.
         if (effort) body.output_config = { ...body.output_config, effort };
+
+        // The swap that makes the model think at all.
+        //
+        // `generateObject` asks for the object as a forced tool call, and a
+        // forced tool call turns thinking off on Opus 5 -- measured, not
+        // assumed: the same break returns `thinking_tokens: 0` as a tool call
+        // and ~350 as structured output. Tables written with no reasoning are
+        // exactly the failure described above the effort constant. Asking the
+        // provider for json mode is not an option; it throws
+        // UnsupportedFunctionalityError. So the schema goes out as
+        // `output_config.format` instead, and the reply is dressed back up as
+        // the tool call ai@4 is waiting for.
+        const forcedName: unknown =
+          body.tool_choice?.type === "tool" ? body.tool_choice.name : null;
+        const forcedTool =
+          typeof forcedName === "string" && Array.isArray(body.tools)
+            ? body.tools.find(
+                (tool: { name?: unknown }) => tool.name === forcedName,
+              )
+            : undefined;
+        if (forcedTool) {
+          askedAs = forcedName as string;
+          body.output_config = {
+            ...body.output_config,
+            format: { type: "json_schema", schema: forcedTool.input_schema },
+          };
+          delete body.tools;
+          delete body.tool_choice;
+        } else if (Array.isArray(body.tools)) {
+          // Nothing sends an unforced tool today. If something ever does, it
+          // skips the swap above, so keep the arguments schema-valid the only
+          // other way the API offers.
+          body.tools = body.tools.map((tool: Record<string, unknown>) => ({
+            ...tool,
+            strict: true,
+          }));
+        }
         init = { ...init, body: JSON.stringify(body) };
       }
-      return fetch(input, init);
+
+      const response = await fetch(input, init);
+      if (!askedAs || !response.ok) return response;
+
+      // Structured output arrives as a text block. ai@4 is looking for a
+      // tool_use block, so hand it one. A body that does not parse is passed
+      // through untouched: generateObject then fails the way it always did,
+      // which is louder and more honest than inventing an empty object.
+      const payload = (await response.json()) as {
+        content?: { type?: string; text?: string }[];
+        [key: string]: unknown;
+      };
+      const emitted = (payload.content ?? [])
+        .filter((block) => block.type === "text")
+        .map((block) => block.text ?? "")
+        .join("");
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(emitted);
+      } catch {
+        return new Response(JSON.stringify(payload), {
+          status: response.status,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      return new Response(
+        JSON.stringify({
+          ...payload,
+          content: [
+            { type: "tool_use", id: `toolu_${askedAs}`, name: askedAs, input: parsed },
+          ],
+          stop_reason: "tool_use",
+        }),
+        { status: response.status, headers: { "content-type": "application/json" } },
+      );
     },
   });
 
@@ -226,8 +304,9 @@ export async function transcribeFromScreenshot(
   const { object } = await generateObject({
     model: anthropicFor(env)(CURRENT_AUTHORING_MODEL_ID),
     // Statements are cheap next to worked solutions, but a dense page of parts
-    // still runs long, and reasoning comes out of this same cap.
-    maxTokens: 8000,
+    // still runs long, and reasoning comes out of this same cap -- which it now
+    // genuinely does, so the cap was doubled when thinking was turned back on.
+    maxTokens: 16000,
     schema: TRANSCRIPTION_SCHEMA,
     system: TRANSCRIPTION_DIRECTIVE,
     messages: [
@@ -278,7 +357,7 @@ export async function buildToOrderFromPrompt(
 
   const { object } = await generateObject({
     model: anthropicFor(env)(CURRENT_AUTHORING_MODEL_ID),
-    maxTokens: 8000,
+    maxTokens: 16000,
     schema: BUILD_TO_ORDER_SCHEMA,
     system: BUILD_TO_ORDER_DIRECTIVE,
     messages: [
@@ -318,7 +397,7 @@ export async function breakIntoManeuvers(
 
   const { object } = await generateObject({
     model: anthropicFor(env)(CURRENT_AUTHORING_MODEL_ID),
-    maxTokens: 8000,
+    maxTokens: 16000,
     schema: MANEUVER_SCHEMA,
     system: BREAK_INTO_MANEUVERS_DIRECTIVE,
     messages: [
