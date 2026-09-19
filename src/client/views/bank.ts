@@ -473,14 +473,20 @@ export async function renderBank(
   // Never-worked first -- those are the problems in the bank with no practice
   // against them, which is exactly what this page is for noticing. Everything
   // else by how recently it was touched.
+  //
+  // Within a group, oldest id first, which is the order they were read off the
+  // page: 2.1(a) before 2.11(b). This is the order the work is done in, and
+  // the table's order is the run's order -- what is ticked is served in the
+  // order it is listed -- so a set started from here opens where the homework
+  // opens rather than at its last question.
   function sortForBank(list: MathPracticeProblem[]): MathPracticeProblem[] {
     return [...list].sort((a, b) => {
       const aAt = standingOf(byProblem.get(a.id)).lastWorkedAt;
       const bAt = standingOf(byProblem.get(b.id)).lastWorkedAt;
-      if (!aAt && !bAt) return b.id - a.id;
+      if (!aAt && !bAt) return a.id - b.id;
       if (!aAt) return -1;
       if (!bAt) return 1;
-      return bAt < aAt ? -1 : bAt > aAt ? 1 : 0;
+      return bAt < aAt ? -1 : bAt > aAt ? 1 : a.id - b.id;
     });
   }
 
