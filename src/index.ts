@@ -69,6 +69,10 @@ const tidy = (value: unknown, max: number) =>
 // can still cache them.
 const IMMUTABLE = "public, max-age=31536000, immutable";
 
+// For bytes whose URL can outlive what it points at. Private because a
+// screenshot is Mike's homework, not a public asset.
+const REVALIDATED = "private, max-age=0, must-revalidate";
+
 function binaryResponse(base64: string, contentType: string): Response {
   const bytes = base64ToBytes(base64);
   return new Response(bytes, {
@@ -93,16 +97,34 @@ export default {
       // Served here rather than base64'd into the bank payload: the browser
       // caches them, and a bank of hundreds of problems must not carry
       // megabytes of screenshots it rarely shows.
+      //
+      // Validated rather than immutable, because a screenshot id is not a
+      // permanent name for one image. Ids restart whenever the table is
+      // emptied and its sequence reset, so id 1 can be one page today and a
+      // different one tomorrow -- and a year-long immutable cache would go on
+      // showing the first long after it was deleted. The tag is the row's own
+      // creation stamp, so a reused id misses and a genuine re-view 304s.
       const shot = url.searchParams.get("shot");
       if (shot) {
         const row = await env.LIGHTSPEED_APP_RECORDS
-          .prepare(`SELECT mime_type, image_bytes FROM screenshot_of_record WHERE id = ?`)
+          .prepare(
+            `SELECT mime_type, created_at, image_bytes
+               FROM screenshot_of_record WHERE id = ?`,
+          )
           .bind(Number(shot))
-          .first<{ mime_type: string; image_bytes: unknown }>();
+          .first<{ mime_type: string; created_at: string; image_bytes: unknown }>();
         if (!row) return new Response("Not found", { status: 404 });
-        return new Response(blobToBytes(row.image_bytes), {
-          headers: { "content-type": row.mime_type, "cache-control": IMMUTABLE },
-        });
+
+        const etag = `"${shot}-${row.created_at}"`;
+        const headers = {
+          "content-type": row.mime_type,
+          "cache-control": REVALIDATED,
+          etag,
+        };
+        if (request.headers.get("if-none-match") === etag) {
+          return new Response(null, { status: 304, headers });
+        }
+        return new Response(blobToBytes(row.image_bytes), { headers });
       }
 
       const asset = url.searchParams.get("asset");
@@ -130,7 +152,6 @@ export default {
       prompt?: string;
       requested_count?: number;
       unsaved_screenshots?: UnsavedScreenshot[];
-      screenshot_of_record_ids?: number[];
       problem_ids?: number[];
       field?: unknown;
       study_context_tag_names?: unknown;
@@ -228,64 +249,77 @@ export default {
           });
         }
 
-        // Anything with no problem read off it yet. Carried-over screenshots
-        // land here, as does anything whose transcription failed -- so a retry
-        // is just picking it up again rather than pasting it again.
-        case "list_screenshots_awaiting_transcription": {
-          const { results } = await db
-            .prepare(
-              `SELECT id, mime_type, width_px, height_px, byte_size, created_at
-                 FROM screenshot_of_record s
-                WHERE NOT EXISTS (
-                        SELECT 1 FROM screenshot_of_record_attachment a
-                         WHERE a.screenshot_of_record_id = s.id)
-                ORDER BY id`,
-            )
-            .all();
-          return json({ screenshots: results });
-        }
-
         // ---- intake --------------------------------------------------------
         case "transcribe_from_screenshot": {
-          // Saved before the model is asked, so a transcription that fails
-          // leaves the screenshots waiting rather than losing them.
-          const screenshotIds = body.screenshot_of_record_ids?.length
-            ? body.screenshot_of_record_ids
-            : await saveScreenshots(db, body.unsaved_screenshots ?? []);
+          const screenshotIds = await saveScreenshots(db, body.unsaved_screenshots ?? []);
           if (!screenshotIds.length) {
             return json({ error: "no screenshots to read" }, 400);
           }
 
-          const shots = await screenshotsForModel(db, screenshotIds);
-          const read = await transcribeFromScreenshot(env, shots, body.note ?? "");
-          if (!read.length) return json({ error: "no problems found on that" }, 502);
+          // One call per screenshot, fired together.
+          //
+          // A page of five questions used to share one call, and one budget,
+          // with every lettered part of every question -- which is where the
+          // model consolidated: 2.1(a), (b), (c) came back as a single problem
+          // rather than three. A call that sees one question enumerates its
+          // parts. It is the same lesson break_into_maneuvers learned when a
+          // whole set shared one cap.
+          //
+          // It also settles what a problem is attached to. Every problem used
+          // to link to every screenshot in the paste; now it links to the one
+          // it was actually read off.
+          const reads = await Promise.all(
+            screenshotIds.map(async (shotId) => {
+              try {
+                const shots = await screenshotsForModel(db, [shotId]);
+                const problems = await transcribeFromScreenshot(env, shots, body.note ?? "");
+                return { shotId, problems };
+              } catch {
+                return { shotId, problems: [] };
+              }
+            }),
+          );
+
+          // A screenshot only earns its place by having a problem read off it.
+          // Nothing lists an unattached one any more, so one that came back
+          // empty drops its bytes rather than sitting in the table unreachable
+          // -- re-pasting is the retry.
+          const unread = reads.filter((read) => !read.problems.length);
+          if (unread.length) {
+            await forgetScreenshots(db, unread.map((read) => read.shotId));
+          }
+          if (unread.length === reads.length) {
+            return json({ error: "no problems found on that" }, 502);
+          }
 
           const minted: number[] = [];
-          for (const problem of read) {
-            const id = await insertProblem(db, {
-              name: tidy(problem.name, MAX_NAME_LENGTH) || "untitled problem",
-              label: tidy(problem.textbook_problem_number_label, MAX_LABEL_LENGTH),
-              statementHtml: problem.statement_html,
-              origin: "transcribed_from_a_screenshot_of_record",
-              mintedWith: body.note ?? "",
-            });
-            // Every part links to every screenshot it was read off: a problem
-            // can span a page break, and the bytes are stored once regardless.
-            await db.batch(
-              screenshotIds.map((shotId, idx) =>
-                db
-                  .prepare(
-                    `INSERT INTO screenshot_of_record_attachment
-                       (math_practice_problem_id, screenshot_of_record_id, ordinal)
-                     VALUES (?, ?, ?)`,
-                  )
-                  .bind(id, shotId, idx),
-              ),
-            );
-            await setAllTagFields(db, id, body.study_context_tags_by_field);
-            minted.push(id);
+          for (const { shotId, problems } of reads) {
+            for (const problem of problems) {
+              const id = await insertProblem(db, {
+                name: tidy(problem.name, MAX_NAME_LENGTH) || "untitled problem",
+                label: tidy(problem.textbook_problem_number_label, MAX_LABEL_LENGTH),
+                statementHtml: problem.statement_html,
+                origin: "transcribed_from_a_screenshot_of_record",
+                mintedWith: body.note ?? "",
+              });
+              await db
+                .prepare(
+                  `INSERT INTO screenshot_of_record_attachment
+                     (math_practice_problem_id, screenshot_of_record_id, ordinal)
+                   VALUES (?, ?, 0)`,
+                )
+                .bind(id, shotId)
+                .run();
+              await setAllTagFields(db, id, body.study_context_tags_by_field);
+              minted.push(id);
+            }
           }
-          return json({ problem_ids: minted });
+          // A paste of five crops is five calls, so one failing need not cost
+          // the other four.
+          return json({
+            problem_ids: minted,
+            unreadable_screenshot_count: unread.length,
+          });
         }
 
         case "build_to_order_from_prompt": {
@@ -732,6 +766,13 @@ async function saveScreenshots(
     ids.push(row!.id);
   }
   return ids;
+}
+
+/** Drop screenshots nothing was read off, so none sit unreachable. */
+async function forgetScreenshots(db: D1Database, ids: number[]): Promise<void> {
+  await db.batch(
+    ids.map((id) => db.prepare(`DELETE FROM screenshot_of_record WHERE id = ?`).bind(id)),
+  );
 }
 
 /** Screenshot bytes in the shape the model call wants them. */

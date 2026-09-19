@@ -1,5 +1,4 @@
 import {
-  archiveProblem,
   listTheBank,
   openPracticeRun,
   renameProblem,
@@ -8,7 +7,7 @@ import {
 } from "../api";
 import { h } from "../lib/dom";
 import { renderMathHtml } from "../lib/katex-boot";
-import { parseTagNames, renderIntake } from "./intake";
+import { parseTagNames, renderAddAssignment } from "./add-assignment";
 import { square } from "./trophy-wall";
 import { STUDY_CONTEXT_TAG_FIELDS } from "../types";
 import type {
@@ -20,7 +19,7 @@ import type {
 } from "../types";
 
 // Enough squares to read a streak off, few enough to sit in one cell beside the
-// four field columns.
+// field columns.
 const STRIP_LENGTH = 12;
 
 const ROLLING_WEEK_DAYS = 7;
@@ -73,7 +72,7 @@ function writeStandingStudyContextTagFilter(id: number | null): void {
 }
 
 // One menu open at a time, closed by the next click anywhere. Bound once at
-// module scope -- the table repaints on every archive, and a listener attached
+// module scope -- the table repaints on every rename, and a listener attached
 // per render would stack a copy each time.
 let closeOpenMenu: (() => void) | null = null;
 document.addEventListener("click", () => closeOpenMenu?.());
@@ -312,11 +311,8 @@ export async function renderBank(
   const rowsById = new Map<number, { row: HTMLElement; box: HTMLInputElement }>();
 
   const bodyEl = h("tbody");
-  const archivedBodyEl = h("tbody");
   const tableEl = buildBankTable(bodyEl);
-  const archivedTableEl = buildBankTable(archivedBodyEl);
   const emptyEl = h("div", { class: "bank-note" }, ["nothing filed under that"]);
-  const archivedEmptyEl = h("div", { class: "bank-note" });
   const filterEl = h("div", { class: "study-context-tag-filter" });
 
   // One list per field: completing a source against the catalogue of classes
@@ -367,9 +363,7 @@ export async function renderBank(
       entry.box.checked = on;
     }
     practiceEl.disabled = ticked.size === 0;
-    setPracticeStatus(
-      ticked.size ? `${ticked.size} ticked` : "tick what to practise",
-    );
+    setPracticeStatus(ticked.size ? `${ticked.size} ticked` : "");
   }
 
   const setTicked = (id: number, on: boolean): void => {
@@ -490,22 +484,15 @@ export async function renderBank(
     });
   }
 
-  /** Repaint both tables from the local list. Archiving moves a row between them. */
+  /** Repaint the table from the local list. */
   function paintAll(): void {
     const active = shownProblems();
-    const archived = sortForBank(shownIn(problems.filter((p) => p.archived_at)));
 
     rowsById.clear();
     bodyEl.replaceChildren(...active.map(bankRow));
-    archivedBodyEl.replaceChildren(...archived.map(bankRow));
 
     tableEl.hidden = !active.length;
     emptyEl.hidden = Boolean(active.length) || filterTagId === null;
-    archivedTableEl.hidden = !archived.length;
-    archivedEmptyEl.hidden = Boolean(archived.length);
-    archivedEmptyEl.textContent =
-      filterTagId === null ? "nothing archived" : "nothing filed under that";
-    archivedTabEl.textContent = `archived (${archived.length})`;
 
     // Recoloured with the table, since a retag can move a problem between classes.
     const nextLedgerEl = renderRollingWeekPracticeLedger(trophies, problems, tagCatalogue);
@@ -526,8 +513,8 @@ export async function renderBank(
     const daysSinceWorked = standing.lastWorkedAt
       ? daysBetween(new Date(standing.lastWorkedAt), new Date())
       : null;
-    // Archived problems are not meant to be kept warm, and tinting them would
-    // paint nearly the whole archived tab.
+    // An archived problem is not meant to be kept warm. Nothing in the UI can
+    // archive one now that the tab is gone, but the column outlives it.
     if (!problem.archived_at) {
       if (daysSinceWorked === null || daysSinceWorked >= GONE_COLD_AFTER_DAYS) {
         row.classList.add("is-gone-cold");
@@ -668,38 +655,50 @@ export async function renderBank(
     // The statement, the screenshots it was read off, and what minted it. A
     // row of a table is no place to read a maths problem, and identifying one
     // is exactly what the bank is for.
-    function openDetail(): void {
-      if ((row.nextElementSibling as HTMLElement | null)?.classList.contains("detail-row")) {
-        return;
+    const hasScreenshot = () => problem.screenshot_of_record_ids.length > 0;
+
+    /**
+     * The problem as written, or the page it was read off -- one or the other,
+     * never both at once. They answer different questions ("is this the one I
+     * mean?" against "what did the book actually say?") and a row is a poor
+     * place to scroll, so asking for one replaces the other rather than
+     * stacking underneath it.
+     */
+    function openDetail(showing: "text" | "screenshot"): void {
+      const open = row.nextElementSibling as HTMLElement | null;
+      if (open?.classList.contains("detail-row")) open.remove();
+
+      const shown: (Node | string)[] = [];
+      if (showing === "text") {
+        const statementEl = h("div", { class: "problem-body" });
+        renderMathHtml(statementEl, problem.statement_html);
+        shown.push(statementEl);
+        if (problem.text_that_minted_this_problem) {
+          shown.push(
+            h("div", { class: "bank-note" }, [
+              `minted with: ${problem.text_that_minted_this_problem}`,
+            ]),
+          );
+        }
+      } else {
+        shown.push(
+          h(
+            "ul",
+            { class: "shots" },
+            problem.screenshot_of_record_ids.map((id) =>
+              h("li", {}, [
+                h("a", { href: `/?shot=${id}`, target: "_blank", rel: "noreferrer" }, [
+                  h("img", { src: `/?shot=${id}`, alt: "" }),
+                ]),
+              ]),
+            ),
+          ),
+        );
       }
-      const statementEl = h("div", { class: "problem-body" });
-      renderMathHtml(statementEl, problem.statement_html);
 
       const detailRow = h("tr", { class: "detail-row" }, [
         h("td", { colspan: TABLE_COLUMN_COUNT }, [
-          statementEl,
-          ...(problem.screenshot_of_record_ids.length
-            ? [
-                h(
-                  "ul",
-                  { class: "shots" },
-                  problem.screenshot_of_record_ids.map((id) =>
-                    h("li", {}, [
-                      h("a", { href: `/?shot=${id}`, target: "_blank", rel: "noreferrer" }, [
-                        h("img", { src: `/?shot=${id}`, alt: "" }),
-                      ]),
-                    ]),
-                  ),
-                ),
-              ]
-            : []),
-          ...(problem.text_that_minted_this_problem
-            ? [
-                h("div", { class: "bank-note" }, [
-                  `minted with: ${problem.text_that_minted_this_problem}`,
-                ]),
-              ]
-            : []),
+          ...shown,
           h("div", { class: "acts" }, [
             h(
               "button",
@@ -713,31 +712,18 @@ export async function renderBank(
       row.after(detailRow);
     }
 
-    // ---- archive / restore -------------------------------------------------
-    async function setArchived(archived: boolean): Promise<void> {
-      const previous = problem.archived_at;
-      problem.archived_at = archived ? new Date().toISOString() : null;
-      paintAll();
-      try {
-        await archiveProblem(problem.id, archived);
-      } catch {
-        problem.archived_at = previous;
-        paintAll();
-      }
-    }
-
     // ---- menu --------------------------------------------------------------
     function openMenu(): void {
       closeOpenMenu?.();
-      const item = (label: string, act: () => void) =>
-        h("button", { type: "button", onclick: act }, [label]);
+      const item = (label: string, act: () => void, enabled = true) =>
+        h("button", { type: "button", disabled: !enabled, onclick: act }, [label]);
 
       const menu = h("div", { class: "row-menu" }, [
-        item("look at it", openDetail),
+        item("view problem text", () => openDetail("text")),
+        // A problem written to order was never read off anything, so there is
+        // nothing to show it against.
+        item("view screenshot", () => openDetail("screenshot"), hasScreenshot()),
         item("rename", beginRename),
-        problem.archived_at
-          ? item("restore", () => void setArchived(false))
-          : item("archive", () => void setArchived(true)),
       ]);
       menuCell.append(menu);
       closeOpenMenu = () => {
@@ -785,40 +771,37 @@ export async function renderBank(
   }
 
   // ---- tabs ----------------------------------------------------------------
-  const intake = renderIntake(
+  const addAssignment = renderAddAssignment(
     // New problems land in the bank, so the page is rebuilt rather than patched.
     () => void renderBank(root, go),
     () => tagCatalogue,
+    go,
   );
-  const intakePane = h("div", {}, [intake.el]);
+  const addAssignmentPane = h("div", {}, [addAssignment.el]);
   const practiceLaunchEl = h("div", { class: "row practice-launch-control" }, [
     practiceEl,
     tickAllEl,
     untickAllEl,
   ]);
   const bankPane = h("div", {}, [filterEl, tableEl, emptyEl, practiceLaunchEl, practiceStatusEl]);
-  const archivedPane = h("div", {}, [archivedTableEl, archivedEmptyEl]);
 
-  // Both lists share one filter and one practice button, carried into whichever
-  // pane is opened -- so a filter set on one list is still visibly set on the
-  // other, and an archived problem can be practised without restoring it first.
-  // The ticks are dropped on the way, or the button would act on rows in the
-  // pane just left.
-  const showList = (pane: HTMLElement) => () => {
-    pane.prepend(filterEl);
-    pane.append(practiceLaunchEl, practiceStatusEl);
+  // The ticks are dropped on the way back in, or the practice button would act
+  // on a selection made before something was added or retagged.
+  const showList = () => {
     ticked.clear();
     paintTickState();
   };
 
   const tabs: { label: string; pane: HTMLElement; onShow?: () => void }[] = [
-    { label: "bank", pane: bankPane, onShow: showList(bankPane) },
-    // Tags created in the bank while this form sat hidden.
-    { label: "intake", pane: intakePane, onShow: intake.refreshTagChips },
-    { label: "archived", pane: archivedPane, onShow: showList(archivedPane) },
+    { label: "bank", pane: bankPane, onShow: showList },
+    // Classes created in the bank while this form sat hidden.
+    {
+      label: "add assignment",
+      pane: addAssignmentPane,
+      onShow: addAssignment.refreshTagChips,
+    },
   ];
   const tabEls = tabs.map(({ label }) => h("button", { type: "button", class: "tab" }, [label]));
-  const archivedTabEl = tabEls[2];
 
   function showTab(index: number): void {
     tabs.forEach(({ pane }, i) => {
@@ -839,8 +822,7 @@ export async function renderBank(
     ledgerEl,
     h("div", { class: "tab-strip" }, tabEls),
     bankPane,
-    intakePane,
-    archivedPane,
+    addAssignmentPane,
     ...catalogueEls.values(),
     h("div", { class: "lightspeed-motto-line" }, ["limitations are in the mind"]),
   );

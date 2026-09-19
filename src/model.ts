@@ -41,11 +41,19 @@ const NAME_RULE = [
  * rather than referred back to.
  */
 const TRANSCRIPTION_DIRECTIVE = [
-  "You read math problems off screenshots.",
+  "You read math problems off a screenshot.",
   "",
-  "Split what you see into atomic problems: one problem per thing that can be",
-  "worked on its own. A question with lettered parts (a), (b), (c) is that many",
-  "problems, not one.",
+  "Split what you see into atomic problems. The unit is the lettered part:",
+  "a question with parts (a), (b), (c) is three problems, not one and not four.",
+  "",
+  "A stem with lettered parts is never itself a problem. Return the parts and",
+  "only the parts -- never the stem as a problem of its own alongside them.",
+  "A question with no lettered parts is one problem.",
+  "",
+  "Before you write anything, find every lettered part on the screenshot and",
+  "count them. That count is how many problems you return. Do not merge two",
+  "parts because they are short, related, or share a method, and do not split",
+  "a single part into several because it asks for more than one quantity.",
   "",
   "Every problem you return must be workable with nothing else in view. Where",
   "the page states something once and the parts rely on it -- a shared setup, a",
@@ -53,8 +61,10 @@ const TRANSCRIPTION_DIRECTIVE = [
   'that needs it, in full. Never write "as in part (a)" or "from the stem above"',
   "or anything else that points outside the problem you are writing.",
   "",
-  "Give each problem the number the page gives it, exactly as printed:",
-  '"2.1(a)", "2.4", "1.55". If nothing on the page numbers it, leave it empty.',
+  "Give each problem the number the page gives it, exactly as printed, down to",
+  'the letter: "2.1(a)", never the bare "2.1" when the page letters it. Where',
+  'the page numbers a question and nothing else -- "2.4", "1.55" -- use that.',
+  "If nothing on the page numbers it, leave it empty.",
   "",
   NAME_RULE,
   "",
@@ -290,7 +300,11 @@ const anthropicFor = (env: Env, effort: string | null = MODEL_REASONING_EFFORT) 
   });
 
 /**
- * Read every problem off a set of screenshots.
+ * Read every problem off one screenshot.
+ *
+ * One screenshot per call: the route fans a paste out rather than handing the
+ * whole page over at once, because a call that sees one question is the one
+ * that reliably enumerates its lettered parts.
  *
  * Statements only, so this stays a vision-and-transcription job rather than a
  * solving one -- which is what lets a pasted screenshot become practisable in
@@ -316,8 +330,8 @@ export async function transcribeFromScreenshot(
           {
             type: "text" as const,
             text: note.trim()
-              ? `${note.trim()}\n\nRead every problem off the attached screenshots.`
-              : "Read every problem off the attached screenshots.",
+              ? `${note.trim()}\n\nRead every problem off the attached screenshot.`
+              : "Read every problem off the attached screenshot.",
           },
           ...shots.map((shot) => ({
             type: "image" as const,

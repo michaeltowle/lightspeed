@@ -1,7 +1,6 @@
 import type {
   AnswerRow,
   AttemptOutcome,
-  AwaitingScreenshot,
   DefaultServiceStyle,
   Maneuver,
   MathPracticeProblem,
@@ -47,24 +46,21 @@ export const trophyWall = () => post<{ attempts: Trophy[] }>({ action: "trophy_w
 // ---- intake -----------------------------------------------------------------
 
 /**
- * Read every problem off a screenshot. A lettered question comes back as that
- * many problems, each self-contained, so the parts are atoms in their own right.
- *
- * Takes either freshly pasted images or the ids of screenshots already waiting,
- * which is what makes a failed transcription a retry rather than a re-paste.
+ * Read the problems off each pasted screenshot. One call per screenshot, fanned
+ * out server-side, so a lettered question comes back as one problem per part.
+ * A screenshot nothing could be read off is dropped and counted rather than
+ * failing the rest of the paste.
  */
 export const transcribeFromScreenshot = (
   shots: UnsavedScreenshot[],
   note: string,
   tagsByField: Partial<Record<StudyContextTagField, string[]>>,
-  screenshotIds: number[] = [],
 ) =>
-  post<{ problem_ids: number[] }>({
+  post<{ problem_ids: number[]; unreadable_screenshot_count: number }>({
     action: "transcribe_from_screenshot",
     note,
     study_context_tags_by_field: tagsByField,
     unsaved_screenshots: wireScreenshots(shots),
-    screenshot_of_record_ids: screenshotIds,
   });
 
 export const buildToOrderFromPrompt = (
@@ -82,11 +78,6 @@ export const buildToOrderFromPrompt = (
 /** One problem's table. Fired per problem so an intake need not wait on them. */
 export const breakIntoManeuvers = (problemId: number) =>
   post<{ maneuver_count: number }>({ action: "break_into_maneuvers", id: problemId });
-
-export const listScreenshotsAwaitingTranscription = () =>
-  post<{ screenshots: AwaitingScreenshot[] }>({
-    action: "list_screenshots_awaiting_transcription",
-  });
 
 // ---- filing -----------------------------------------------------------------
 

@@ -148,7 +148,8 @@ export function indexPageDocument(env: Env): string {
     .bank-table th, .bank-table td {
       padding-left: 0.2rem; padding-right: 0.2rem;
     }
-    .col-strip, .col-field-source, .col-field-target, .col-field-status {
+    .col-strip, .col-field-assignment, .col-field-source, .col-field-target,
+    .col-field-status {
       display: none;
     }
     td.problem-name { min-width: 0; }

@@ -85,17 +85,12 @@ export interface Trophy {
   math_practice_problem_id: number;
 }
 
-export interface AwaitingScreenshot {
-  id: number;
-  mime_type: string;
-  width_px: number;
-  height_px: number;
-  byte_size: number;
-  created_at: string;
-}
 
 export const STUDY_CONTEXT_TAG_FIELDS = [
   "class",
+  // Beside class rather than at the end: the two together are what an
+  // assignment is filed under, and the order drives the chip palette offset.
+  "assignment",
   "source",
   "target",
   "status",
