@@ -1,6 +1,6 @@
 import { h } from "./lib/dom";
 import { renderAnswers } from "./views/answers";
-import { renderGenerators } from "./views/generators";
+import { renderBank } from "./views/bank";
 import { renderProblem } from "./views/problem";
 import { mountTrophyWall, refreshTrophyWall, setTrophyWallVisible } from "./views/trophy-wall";
 import type { View } from "./types";
@@ -12,20 +12,13 @@ function go(view: View): void {
   if (!root) return;
 
   switch (view.name) {
-    case "generators":
+    case "bank":
       setTrophyWallVisible(false);
-      void renderGenerators(root, go);
+      void renderBank(root, go);
       break;
     case "problem":
       setTrophyWallVisible(true);
-      renderProblem(
-        root,
-        view.runId,
-        view.requestedCount,
-        view.problems,
-        view.index,
-        go,
-      );
+      renderProblem(root, view.runId, view.problems, view.index, go);
       break;
     case "answers":
       setTrophyWallVisible(true);
@@ -42,7 +35,7 @@ function boot(): void {
   if (!document.getElementById("app")) {
     document.body.append(h("main", { id: "app" }));
   }
-  go({ name: "generators" });
+  go({ name: "bank" });
 }
 
 if (document.readyState === "loading") {

@@ -1,12 +1,16 @@
 import type {
   AnswerRow,
+  AttemptOutcome,
+  AwaitingScreenshot,
+  DefaultServiceStyle,
+  Maneuver,
   MathPracticeProblem,
-  NamedProblemGenerator,
-  SelfGrade,
+  PerManeuverCreditMark,
+  ServedProblem,
   StudyContextTag,
   StudyContextTagField,
   Trophy,
-  UnsavedImageAttachment,
+  UnsavedScreenshot,
 } from "./types";
 
 // Every call is a POST to "/" carrying an action -- CLAUDE.md keeps / as the
@@ -22,153 +26,152 @@ async function post<T>(payload: Record<string, unknown>): Promise<T> {
   return data;
 }
 
-export interface GeneratedProblemSet {
-  set_id: number;
-  run_id: number;
-  // What was asked for, which is not always what arrived: a set cut short by
-  // the token cap opens with the problems that finished.
-  requested_count: number;
-  problems: MathPracticeProblem[];
-}
+const wireScreenshots = (shots: UnsavedScreenshot[]) =>
+  shots.map((s) => ({
+    base64: s.base64,
+    mimeType: s.mimeType,
+    w: s.w,
+    h: s.h,
+    byteSize: s.byteSize,
+  }));
 
-/** A prompt typed fresh: generates, and becomes a generator on the way through. */
-export const generateProblems = (
-  prompt: string,
-  attachments: UnsavedImageAttachment[],
-  requestedCount: number,
-  name: string,
-  tagsByField: Partial<Record<StudyContextTagField, string[]>>,
-) =>
-  post<GeneratedProblemSet>({
-    action: "generate_problems",
-    prompt,
-    requested_count: requestedCount,
-    // Empty means "ask the model for one" on the worker side.
-    name,
-    study_context_tags_by_field: tagsByField,
-    unsaved_image_attachments: attachments.map((a) => ({
-      base64: a.base64,
-      mimeType: a.mimeType,
-      w: a.w,
-      h: a.h,
-      byteSize: a.byteSize,
-    })),
+// ---- the bank ---------------------------------------------------------------
+
+export const listTheBank = () =>
+  post<{ problems: MathPracticeProblem[]; study_context_tags: StudyContextTag[] }>({
+    action: "list_the_bank",
   });
+
+export const trophyWall = () => post<{ attempts: Trophy[] }>({ action: "trophy_wall" });
+
+// ---- intake -----------------------------------------------------------------
 
 /**
- * The same prompt, filed without spending a generate on it. Everything a fresh
- * generate would record is recorded -- name, screenshots, fields, the count it
- * should ask for -- and the model is only asked for a name if none was typed.
+ * Read every problem off a screenshot. A lettered question comes back as that
+ * many problems, each self-contained, so the parts are atoms in their own right.
+ *
+ * Takes either freshly pasted images or the ids of screenshots already waiting,
+ * which is what makes a failed transcription a retry rather than a re-paste.
  */
-export const saveNamedProblemGenerator = (
+export const transcribeFromScreenshot = (
+  shots: UnsavedScreenshot[],
+  note: string,
+  tagsByField: Partial<Record<StudyContextTagField, string[]>>,
+  screenshotIds: number[] = [],
+) =>
+  post<{ problem_ids: number[] }>({
+    action: "transcribe_from_screenshot",
+    note,
+    study_context_tags_by_field: tagsByField,
+    unsaved_screenshots: wireScreenshots(shots),
+    screenshot_of_record_ids: screenshotIds,
+  });
+
+export const buildToOrderFromPrompt = (
   prompt: string,
-  attachments: UnsavedImageAttachment[],
   requestedCount: number,
-  name: string,
   tagsByField: Partial<Record<StudyContextTagField, string[]>>,
 ) =>
-  post<{ named_problem_generator_id: number; name: string }>({
-    action: "save_named_problem_generator",
+  post<{ problem_ids: number[] }>({
+    action: "build_to_order_from_prompt",
     prompt,
     requested_count: requestedCount,
-    name,
     study_context_tags_by_field: tagsByField,
-    unsaved_image_attachments: attachments.map((a) => ({
-      base64: a.base64,
-      mimeType: a.mimeType,
-      w: a.w,
-      h: a.h,
-      byteSize: a.byteSize,
-    })),
   });
 
-/** More of a type already named. Same verb, entered by id instead of by text. */
-export const practiceNamedProblemGenerator = (
-  namedProblemGeneratorId: number,
-  requestedCount: number,
-) =>
-  post<GeneratedProblemSet>({
-    action: "generate_problems",
-    named_problem_generator_id: namedProblemGeneratorId,
-    requested_count: requestedCount,
+/** One problem's table. Fired per problem so an intake need not wait on them. */
+export const breakIntoManeuvers = (problemId: number) =>
+  post<{ maneuver_count: number }>({ action: "break_into_maneuvers", id: problemId });
+
+export const listScreenshotsAwaitingTranscription = () =>
+  post<{ screenshots: AwaitingScreenshot[] }>({
+    action: "list_screenshots_awaiting_transcription",
   });
 
-export const listNamedProblemGenerators = () =>
-  post<{ generators: NamedProblemGenerator[]; study_context_tags: StudyContextTag[] }>({
-    action: "list_named_problem_generators",
-  });
+// ---- filing -----------------------------------------------------------------
 
 /**
- * Replace one field's tags on a generator, leaving the other fields alone.
- * Names, not ids: one the field has not seen is created on the way through and
- * one left wearing nothing is retired. Returns the catalogue as it then stands.
+ * Replace one field's tags on a problem, leaving the other fields alone.
+ * Names, not ids: one the field has not seen is created on the way through.
+ * Returns the catalogue as it then stands.
  */
-export const retagNamedProblemGenerator = (
+export const retagProblem = (
   id: number,
   field: StudyContextTagField,
   names: string[],
 ) =>
   post<{ study_context_tags: StudyContextTag[]; study_context_tag_ids: number[] }>({
-    action: "retag_named_problem_generator",
+    action: "retag_problem",
     id,
     field,
     study_context_tag_names: names,
   });
 
-export const renameNamedProblemGenerator = (id: number, name: string) =>
-  post<{ ok: true; name: string }>({
-    action: "rename_named_problem_generator",
-    id,
-    name,
-  });
+export const renameProblem = (id: number, name: string) =>
+  post<{ ok: true; name: string }>({ action: "rename_problem", id, name });
 
-export const reviseNamedProblemGeneratorPrompt = (id: number, promptText: string) =>
-  post<{ ok: true }>({
-    action: "revise_named_problem_generator_prompt",
-    id,
-    prompt_text: promptText,
-  });
+export const setDefaultServiceStyle = (id: number, style: DefaultServiceStyle) =>
+  post<{ ok: true }>({ action: "set_default_service_style", id, default_service_style: style });
 
 /** Both directions, the way a mark is set and cleared. */
-export const archiveNamedProblemGenerator = (id: number, archived: boolean) =>
-  post<{ ok: true }>({
-    action: "archive_named_problem_generator",
-    id,
-    archived,
+export const archiveProblem = (id: number, archived: boolean) =>
+  post<{ ok: true }>({ action: "archive_problem", id, archived });
+
+// ---- practising -------------------------------------------------------------
+
+/** Ticked problems become a run. Exact serve: no model call, so this is instant. */
+export const openPracticeRun = (problemIds: number[]) =>
+  post<{ run_id: number; problems: ServedProblem[] }>({
+    action: "open_practice_run",
+    problem_ids: problemIds,
   });
 
-export const recordAttempt = (
-  problemId: number,
+export const recordProblemWorked = (
   runId: number,
+  ordinal: number,
   elapsedMs: number,
-  skipped = false,
+  neededHelp: boolean,
 ) =>
-  post<{ attempt_id: number }>({
-    action: "record_attempt",
-    problem_id: problemId,
+  post<{ ok: true }>({
+    action: "record_problem_worked",
     run_id: runId,
+    id: ordinal,
     elapsed_ms: elapsedMs,
-    // A skip pre-fills self_grade; anything else is left NULL to be graded on
-    // the answer page. The problem view no longer skips, but the worker still
-    // honours the flag.
-    skipped,
+    needed_help: neededHelp,
   });
+
+/**
+ * The table, fetched mid-attempt because help was asked for. Nothing arrives
+ * until it is asked for, which is the same bargain the answers page makes --
+ * the client hides the results until each is uncovered.
+ */
+export const peekAtManeuvers = (problemId: number) =>
+  post<{ maneuvers: Maneuver[] }>({ action: "peek_at_maneuvers", id: problemId });
 
 export const revealAnswers = (runId: number) =>
-  post<{ rows: AnswerRow[] }>({
+  post<{ rows: AnswerRow[]; maneuvers: Maneuver[]; marks: PerManeuverCreditMark[] }>({
     action: "reveal_answers",
     run_id: runId,
   });
 
-export const gradeAttempt = (
-  attemptId: number,
-  selfGrade: SelfGrade,
-) =>
-  post<{ ok: true }>({
-    action: "grade_attempt",
+/** Grading is per maneuver; the attempt's outcome comes back as a rollup. */
+export const markManeuverCredit = (attemptId: number, maneuverId: number, gotIt: boolean) =>
+  post<{ outcome: AttemptOutcome | null }>({
+    action: "mark_maneuver_credit",
     attempt_id: attemptId,
-    self_grade: selfGrade,
+    maneuver_id: maneuverId,
+    got_it: gotIt,
   });
+
+export const clearManeuverCredit = (attemptId: number, maneuverId: number) =>
+  post<{ outcome: AttemptOutcome | null }>({
+    action: "clear_maneuver_credit",
+    attempt_id: attemptId,
+    maneuver_id: maneuverId,
+  });
+
+export const skipAttempt = (attemptId: number) =>
+  post<{ outcome: AttemptOutcome }>({ action: "skip_attempt", attempt_id: attemptId });
 
 export const markForFurtherPractice = (attemptId: number, marked: boolean) =>
   post<{ ok: true }>({
@@ -176,10 +179,3 @@ export const markForFurtherPractice = (attemptId: number, marked: boolean) =>
     attempt_id: attemptId,
     marked,
   });
-
-/** Opens a new set on the same prompt, weighted toward this run's marks. */
-export const furtherPractice = (runId: number) =>
-  post<GeneratedProblemSet>({ action: "further_practice", run_id: runId });
-
-export const trophyWall = () =>
-  post<{ attempts: Trophy[] }>({ action: "trophy_wall" });

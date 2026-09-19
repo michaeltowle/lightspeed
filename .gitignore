@@ -6,3 +6,7 @@ dist/
 
 src/generated/
 .cache/
+
+MAJOR_REWRITE.md
+# Never commit: holds a live Anthropic key for local dev.
+local-anthropic-key-for-vibe-coding.txt

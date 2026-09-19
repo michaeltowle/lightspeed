@@ -1,36 +1,67 @@
-import { recordAttempt } from "../api";
+import { peekAtManeuvers, recordProblemWorked } from "../api";
 import { h } from "../lib/dom";
 import { renderMathHtml } from "../lib/katex-boot";
-import type { MathPracticeProblem, View } from "../types";
+import { renderManeuverTable } from "../lib/maneuver-table";
+import type { ServedProblem, View } from "../types";
 
 /**
  * One problem at a time, forward only. Because there is no back navigation each
  * problem has exactly one interval, so timing is a single start/stop -- no
  * accumulation across visits.
  *
- * Mike works on paper, so this view is display-only: no answer input.
+ * Mike works on paper, so this view is display-only: no answer input. What it
+ * does offer is help -- the maneuver table with every result covered, each
+ * uncoverable on its own. Taking it is recorded on the attempt rather than
+ * disqualifying it: an assisted solve is still a solve, it just says so.
  */
 export function renderProblem(
   root: HTMLElement,
   runId: number,
-  requestedCount: number,
-  problems: MathPracticeProblem[],
+  problems: ServedProblem[],
   index: number,
   go: (view: View) => void,
 ): void {
   const problem = problems[index];
-  // A set can arrive shorter than it was asked for: when the model runs out of
-  // room mid-set the finished problems are kept and the rest are lost. Say so,
-  // rather than leaving the count to look like a miscount.
-  const shortfall = requestedCount - problems.length;
   const isLast = index === problems.length - 1;
   const startedAt = performance.now();
   let advancing = false;
+  let neededHelp = false;
 
   const bodyEl = h("div", { class: "problem-body" });
-  renderMathHtml(bodyEl, problem.problem_html);
+  renderMathHtml(bodyEl, problem.statement_html);
 
   const statusEl = h("div", { id: "out" });
+  const helpPanelEl = h("div", {});
+
+  // A problem with no table yet has no help to give and no answer to reveal at
+  // the end. Saying so here beats letting it surprise you on the answers page.
+  const helpEl = h(
+    "button",
+    {
+      type: "button",
+      disabled: !problem.broken_into_maneuvers_at,
+      title: problem.broken_into_maneuvers_at
+        ? "show the method, with every result covered"
+        : "this problem has not been broken into maneuvers yet",
+    },
+    [problem.broken_into_maneuvers_at ? "help" : "no table yet"],
+  );
+
+  helpEl.addEventListener("click", async () => {
+    helpEl.disabled = true;
+    neededHelp = true;
+    try {
+      const { maneuvers } = await peekAtManeuvers(problem.id);
+      helpPanelEl.replaceChildren(
+        h("div", { class: "meta" }, ["the method — results covered until you uncover them"]),
+        renderManeuverTable(maneuvers, { mode: "help" }),
+      );
+    } catch (err) {
+      statusEl.textContent = err instanceof Error ? err.message : String(err);
+      statusEl.className = "err";
+      helpEl.disabled = false;
+    }
+  });
 
   async function advance(): Promise<void> {
     if (advancing) return;
@@ -38,11 +69,13 @@ export function renderProblem(
     const elapsed = performance.now() - startedAt;
 
     try {
-      // self_grade is left NULL here; skipping is expressed on the answer page.
-      // The trophy wall shows graded attempts only, so nothing appears yet.
-      await recordAttempt(problem.id, runId, Math.round(elapsed));
+      // The attempt row already exists -- every one in the run was written when
+      // it opened -- so this fills in what the working produced. The outcome
+      // stays null until the answers page, which is why nothing appears on the
+      // wall yet.
+      await recordProblemWorked(runId, index, Math.round(elapsed), neededHelp);
       if (isLast) go({ name: "answers", runId });
-      else go({ name: "problem", runId, requestedCount, problems, index: index + 1 });
+      else go({ name: "problem", runId, problems, index: index + 1 });
     } catch (err) {
       statusEl.textContent = err instanceof Error ? err.message : String(err);
       statusEl.className = "err";
@@ -52,17 +85,26 @@ export function renderProblem(
 
   root.replaceChildren(
     h("div", { class: "problem-meta" }, [
-      `${index + 1} of ${problems.length}`,
-      ...(shortfall > 0
-        ? [`  ·  asked for ${requestedCount}, the model had room for ${problems.length}`]
+      // The number off the page leads, because that is what Mike is working
+      // from on paper. The quiz position is kept back for the answers page.
+      ...(problem.textbook_problem_number_label
+        ? [
+            h("span", { class: "textbook-problem-number-label" }, [
+              problem.textbook_problem_number_label,
+            ]),
+            "  ·  ",
+          ]
         : []),
+      `${index + 1} of ${problems.length}`,
     ]),
     bodyEl,
     h("div", { class: "row" }, [
       h("button", { type: "button", id: "go", onclick: () => void advance() }, [
         isLast ? "next (finish)" : "next",
       ]),
+      helpEl,
     ]),
+    helpPanelEl,
     statusEl,
   );
 }

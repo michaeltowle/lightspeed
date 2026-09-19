@@ -1,201 +1,27 @@
-import { createAnthropic } from "@ai-sdk/anthropic";
-import { generateObject, generateText, NoObjectGeneratedError } from "ai";
-import { z } from "zod";
+import { FAVICON_BASE64, KATEX_FONTS_BASE64 } from "./generated/bundle";
+import { indexPageDocument } from "./page";
 import {
-  CLIENT_JS,
-  FAVICON_BASE64,
-  KATEX_CSS,
-  KATEX_FONTS_BASE64,
-} from "./generated/bundle";
+  breakIntoManeuvers,
+  buildToOrderFromPrompt,
+  transcribeFromScreenshot,
+} from "./model";
+import {
+  inheritTags,
+  isStudyContextTagField,
+  mandatesFor,
+  normalizeTagNames,
+  setAllTagFields,
+  setTagsForField,
+  tagCatalogue,
+} from "./tags";
+import type { Env } from "./env";
 
-export interface Env {
-  ANTHROPIC_API_KEY: string;
-  LIGHTSPEED_APP_RECORDS: D1Database;
-  // Injected at deploy time by the `deploy` npm script (see package.json).
-  // Absent under `wrangler dev`, which renders the badge as "local dev".
-  DEPLOY_BRANCH?: string;
-  DEPLOYED_AT?: string;
-}
+export type { Env };
 
-const CURRENT_AUTHORING_MODEL_ID = "claude-opus-5";
+const MAX_NAME_LENGTH = 64;
+const MAX_LABEL_LENGTH = 24;
 
-// Naming a practice type is a one-line job that never touches the maths, so it
-// does not need the authoring model. It runs alongside problem generation rather
-// than before it, so the only thing its speed protects is the retry path.
-const CURRENT_NAMING_MODEL_ID = "claude-haiku-4-5-20251001";
-
-// How hard the model thinks before it answers. "high" is already the API
-// default, so naming it here changes nothing today -- it pins the setting so a
-// future SDK or API default cannot quietly lower it.
-//
-// Lower it only with evidence. The walkthroughs are the answer key Mike grades
-// himself against, so a cheaper answer that reads right but is wrong is the
-// worst failure this app has: it does not look like a bug, it looks like being
-// wrong about the maths.
-const MODEL_REASONING_EFFORT = "high";
-
-// Problem generation is the one path that *does* need a directive, since the
-// output shape is load-bearing.
-const PROBLEM_GENERATION_DIRECTIVE = [
-  "You generate math practice problems.",
-  "",
-  "Return exactly the requested number of problems.",
-  "Each problem gets three parts: a self-contained statement, a worked",
-  "walkthrough, and the final answer on its own. Produce them in that order:",
-  "work the problem first and read the answer off the finished steps.",
-  "",
-  "The walkthrough shows the steps. Its last element must be a <p> beginning",
-  "with the word \"Hence\" that restates the final answer, so every walkthrough",
-  "lands on its conclusion instead of trailing off.",
-  "",
-  "The final answer is the result and nothing else -- no working, no restatement",
-  "of the question, no lead-in words. It is read at a glance to check an answer",
-  "already worked out on paper.",
-  "",
-  "Check every answer before you commit to it. For an indefinite integral,",
-  "differentiate your antiderivative and confirm it returns the integrand. For a",
-  "definite integral, confirm the antiderivative the same way, then re-evaluate",
-  "it at both bounds and recheck the subtraction. Verify a substitution by",
-  "back-substituting to the original variable, and confirm the transformed",
-  "limits whenever the bounds changed. For an equation, substitute the solution",
-  "back into the original and confirm it holds.",
-  "",
-  "Sanity-check the result against the problem: the sign, the magnitude, the",
-  "domain (nothing divided by zero, no logarithm of a nonpositive quantity, no",
-  "root of a negative where the problem is real-valued), and the constant of",
-  "integration wherever one belongs. If a check fails, redo the work -- do not",
-  "emit an answer you have already found to be wrong.",
-  "",
-  "Do the checking inside the walkthrough, before the final answer is written.",
-  "The final answer restates what the walkthrough already established -- if the",
-  "check changes the result, correct the walkthrough rather than letting the two",
-  "disagree.",
-  "",
-  "Emit HTML for all three. Keep the markup minimal: p, br, ul, ol, li, sup,",
-  "sub, em, strong. Do not emit script, style, iframe, form, or any attributes.",
-  "",
-  "Write all mathematics as LaTeX inside $...$ for inline and $$...$$ for",
-  "display. Do not use Unicode math symbols or plain-text notation like x^2.",
-].join("\n");
-
-// Split out from the set schema so a single problem can be validated on its
-// own -- the salvage path below checks recovered problems one at a time.
-const PROBLEM_GENERATION_ITEM_SCHEMA = z.object({
-  problem_html: z.string().describe("The problem statement, as HTML with $...$ math."),
-  // Ordered before the final answer on purpose: the model emits fields in
-  // schema order, so working the steps first means the answer is read off
-  // finished work rather than guessed at and then justified.
-  solution_walkthrough_html: z
-    .string()
-    .describe(
-      'The worked steps, as HTML with $...$ math. The last element must be a <p> starting with "Hence" that restates the final answer.',
-    ),
-  final_answer_html: z
-    .string()
-    .describe(
-      "The final answer alone, as HTML with $...$ math. No working. Must match the walkthrough's closing line.",
-    ),
-});
-
-const PROBLEM_GENERATION_SCHEMA = z.object({
-  problems: z
-    .array(PROBLEM_GENERATION_ITEM_SCHEMA)
-    .describe("The generated problems, in the order they should be worked."),
-});
-
-// The name is what turns a prompt into something Mike can scan on the dashboard
-// and recognise weeks later, so it has to name the *skill*, not echo the request.
-const GENERATOR_NAMING_DIRECTIVE = [
-  "You name kinds of math practice.",
-  "",
-  "Given a prompt asking for practice problems, reply with a short label for the",
-  "skill it drills -- two to five words, lowercase, no trailing punctuation.",
-  "",
-  "Name the skill, not the request: \"u-substitution with new limits\", not",
-  "\"definite integrals please\". Reply with the label alone and nothing else.",
-].join("\n");
-
-const MAX_GENERATOR_NAME_LENGTH = 64;
-
-const MAX_TAG_NAME_LENGTH = 32;
-const MAX_TAGS_PER_GENERATOR = 8;
-
-const STUDY_CONTEXT_TAG_FIELDS = ["class", "source", "target", "status"] as const;
-type StudyContextTagField = (typeof STUDY_CONTEXT_TAG_FIELDS)[number];
-
-const isStudyContextTagField = (value: unknown): value is StudyContextTagField =>
-  STUDY_CONTEXT_TAG_FIELDS.includes(value as StudyContextTagField);
-
-/**
- * Pale ground, saturated text of the same hue -- the shape Microsoft Lists gives
- * a choice pill. Its actual defaults are not published anywhere citable and have
- * changed at least once, so these are built to the same rule rather than copied,
- * and ordered the way Lists runs: cool hues first, warm after, neutral last.
- *
- * A new tag takes the next entry round, so the first ten in a field are all
- * distinguishable before any colour repeats. Dark pairs are the same hues
- * re-seated for a dark ground -- a pale pill on black glares.
- */
-const CHIP_COLOR_PALETTE = [
-  { light: ["#E8E6F8", "#4F52B2"], dark: ["#31325C", "#B9BCF0"] },
-  { light: ["#DDECF9", "#0F6CBD"], dark: ["#17354F", "#8FC4EE"] },
-  { light: ["#D5EFEF", "#0B6B6B"], dark: ["#123C3C", "#86D3D3"] },
-  { light: ["#DCF2E3", "#0E7A42"], dark: ["#133A26", "#86D6A6"] },
-  { light: ["#FAF0CE", "#7D6206"], dark: ["#40360D", "#E0C868"] },
-  { light: ["#FCE6D4", "#A54C08"], dark: ["#4A2C14", "#F0B183"] },
-  { light: ["#FBDCD8", "#B3303F"], dark: ["#4C1F22", "#F0A099"] },
-  { light: ["#FADAE9", "#A3007F"], dark: ["#47162F", "#EFA3CE"] },
-  { light: ["#EEDDF3", "#7A4FA8"], dark: ["#3A2749", "#CBA8E4"] },
-  { light: ["#E6E8EB", "#4A5560"], dark: ["#2B3138", "#B6C0C9"] },
-];
-
-const chipColorPaletteCss = [
-  ...CHIP_COLOR_PALETTE.map(
-    (entry, i) =>
-      `  .chip-color-${i} { background: ${entry.light[0]}; color: ${entry.light[1]}; border-color: ${entry.light[0]}; }`,
-  ),
-  "  @media (prefers-color-scheme: dark) {",
-  ...CHIP_COLOR_PALETTE.map(
-    (entry, i) =>
-      `    .chip-color-${i} { background: ${entry.dark[0]}; color: ${entry.dark[1]}; border-color: ${entry.dark[0]}; }`,
-  ),
-  "  }",
-].join("\n");
-
-/**
- * Trim, squash and de-duplicate a typed tag list.
- *
- * De-duplication is case-insensitive to match the column's NOCASE uniqueness:
- * without it a name typed twice in one list is two rows to insert, and the
- * second collides with the first on the way in.
- */
-function normalizeTagNames(raw: unknown): string[] {
-  if (!Array.isArray(raw)) return [];
-  const seen = new Set<string>();
-  const names: string[] = [];
-  for (const entry of raw) {
-    const name = String(entry).replace(/\s+/g, " ").trim().slice(0, MAX_TAG_NAME_LENGTH);
-    if (!name || seen.has(name.toLowerCase())) continue;
-    seen.add(name.toLowerCase());
-    names.push(name);
-    if (names.length === MAX_TAGS_PER_GENERATOR) break;
-  }
-  return names;
-}
-
-/** First line of a prompt, squashed to one line -- the fallback when naming fails. */
-function firstLineOfPrompt(promptText: string): string {
-  const line = promptText.replace(/\s+/g, " ").trim();
-  return line.slice(0, MAX_GENERATOR_NAME_LENGTH) || "untitled practice";
-}
-
-interface GeneratedProblemRow {
-  problem_html: string;
-  solution_walkthrough_html: string;
-  final_answer_html: string;
-}
-
-interface UnsavedImageAttachment {
+interface UnsavedScreenshot {
   base64: string;
   mimeType: string;
   w: number;
@@ -226,734 +52,17 @@ function bytesToBase64(value: unknown): string {
   return btoa(binary);
 }
 
-// ai@4 always sends `temperature` (it defaults to 0 rather than being omitted).
-// Anthropic removed the sampling params on Opus 4.7 and later, so they must be
-// stripped from the wire or the request 400s.
-//
-// `effort` is a parameter rather than a constant because it is an Opus-5-era
-// setting: the naming model predates it and 400s on it, so that call passes null.
-const anthropicFor = (env: Env, effort: string | null = MODEL_REASONING_EFFORT) =>
-  createAnthropic({
-    apiKey: env.ANTHROPIC_API_KEY,
-    fetch: async (input, init) => {
-      if (typeof init?.body === "string") {
-        const body = JSON.parse(init.body);
-        delete body.temperature;
-        delete body.top_p;
-        delete body.top_k;
-        // ai@4 predates `output_config` and has no way to express effort, so it
-        // is injected here alongside the params that have to be stripped.
-        if (effort) body.output_config = { ...body.output_config, effort };
-        init = { ...init, body: JSON.stringify(body) };
-      }
-      return fetch(input, init);
-    },
-  });
-
-const userContent = (
-  promptText: string,
-  shots: { base64: string; mimeType: string }[],
-) => [
-  { type: "text" as const, text: promptText.trim() || "(no prompt)" },
-  ...shots.map((shot) => ({
-    type: "image" as const,
-    image: shot.base64,
-    mimeType: shot.mimeType,
-  })),
-];
-
-/**
- * Ask the model for a short name for the kind of practice a prompt asks for.
- *
- * Never throws. A generate that produced good problems must not fail because the
- * label was unavailable -- the prompt's first line is a serviceable name and the
- * dashboard lets it be changed anyway.
- */
-async function suggestGeneratorName(env: Env, promptText: string): Promise<string> {
-  const fallback = firstLineOfPrompt(promptText);
-  if (!promptText.trim()) return fallback;
-
-  try {
-    const { text } = await generateText({
-      model: anthropicFor(env, null)(CURRENT_NAMING_MODEL_ID),
-      maxTokens: 32,
-      system: GENERATOR_NAMING_DIRECTIVE,
-      messages: [{ role: "user", content: promptText.trim() }],
-    });
-    const name = text.replace(/\s+/g, " ").trim().slice(0, MAX_GENERATOR_NAME_LENGTH);
-    return name || fallback;
-  } catch {
-    return fallback;
-  }
-}
-
-async function generateProblemsFromPrompt(
-  env: Env,
-  promptText: string,
-  shots: { base64: string; mimeType: string }[],
-  requestedCount: number,
-  emphasisProblemsHtml: string[] = [],
-  problemsNotToRepeatHtml: string[] = [],
-): Promise<GeneratedProblemRow[]> {
-  // Exemplars are problems this app generated earlier, fed back verbatim. They
-  // steer the new set without narrowing it: the original prompt still sets the
-  // subject and difficulty, the marks only decide where the weight falls.
-  const emphasis = emphasisProblemsHtml.length
-    ? [
-        "",
-        "",
-        "These problems from the previous set were marked for further practice.",
-        "They are samples of the skill to drill, not problems to reproduce. Hold",
-        "the subject and difficulty of the prompt above and weight this set toward",
-        "the same skill, but write fresh problems: change the numbers, the setup",
-        "and the wording, and vary the structure wherever the skill allows it.",
-        "",
-        ...emphasisProblemsHtml.map((html, idx) => `${idx + 1}. ${html}`),
-        "",
-        "Do not restate any of the problems above verbatim. Reuse one only if the",
-        "prompt asks for the same problems again, or if the skill admits so few",
-        "forms that there is genuinely nothing to vary but the numbers.",
-      ].join("\n")
-    : "";
-
-  // The same guard as the marks, without the steering. These are what the
-  // generator has already handed out, so they only say what not to repeat --
-  // the prompt alone decides what to practise. The exception is spelled out
-  // because some prompts ask for particular problems exactly as stated, and
-  // those have to keep coming back verbatim every time.
-  const history = problemsNotToRepeatHtml.length
-    ? [
-        "",
-        "",
-        "These problems were already given for this prompt in earlier sets. They",
-        "are a record of what has been practised, not samples to steer by: the",
-        "prompt above alone sets the subject, the skill and the difficulty. Write",
-        "fresh problems: change the numbers, the setup and the wording, and vary",
-        "the structure wherever the skill allows it.",
-        "",
-        ...problemsNotToRepeatHtml.map((html, idx) => `${idx + 1}. ${html}`),
-        "",
-        "Do not restate any of the problems above verbatim. The one exception is a",
-        "prompt that asks for particular problems exactly as stated -- the problems",
-        "in an attached screenshot, say. Then give exactly those, whether or not",
-        "they appear above. If the skill admits so few forms that only the numbers",
-        "can change, change the numbers.",
-      ].join("\n")
-    : "";
-
-  // The provider defaults to 4096 output tokens, which a set of any size runs
-  // past: a worked walkthrough with its verification steps costs several
-  // hundred tokens, and LaTeX inside JSON pays for every backslash twice.
-  //
-  // The budget also has to cover reasoning, which is easy to miss. Opus 5 thinks
-  // by default -- omitting the `thinking` parameter meant "off" on Opus 4.7 and
-  // 4.8, but on Opus 5 it means adaptive -- and those tokens come out of this
-  // same cap before a single problem is written. The directive above asks for
-  // the most expensive output there is (differentiate back, re-substitute,
-  // recheck the bounds), so a thin per-problem allowance is spent on the
-  // thinking and the set truncates with nothing to show.
-  //
-  // 16000 is the ceiling where a non-streaming request is still safe. Past five
-  // problems every set sits at it and leans on the salvage below.
-  const outputTokenBudget = Math.min(16000, 2000 + requestedCount * 3000);
-
-  try {
-    const { object } = await generateObject({
-      model: anthropicFor(env)(CURRENT_AUTHORING_MODEL_ID),
-      maxTokens: outputTokenBudget,
-      schema: PROBLEM_GENERATION_SCHEMA,
-      system: PROBLEM_GENERATION_DIRECTIVE,
-      messages: [
-        {
-          role: "user",
-          content: userContent(
-            `${promptText.trim() || "(no prompt)"}${emphasis}${history}\n\nGenerate exactly ${requestedCount} problems.`,
-            shots,
-          ),
-        },
-      ],
-    });
-    return object.problems;
-  } catch (err) {
-    // Say which wall was hit. The generic schema-mismatch message reads like the
-    // model went off-format, when the reply was merely cut off mid-set.
-    if (NoObjectGeneratedError.isInstance(err) && err.finishReason === "length") {
-      const salvaged = salvageCompleteProblems(err.text);
-      // Every problem that closed before the cut is finished work already paid
-      // for, so the set opens with those rather than failing outright. Only a
-      // cut landing before the first problem closes leaves nothing to keep.
-      if (salvaged.length) return salvaged;
-      throw new Error(
-        `the model ran out of room before it finished a single problem -- ask for fewer`,
-      );
-    }
-    throw err;
-  }
-}
-
-/**
- * Pull the complete problems out of a reply the token cap cut short.
- *
- * `generateObject` discards the whole set when the JSON will not parse, but a
- * truncated reply is only broken at its tail -- every problem that closed
- * before the cut is intact. Walk the `problems` array and keep each object
- * whose braces balanced and whose fields still satisfy the schema.
- */
-function salvageCompleteProblems(partialJson: string | undefined): GeneratedProblemRow[] {
-  if (!partialJson) return [];
-
-  const problemsKeyAt = partialJson.indexOf('"problems"');
-  if (problemsKeyAt < 0) return [];
-  const arrayStart = partialJson.indexOf("[", problemsKeyAt);
-  if (arrayStart < 0) return [];
-
-  const salvaged: GeneratedProblemRow[] = [];
-  let depth = 0;
-  let objectStart = -1;
-  let inString = false;
-  let escaped = false;
-
-  for (let i = arrayStart + 1; i < partialJson.length; i++) {
-    const ch = partialJson[i];
-
-    if (inString) {
-      // The payload is mostly LaTeX, so it is mostly backslashes. Escape
-      // tracking has to be exact here or the scanner loses the closing quote
-      // and reads every brace in the maths as structure.
-      if (escaped) escaped = false;
-      else if (ch === "\\") escaped = true;
-      else if (ch === '"') inString = false;
-      continue;
-    }
-
-    if (ch === '"') {
-      inString = true;
-    } else if (ch === "{") {
-      if (depth === 0) objectStart = i;
-      depth++;
-    } else if (ch === "}") {
-      depth--;
-      if (depth === 0 && objectStart >= 0) {
-        try {
-          const parsed = PROBLEM_GENERATION_ITEM_SCHEMA.safeParse(
-            JSON.parse(partialJson.slice(objectStart, i + 1)),
-          );
-          if (parsed.success) salvaged.push(parsed.data);
-        } catch {
-          // A balanced slice that will not parse means the scan has lost its
-          // place. The problems already collected are still good; stop there.
-          break;
-        }
-        objectStart = -1;
-      }
-    } else if (ch === "]" && depth === 0) {
-      break;
-    }
-  }
-
-  return salvaged;
-}
-
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), {
     status,
     headers: { "content-type": "application/json" },
   });
 
-const attrEscape = (value: string) =>
-  value
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
-
-function indexPageDocument(env: Env): string {
-  return `<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>lightspeed</title>
-<link rel="icon" type="image/png" sizes="32x32" href="/?asset=favicon32" />
-<link rel="apple-touch-icon" sizes="180x180" href="/?asset=favicon180" />
-<style>${KATEX_CSS}</style>
-<style>
-  :root { color-scheme: light dark; }
-  * { box-sizing: border-box; }
-  /* Every display rule below is a class selector, which ties with the browser's
-     own [hidden] rule and then wins on order -- so without this, setting .hidden
-     on anything laid out with flex or grid does nothing at all. */
-  [hidden] { display: none !important; }
-  body {
-    font-family: system-ui, -apple-system, sans-serif;
-    margin: 0;
-    line-height: 1.45;
-    min-height: 100vh;
-  }
-  main#app {
-    position: relative;
-    z-index: 1;
-    max-width: 52rem;
-    margin: 0 auto;
-    padding: 1rem 1rem 5rem;
-  }
-  h1 { font-size: 1rem; font-weight: 600; opacity: 0.6; margin: 0 0 1rem; }
-
-  /* The trophy wall is a fixed layer behind every view, never navigated to. */
-  #trophy-wall {
-    position: fixed;
-    inset: 0;
-    z-index: 0;
-    padding: 0.75rem;
-    display: flex;
-    flex-wrap: wrap;
-    align-content: flex-start;
-    gap: 3px;
-    overflow: hidden;
-    pointer-events: none;
-  }
-  /* Unscoped on purpose: a generator card's strip is the same square as the
-     wall's, so the two always read as one language. */
-  .trophy {
-    width: 7px;
-    height: 7px;
-    border-radius: 1px;
-    background: rgba(128,128,128,0.30);
-  }
-  .trophy-right   { background: rgba(120,170,110,0.55); }
-  .trophy-wrong   { background: rgba(190,110,100,0.50); }
-
-  form { display: flex; flex-direction: column; gap: 0.75rem; }
-  textarea {
-    width: 100%; min-height: 5rem; padding: 0.6rem; font: inherit;
-    border: 1px solid rgba(128,128,128,0.5); border-radius: 6px;
-    resize: vertical; background: rgba(127,127,127,0.04); color: inherit;
-  }
-  input[type=number] {
-    width: 4.5rem; padding: 0.5rem; font: inherit; color: inherit;
-    border: 1px solid rgba(128,128,128,0.5); border-radius: 6px;
-    background: rgba(127,127,127,0.04);
-  }
-  .row { display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; }
-  button {
-    padding: 0.55rem 1rem; font: inherit; border-radius: 6px;
-    border: 1px solid rgba(128,128,128,0.5);
-    background: rgba(127,127,127,0.06); color: inherit; cursor: pointer;
-  }
-  button#go { font-weight: 600; }
-  button:disabled { opacity: 0.45; cursor: default; }
-
-  ul.shots { display: flex; flex-wrap: wrap; gap: 0.5rem; margin: 0; padding: 0; list-style: none; }
-  ul.shots li {
-    border: 1px solid rgba(128,128,128,0.4); border-radius: 6px;
-    padding: 0.4rem; width: 8.5rem; font-size: 0.75rem;
-    background: rgba(127,127,127,0.05);
-  }
-  ul.shots img { width: 100%; height: 4.5rem; object-fit: contain; display: block; }
-  ul.shots .dims { font-variant-numeric: tabular-nums; opacity: 0.75; margin-top: 0.25rem; }
-  ul.shots .drop { margin-top: 0.25rem; font-size: 0.75rem; padding: 0.15rem 0.4rem; }
-
-  /* One row per practice type. A table because these are rows of the same few
-     facts -- worked, right, last -- and columns let the eye run down one fact
-     at a time, which a wall of boxes never allowed. */
-  .generator-table {
-    width: 100%; border-collapse: collapse; margin: 1.25rem 0 0;
-    font-size: 0.85rem;
-  }
-  .generator-table th {
-    text-align: left; font-weight: 500; font-size: 0.68rem; opacity: 0.5;
-    padding: 0 0.4rem 0.3rem;
-    border-bottom: 1px solid rgba(128,128,128,0.35);
-  }
-  .generator-table th.col-num { text-align: right; }
-  .generator-table td {
-    padding: 0.3rem 0.4rem; vertical-align: middle;
-    border-bottom: 1px solid rgba(128,128,128,0.18);
-  }
-  /* The whole row is the selection target, so it has to look like one. */
-  .generator-row { cursor: pointer; }
-  .generator-row:hover { background: rgba(127,127,127,0.07); }
-  .generator-row.is-selected { background: rgba(127,127,127,0.15); }
-  .generator-row.is-selected td.generator-name { font-weight: 600; }
-
-  .col-select { width: 1.4rem; }
-  .col-select input { margin: 0; accent-color: #b06a2c; }
-  .col-strip { width: 8.5rem; }
-  .col-menu { width: 1.8rem; position: relative; }
-  td.generator-name { min-width: 9rem; overflow-wrap: anywhere; }
-
-  /* Time away from a type is the thing worth noticing on this page, so it is
-     marked on the row itself rather than left to be worked out from a date.
-     Two depths of the same beige: a few days off, and a week or more. */
-  .generator-row.is-going-cold { background: rgba(214, 196, 158, 0.10); }
-  .generator-row.is-going-cold:hover { background: rgba(214, 196, 158, 0.20); }
-  .generator-row.is-going-cold.is-selected { background: rgba(214, 196, 158, 0.30); }
-  .generator-row.is-gone-cold { background: rgba(214, 196, 158, 0.26); }
-  .generator-row.is-gone-cold:hover { background: rgba(214, 196, 158, 0.38); }
-  .generator-row.is-gone-cold.is-selected { background: rgba(214, 196, 158, 0.48); }
-  /* The phone selects what to practise; it does not tag and it does not read the
-     record. Six columns at 390px leave the name -- the one column you actually
-     select on -- a few characters a line, so everything but the class goes.
-     Filtering on any field survives as the chips above the table. */
-  @media (max-width: 40rem) {
-    .generator-table { font-size: 0.78rem; }
-    .generator-table th, .generator-table td {
-      padding-left: 0.2rem; padding-right: 0.2rem;
-    }
-    .col-strip, .col-field-source, .col-field-target, .col-field-status {
-      display: none;
-    }
-    td.generator-name { min-width: 0; }
-  }
-  .generator-name-input {
-    width: 100%; padding: 0.25rem 0.4rem; font: inherit; font-weight: 600;
-    color: inherit; border: 1px solid rgba(128,128,128,0.5); border-radius: 6px;
-    background: rgba(127,127,127,0.04);
-  }
-  .generator-strip { display: inline-flex; flex-wrap: wrap; gap: 3px; }
-  .generator-stats {
-    font-size: 0.72rem; opacity: 0.6; font-variant-numeric: tabular-nums;
-  }
-  .generator-stats.err { color: #c0392b; opacity: 1; }
-  .generator-prompt {
-    width: 100%; min-height: 6rem; font-size: 0.85rem;
-  }
-
-  /* Only one pane is up at a time, so the page is either for making a practice
-     type or for choosing one, never both at once. */
-  .tab-strip {
-    display: flex; gap: 0.25rem; align-items: flex-end;
-    border-bottom: 1px solid rgba(128,128,128,0.35); margin-bottom: 1.1rem;
-  }
-  .tab {
-    padding: 0.4rem 1.2rem; font-size: 0.8rem; cursor: pointer; color: inherit;
-    border: 1px solid rgba(128,128,128,0.35); border-bottom: none;
-    border-radius: 8px 8px 0 0; background: rgba(127,127,127,0.07);
-    opacity: 0.6; margin-bottom: -1px;
-  }
-  .tab:hover { opacity: 0.9; }
-  /* Sitting a pixel low with a background-coloured bottom edge is what makes the
-     lit tab read as part of the pane rather than a button above it. */
-  .tab.is-on {
-    opacity: 1; font-weight: 600;
-    background: Canvas; border-bottom: 1px solid Canvas;
-  }
-
-  .compose-fields {
-    display: grid; gap: 0.7rem; align-items: start;
-    grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr));
-  }
-  .compose-field { display: flex; flex-direction: column; gap: 0.25rem; }
-  /* The dimming sits on the label alone. On the column it would multiply down
-     into the chips, and no opacity on a child can undo an ancestor's. */
-  .compose-field-name { font-size: 0.68rem; opacity: 0.55; }
-  .compose-fields input {
-    width: 100%; padding: 0.4rem 0.5rem; font: inherit; font-size: 0.85rem;
-    color: inherit;
-    border: 1px solid rgba(128,128,128,0.5); border-radius: 6px;
-    background: rgba(127,127,127,0.04);
-  }
-  /* Everything the field already holds, one click away. Typing still works --
-     these only edit the box above them. */
-  .compose-field-chips { display: flex; flex-wrap: wrap; gap: 0.2rem; }
-  .compose-field-chips:empty { display: none; }
-
-  /* One practice button for the table, acting on whichever row is lit. */
-  .practice-launch-control { margin-top: 0.85rem; }
-  .practice-launch-control input[type=number] { width: 3.75rem; padding: 0.4rem; }
-  .practice-launch-control .practice { font-weight: 600; }
-
-  /* The same chip reads a row and, as a button, filters the table. */
-  .study-context-tag-cell { cursor: text; min-width: 5rem; }
-  .study-context-tag-chip {
-    display: inline-block; padding: 0.05rem 0.45rem; margin: 0.1rem 0.2rem 0.1rem 0;
-    border: 1px solid rgba(128,128,128,0.4); border-radius: 999px;
-    font-size: 0.7rem; white-space: nowrap;
-  }
-  .study-context-tag-empty { opacity: 0.25; }
-  .generator-row:hover .study-context-tag-empty { opacity: 0.6; }
-
-  /* Palette, emitted from the table the worker keeps so the two cannot drift. */
-${chipColorPaletteCss}
-  .study-context-tag-input {
-    width: 100%; padding: 0.2rem 0.35rem; font: inherit; font-size: 0.75rem;
-    color: inherit; border: 1px solid rgba(128,128,128,0.5); border-radius: 6px;
-    background: rgba(127,127,127,0.04);
-  }
-  .study-context-tag-filter {
-    display: flex; flex-wrap: wrap; gap: 0.3rem; align-items: center;
-    margin-top: 0.25rem;
-  }
-  .study-context-tag-filter .field-label {
-    font-size: 0.65rem; opacity: 0.4; margin-left: 0.6rem;
-  }
-  .study-context-tag-filter .field-label:first-child { margin-left: 0; }
-  /* No background or colour of its own: every chip button carries a palette
-     class, and an element-plus-class selector here would outrank it. Being
-     chosen shows as a ring, since the fill is already saying which tag it is. */
-  button.study-context-tag-chip { cursor: pointer; padding: 0.12rem 0.6rem; }
-  button.study-context-tag-chip.is-on {
-    font-weight: 600; border-color: currentColor;
-  }
-
-  /* The editor takes a row of its own beneath the one being tuned: a table cell
-     is no place to read a screenshot of a maths problem, and the screenshots are
-     half of what is being tuned. */
-  .prompt-editor-row { cursor: default; }
-  .prompt-editor-row:hover { background: none; }
-  .prompt-editor-row > td { padding: 0.7rem 0.4rem 1rem; }
-  .prompt-editor { display: grid; gap: 0.6rem; align-items: start; }
-  .prompt-editor .acts { grid-column: 1 / -1; }
-  .prompt-editor .generator-prompt { min-height: 11rem; }
-  .prompt-editor.has-shots { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
-  .shots-panel { display: flex; flex-direction: column; gap: 0.35rem; min-width: 0; }
-  /* Editing is a two-Dells job and is laid out for them. Narrow just stacks so
-     it degrades rather than breaks -- it is not a size being designed for. */
-  @media (max-width: 46rem) {
-    .prompt-editor.has-shots { grid-template-columns: 1fr; }
-  }
-  /* Qualified with the tag to outrank the ul.shots li/img rules above, which
-     would otherwise hold these to the compose box's 8.5rem letterboxed
-     thumbnail -- unreadable, and reading them is the whole point here. */
-  ul.generator-shots li { width: auto; max-width: 100%; }
-  /* Let the column width be the only real limit. The height cap is a backstop
-     for a very tall screenshot, not a size Mike should be squinting at. */
-  ul.generator-shots img {
-    width: auto; height: auto; max-width: 100%; max-height: 30rem;
-  }
-  ul.generator-shots a { display: block; }
-
-  /* The menu button is the affordance that works everywhere: right-click is a
-     convenience on the Dells, and the iPhone has no such thing. */
-  .generator-menu-open {
-    padding: 0 0.3rem; line-height: 1.3; font-size: 0.9rem;
-    border-color: transparent; background: none; opacity: 0.45;
-  }
-  .generator-menu-open:hover { opacity: 1; border-color: rgba(128,128,128,0.5); }
-  /* Anchored to its own cell, which is the only element in a table row that can
-     be relied on to hold an absolutely positioned child. */
-  .generator-menu {
-    position: absolute; top: 1.8rem; right: 0.2rem; z-index: 3;
-    display: flex; flex-direction: column; align-items: stretch;
-    border: 1px solid rgba(128,128,128,0.5); border-radius: 6px;
-    background: Canvas; overflow: hidden; min-width: 9rem;
-  }
-  .generator-menu button {
-    border: 0; border-radius: 0; background: none; text-align: left;
-    font-size: 0.8rem; padding: 0.45rem 0.7rem;
-  }
-  .generator-menu button:hover { background: rgba(127,127,127,0.12); }
-  .generator-menu button:disabled { opacity: 0.4; cursor: default; }
-  .generator-menu button:disabled:hover { background: none; }
-
-  /* What was worked on each of the last seven days. A fixed rail on the Dells,
-     where there is gutter going spare beside a 52rem column; above the table on
-     anything narrower, since there is nowhere else for it to be. */
-  .rolling-week-practice-ledger {
-    position: fixed; left: 1rem; top: 1rem; width: 10rem; z-index: 2;
-    padding: 0.55rem 0.65rem; font-size: 0.7rem;
-    border: 1px solid rgba(128,128,128,0.3); border-radius: 8px;
-    background: rgba(127,127,127,0.06);
-
-    /* The bar fills, all one tone: every class at the same OKLCH lightness and
-       chroma (0.73 / 0.11, pastel), with hues spread so neighbours come apart -- checked
-       under simulated protan and deutan vision as well as normal. Grey is the
-       one step off the tone: at the colours' own lightness it sits too close to
-       them to tell apart, so it recedes toward the ground instead. */
-    --ledger-class-fill-1: #69afe8;
-    --ledger-class-fill-2: #82b976;
-    --ledger-class-fill-3: #d98bb8;
-    --ledger-class-fill-4: #cca051;
-    --ledger-class-fill-5: #a79ce8;
-    --ledger-class-fill-6: #e58c84;
-    --ledger-no-class-fill: #cecece;
-  }
-  /* Same hues re-stepped for the dark ground (lightness 0.68), grey darker. */
-  @media (prefers-color-scheme: dark) {
-    .rolling-week-practice-ledger {
-      --ledger-class-fill-1: #599fd8;
-      --ledger-class-fill-2: #73a967;
-      --ledger-class-fill-3: #c87ca8;
-      --ledger-class-fill-4: #bc9041;
-      --ledger-class-fill-5: #978cd7;
-      --ledger-class-fill-6: #d47c76;
-      --ledger-no-class-fill: #636363;
-    }
-  }
-  /* Scoped to the ledger: these names describe its innards, not anything the
-     rest of the sheet is entitled to. */
-  .rolling-week-practice-ledger .ledger-title { opacity: 0.5; margin-bottom: 0.3rem; }
-  .rolling-week-practice-ledger .ledger-day {
-    display: grid; grid-template-columns: 4.2rem 1fr 1.2rem;
-    align-items: center; gap: 0.3rem; line-height: 1.75;
-  }
-  .rolling-week-practice-ledger .day-name {
-    opacity: 0.7; overflow: hidden; text-overflow: ellipsis;
-  }
-  .rolling-week-practice-ledger .ledger-day.is-today .day-name {
-    opacity: 1; font-weight: 600;
-  }
-  .rolling-week-practice-ledger .day-track {
-    display: block; height: 7px; border-radius: 3px;
-    background: rgba(128,128,128,0.11);
-  }
-  .rolling-week-practice-ledger .day-bar {
-    display: flex; height: 100%; border-radius: 3px; overflow: hidden;
-  }
-  /* One segment per class, its fill set inline from the variables above. */
-  .rolling-week-practice-ledger .day-bar > span { flex: 1 1 0; }
-  .rolling-week-practice-ledger .day-count {
-    text-align: right; opacity: 0.8; font-variant-numeric: tabular-nums;
-  }
-  .rolling-week-practice-ledger .ledger-key {
-    display: flex; flex-wrap: wrap; gap: 0.1rem 0.6rem; margin-top: 0.4rem;
-  }
-  /* The text is muted, not the entry: faded as a whole, the swatches came out
-     paler than the bars they name. */
-  .rolling-week-practice-ledger .key-entry {
-    display: inline-flex; align-items: center; gap: 0.3rem;
-    color: color-mix(in srgb, currentColor 75%, transparent);
-  }
-  .rolling-week-practice-ledger .key-swatch {
-    width: 0.55rem; height: 0.55rem; border-radius: 2px;
-  }
-  /* 52rem of column plus a 10rem rail and its margins. Below that the gutter is
-     gone and the rail would sit on top of the table. */
-  @media (max-width: 76rem) {
-    .rolling-week-practice-ledger {
-      position: static; width: 100%; max-width: 18rem; margin: 0 0 1.25rem;
-    }
-  }
-
-  .lightspeed-motto-line {
-    position: fixed; left: 0; right: 0; bottom: 0.6rem; z-index: 2;
-    text-align: center; font-size: 0.68rem;
-    color: rgba(128,128,128,0.8); pointer-events: none;
-  }
-
-  .problem-meta, .meta {
-    font-size: 0.75rem; opacity: 0.6; font-variant-numeric: tabular-nums;
-    margin-bottom: 0.5rem;
-  }
-  .problem-body {
-    font-size: 1.15rem; padding: 1.25rem; margin-bottom: 1rem;
-    border: 1px solid rgba(128,128,128,0.35); border-radius: 8px;
-    background: rgba(127,127,127,0.05);
-  }
-  .final-answer {
-    font-size: 1.35rem; font-weight: 600;
-    padding: 0.85rem 1.1rem; margin-bottom: 0.5rem;
-    border: 1px solid rgba(120,170,110,0.55); border-radius: 8px;
-    background: rgba(120,170,110,0.12);
-  }
-  .solution-walkthrough { margin-bottom: 0.6rem; }
-  .solution-walkthrough > summary {
-    cursor: pointer; font-size: 0.75rem; opacity: 0.6;
-    padding: 0.25rem 0; user-select: none;
-  }
-  .walkthrough-body {
-    padding: 0.75rem 1.25rem; margin-top: 0.35rem;
-    border-left: 3px solid rgba(128,128,128,0.35);
-    background: rgba(127,127,127,0.04);
-  }
-  /* Every walkthrough closes on a "Hence" line restating the answer, so its
-     last paragraph is the one the eye should land on. */
-  .walkthrough-body > p:last-child {
-    font-weight: 600; margin-bottom: 0;
-    padding: 0.35rem 0.6rem; border-radius: 4px;
-    background: rgba(120,170,110,0.14);
-  }
-
-  #out {
-    margin-top: 1rem; padding: 0.75rem; border-radius: 6px; min-height: 1rem;
-    border: 1px solid rgba(128,128,128,0.35);
-    background: rgba(127,127,127,0.04);
-    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-    font-size: 0.85rem; white-space: pre-wrap;
-  }
-  #out:empty { display: none; }
-  #out.err { border-color: #c0392b; color: #c0392b; }
-
-  #saved { list-style: none; margin: 0; padding: 0; }
-  #saved > li {
-    border: 1px solid rgba(128,128,128,0.35); border-radius: 8px;
-    padding: 0.75rem 0.9rem; margin-bottom: 0.75rem;
-    background: rgba(127,127,127,0.03);
-  }
-  .acts {
-    display: flex; gap: 0.4rem; align-items: center;
-    flex-wrap: wrap; margin-top: 0.6rem;
-  }
-  .acts .grade { font-size: 0.75rem; padding: 0.2rem 0.7rem; opacity: 0.65; }
-  .acts .grade-on { opacity: 1; font-weight: 600; border-color: currentColor; }
-  .mark {
-    display: flex; align-items: center; gap: 0.35rem; margin-left: auto;
-    font-size: 0.75rem; opacity: 0.7; cursor: pointer; user-select: none;
-  }
-  .mark input { accent-color: #b06a2c; margin: 0; }
-  #saved > li.marked {
-    border-color: rgba(176,106,44,0.65);
-    background: rgba(176,106,44,0.06);
-  }
-  #saved > li.marked .mark { opacity: 1; font-weight: 600; }
-
-  #deploy-badge {
-    position: fixed; right: 1rem; bottom: 1rem; z-index: 2;
-    padding: 0.5rem 0.75rem; border-radius: 8px;
-    border: 1px solid rgba(128,128,128,0.3);
-    background: rgba(127,127,127,0.10);
-    backdrop-filter: blur(6px);
-    font-size: 0.72rem; line-height: 1.6; pointer-events: none;
-  }
-  #deploy-badge .lbl { opacity: 0.55; }
-  #deploy-badge .val { color: #b06a2c; font-variant-numeric: tabular-nums; }
-  @media (prefers-color-scheme: dark) {
-    #deploy-badge .val { color: #d99a5b; }
-  }
-  @media (max-width: 30rem) {
-    #deploy-badge { position: static; margin: 2rem 1rem 1rem; display: inline-block; }
-  }
-</style>
-</head>
-<body>
-<main id="app"></main>
-
-<div id="deploy-badge"
-     data-at="${attrEscape(env.DEPLOYED_AT ?? "")}"
-     data-branch="${attrEscape(env.DEPLOY_BRANCH ?? "")}">
-  <div><span class="lbl">deployed</span> <span class="val" id="deploy-when"></span></div>
-  <div><span class="lbl">from branch</span> <span class="val" id="deploy-branch"></span></div>
-</div>
-
-<script>
-(function () {
-  var badge = document.getElementById('deploy-badge');
-  var at = badge.getAttribute('data-at');
-  var branch = badge.getAttribute('data-branch');
-
-  // Rendered in the viewer's local time, so it reads correctly on the phone
-  // and both Dells regardless of where the deploy ran.
-  function whenText(iso) {
-    if (!iso) return 'local dev';
-    var d = new Date(iso);
-    if (isNaN(d.getTime())) return 'local dev';
-    var mons = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-    var h = d.getHours();
-    var ampm = h >= 12 ? 'pm' : 'am';
-    h = h % 12; if (h === 0) h = 12;
-    var m = d.getMinutes();
-    return h + ':' + (m < 10 ? '0' + m : m) + ampm + ' on ' + mons[d.getMonth()] + ' ' + d.getDate();
-  }
-
-  document.getElementById('deploy-when').textContent = whenText(at);
-  document.getElementById('deploy-branch').textContent = branch ? '#' + branch : '#local';
-})();
-</script>
-
-<script>${CLIENT_JS}</script>
-</body>
-</html>`;
-}
+const tidy = (value: unknown, max: number) =>
+  String(value ?? "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, max);
 
 // Fonts and the favicon are served off "/" behind a query param rather than
 // their own paths, so / stays the only route per CLAUDE.md while the browser
@@ -981,17 +90,13 @@ export default {
         return binaryResponse(data, "font/woff2");
       }
 
-      // A generator's screenshots are part of its prompt, so they have to be
-      // visible while that prompt is being edited. Served here rather than
-      // base64'd into the dashboard payload: the browser caches them, and a
-      // list of 29 generators does not have to carry megabytes it rarely shows.
+      // Served here rather than base64'd into the bank payload: the browser
+      // caches them, and a bank of hundreds of problems must not carry
+      // megabytes of screenshots it rarely shows.
       const shot = url.searchParams.get("shot");
       if (shot) {
         const row = await env.LIGHTSPEED_APP_RECORDS
-          .prepare(
-            `SELECT mime_type, image_bytes
-               FROM math_prompt_image_attachment WHERE id = ?`,
-          )
+          .prepare(`SELECT mime_type, image_bytes FROM screenshot_of_record WHERE id = ?`)
           .bind(Number(shot))
           .first<{ mime_type: string; image_bytes: unknown }>();
         if (!row) return new Response("Not found", { status: 404 });
@@ -1020,130 +125,322 @@ export default {
     const body = await request.json<{
       action?: string;
       id?: number;
-      prompt?: string;
-      unsaved_image_attachments?: UnsavedImageAttachment[];
-      requested_count?: number;
-      named_problem_generator_id?: number;
       name?: string;
-      prompt_text?: string;
+      note?: string;
+      prompt?: string;
+      requested_count?: number;
+      unsaved_screenshots?: UnsavedScreenshot[];
+      screenshot_of_record_ids?: number[];
+      problem_ids?: number[];
       field?: unknown;
       study_context_tag_names?: unknown;
       study_context_tags_by_field?: Record<string, unknown>;
       archived?: boolean;
       run_id?: number;
-      problem_id?: number;
       attempt_id?: number;
+      maneuver_id?: number;
+      got_it?: boolean;
       elapsed_ms?: number;
-      skipped?: boolean;
-      self_grade?: string;
+      needed_help?: boolean;
       marked?: boolean;
+      default_service_style?: string;
     }>();
 
     try {
       switch (body.action) {
-        case "list_named_problem_generators": {
+        // ---- the bank ------------------------------------------------------
+        case "list_the_bank": {
           // No aggregates here on purpose. The trophy payload the page already
-          // fetches carries every graded attempt with its generator id, so the
+          // fetches carries every graded attempt with its problem id, so the
           // counts, the accuracy and the strip are all derived client-side from
           // data that was going over the wire regardless.
-          const { results } = await db
+          const { results: problems } = await db
             .prepare(
-              `SELECT id, name, prompt_text, requested_count, archived_at, created_at
-                 FROM named_problem_generator
+              `SELECT id, name, textbook_problem_number_label, statement_html,
+                      how_this_problem_came_to_be, parent_problem_varied_from,
+                      the_maneuver_it_was_isolated_from, text_that_minted_this_problem,
+                      default_service_style, broken_into_maneuvers_at,
+                      created_at, archived_at
+                 FROM math_practice_problem
                 ORDER BY id DESC`,
             )
             .all<{ id: number }>();
 
-          // Ids only -- the bytes are fetched one at a time off "/?shot=", and
-          // only by the panel that actually shows them.
-          const { results: shots } = await db
-            .prepare(
-              `SELECT id, named_problem_generator_id
-                 FROM math_prompt_image_attachment
-                ORDER BY named_problem_generator_id, ordinal`,
-            )
-            .all<{ id: number; named_problem_generator_id: number }>();
-
-          const shotsByGenerator = new Map<number, number[]>();
-          for (const row of shots) {
-            const list = shotsByGenerator.get(row.named_problem_generator_id);
-            if (list) list.push(row.id);
-            else shotsByGenerator.set(row.named_problem_generator_id, [row.id]);
-          }
-
-          // The whole tag catalogue rides along with the list. It is a handful
-          // of short strings, and the dashboard needs all of them anyway to
-          // draw the filter and to autocomplete the editors.
-          const tags = await tagCatalogue(db);
-
           const { results: links } = await db
             .prepare(
-              `SELECT named_problem_generator_id, study_context_tag_id
+              `SELECT math_practice_problem_id, study_context_tag_id
                  FROM study_context_tag_membership`,
             )
-            .all<{ named_problem_generator_id: number; study_context_tag_id: number }>();
+            .all<{ math_practice_problem_id: number; study_context_tag_id: number }>();
 
-          const tagsByGenerator = new Map<number, number[]>();
-          for (const link of links) {
-            const list = tagsByGenerator.get(link.named_problem_generator_id);
-            if (list) list.push(link.study_context_tag_id);
-            else tagsByGenerator.set(link.named_problem_generator_id, [link.study_context_tag_id]);
-          }
+          const { results: shots } = await db
+            .prepare(
+              `SELECT math_practice_problem_id, screenshot_of_record_id
+                 FROM screenshot_of_record_attachment
+                ORDER BY math_practice_problem_id, ordinal`,
+            )
+            .all<{ math_practice_problem_id: number; screenshot_of_record_id: number }>();
+
+          const { results: maneuverCounts } = await db
+            .prepare(
+              `SELECT math_practice_problem_id, COUNT(*) AS n
+                 FROM maneuver GROUP BY math_practice_problem_id`,
+            )
+            .all<{ math_practice_problem_id: number; n: number }>();
+
+          const bucket = <T>(
+            rows: T[],
+            key: (row: T) => number,
+            value: (row: T) => number,
+          ): Map<number, number[]> => {
+            const out = new Map<number, number[]>();
+            for (const row of rows) {
+              const k = key(row);
+              const list = out.get(k);
+              if (list) list.push(value(row));
+              else out.set(k, [value(row)]);
+            }
+            return out;
+          };
+
+          const tagsByProblem = bucket(
+            links,
+            (r) => r.math_practice_problem_id,
+            (r) => r.study_context_tag_id,
+          );
+          const shotsByProblem = bucket(
+            shots,
+            (r) => r.math_practice_problem_id,
+            (r) => r.screenshot_of_record_id,
+          );
+          const countByProblem = new Map(
+            maneuverCounts.map((r) => [r.math_practice_problem_id, r.n]),
+          );
 
           return json({
-            generators: results.map((row) => ({
+            problems: problems.map((row) => ({
               ...row,
-              attachment_ids: shotsByGenerator.get(row.id) ?? [],
-              study_context_tag_ids: tagsByGenerator.get(row.id) ?? [],
+              study_context_tag_ids: tagsByProblem.get(row.id) ?? [],
+              screenshot_of_record_ids: shotsByProblem.get(row.id) ?? [],
+              maneuver_count: countByProblem.get(row.id) ?? 0,
             })),
-            study_context_tags: tags,
+            study_context_tags: await tagCatalogue(db),
           });
         }
 
-        case "retag_named_problem_generator": {
-          const generatorId = Number(body.id);
-          if (!generatorId) return json({ error: "no such generator" }, 404);
+        // Anything with no problem read off it yet. Carried-over screenshots
+        // land here, as does anything whose transcription failed -- so a retry
+        // is just picking it up again rather than pasting it again.
+        case "list_screenshots_awaiting_transcription": {
+          const { results } = await db
+            .prepare(
+              `SELECT id, mime_type, width_px, height_px, byte_size, created_at
+                 FROM screenshot_of_record s
+                WHERE NOT EXISTS (
+                        SELECT 1 FROM screenshot_of_record_attachment a
+                         WHERE a.screenshot_of_record_id = s.id)
+                ORDER BY id`,
+            )
+            .all();
+          return json({ screenshots: results });
+        }
+
+        // ---- intake --------------------------------------------------------
+        case "transcribe_from_screenshot": {
+          // Saved before the model is asked, so a transcription that fails
+          // leaves the screenshots waiting rather than losing them.
+          const screenshotIds = body.screenshot_of_record_ids?.length
+            ? body.screenshot_of_record_ids
+            : await saveScreenshots(db, body.unsaved_screenshots ?? []);
+          if (!screenshotIds.length) {
+            return json({ error: "no screenshots to read" }, 400);
+          }
+
+          const shots = await screenshotsForModel(db, screenshotIds);
+          const read = await transcribeFromScreenshot(env, shots, body.note ?? "");
+          if (!read.length) return json({ error: "no problems found on that" }, 502);
+
+          const minted: number[] = [];
+          for (const problem of read) {
+            const id = await insertProblem(db, {
+              name: tidy(problem.name, MAX_NAME_LENGTH) || "untitled problem",
+              label: tidy(problem.textbook_problem_number_label, MAX_LABEL_LENGTH),
+              statementHtml: problem.statement_html,
+              origin: "transcribed_from_a_screenshot_of_record",
+              mintedWith: body.note ?? "",
+            });
+            // Every part links to every screenshot it was read off: a problem
+            // can span a page break, and the bytes are stored once regardless.
+            await db.batch(
+              screenshotIds.map((shotId, idx) =>
+                db
+                  .prepare(
+                    `INSERT INTO screenshot_of_record_attachment
+                       (math_practice_problem_id, screenshot_of_record_id, ordinal)
+                     VALUES (?, ?, ?)`,
+                  )
+                  .bind(id, shotId, idx),
+              ),
+            );
+            await setAllTagFields(db, id, body.study_context_tags_by_field);
+            minted.push(id);
+          }
+          return json({ problem_ids: minted });
+        }
+
+        case "build_to_order_from_prompt": {
+          const promptText = (body.prompt ?? "").trim();
+          if (!promptText) return json({ error: "a prompt is needed" }, 400);
+          const requested = Math.max(1, Math.min(40, Number(body.requested_count) || 2));
+
+          // What this prompt has already produced, so a second ask does not
+          // hand back the first ask's problems.
+          const { results: already } = await db
+            .prepare(
+              `SELECT statement_html FROM math_practice_problem
+                WHERE text_that_minted_this_problem = ?
+                ORDER BY id DESC LIMIT 40`,
+            )
+            .bind(promptText)
+            .all<{ statement_html: string }>();
+
+          const built = await buildToOrderFromPrompt(
+            env,
+            promptText,
+            requested,
+            already.map((row) => row.statement_html),
+          );
+          if (!built.length) return json({ error: "model returned no problems" }, 502);
+
+          const minted: number[] = [];
+          for (const problem of built) {
+            const id = await insertProblem(db, {
+              name: tidy(problem.name, MAX_NAME_LENGTH) || "untitled problem",
+              label: "",
+              statementHtml: problem.statement_html,
+              origin: "built_to_order_from_a_prompt",
+              mintedWith: promptText,
+            });
+            await setAllTagFields(db, id, body.study_context_tags_by_field);
+            minted.push(id);
+          }
+          return json({ problem_ids: minted });
+        }
+
+        // One problem at a time, fired in parallel by the client. That is what
+        // lets an intake hand back statements immediately and fill in the
+        // tables behind it.
+        case "break_into_maneuvers": {
+          const problem = await db
+            .prepare(
+              `SELECT id, statement_html FROM math_practice_problem WHERE id = ?`,
+            )
+            .bind(body.id)
+            .first<{ id: number; statement_html: string }>();
+          if (!problem) return json({ error: "no such problem" }, 404);
+
+          const maneuvers = await breakIntoManeuvers(
+            env,
+            problem.statement_html,
+            await mandatesFor(db, problem.id),
+          );
+          if (!maneuvers.length) return json({ error: "model returned no maneuvers" }, 502);
+
+          // Re-breaking replaces the table rather than appending to it, so the
+          // action is safe to repeat after a mandate is added.
+          await db
+            .prepare(`DELETE FROM maneuver WHERE math_practice_problem_id = ?`)
+            .bind(problem.id)
+            .run();
+          await db.batch(
+            maneuvers.map((m, idx) =>
+              db
+                .prepare(
+                  `INSERT INTO maneuver
+                     (math_practice_problem_id, ordinal, name, method_text, result_html)
+                   VALUES (?, ?, ?, ?, ?)`,
+                )
+                .bind(problem.id, idx, m.name, m.method_text, m.result_html),
+            ),
+          );
+          await db
+            .prepare(
+              `UPDATE math_practice_problem
+                  SET broken_into_maneuvers_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+                WHERE id = ?`,
+            )
+            .bind(problem.id)
+            .run();
+
+          return json({ maneuver_count: maneuvers.length });
+        }
+
+        // The table, mid-attempt, because help was asked for. It is fetched
+        // here rather than shipped with the problem and hidden in the DOM, so
+        // nothing about the answer is on the page until it is actually wanted.
+        // The client keeps every result covered and uncovers them one at a time.
+        case "peek_at_maneuvers": {
+          const { results } = await db
+            .prepare(
+              `SELECT id, math_practice_problem_id, ordinal, name, method_text, result_html
+                 FROM maneuver WHERE math_practice_problem_id = ? ORDER BY ordinal`,
+            )
+            .bind(body.id)
+            .all();
+          return json({ maneuvers: results });
+        }
+
+        // ---- filing --------------------------------------------------------
+        case "retag_problem": {
+          if (!body.id) return json({ error: "no such problem" }, 404);
           if (!isStudyContextTagField(body.field)) {
             return json({ error: `bad field: ${String(body.field)}` }, 400);
           }
-
           await setTagsForField(
             db,
-            generatorId,
+            body.id,
             body.field,
             normalizeTagNames(body.study_context_tag_names ?? []),
           );
-          return json(await tagStateFor(db, generatorId));
+          const { results } = await db
+            .prepare(
+              `SELECT study_context_tag_id FROM study_context_tag_membership
+                WHERE math_practice_problem_id = ?`,
+            )
+            .bind(body.id)
+            .all<{ study_context_tag_id: number }>();
+          return json({
+            study_context_tags: await tagCatalogue(db),
+            study_context_tag_ids: results.map((r) => r.study_context_tag_id),
+          });
         }
 
-        case "rename_named_problem_generator": {
-          const name = (body.name ?? "").replace(/\s+/g, " ").trim().slice(0, 64);
-          if (!name) return json({ error: "a generator needs a name" }, 400);
+        case "rename_problem": {
+          const name = tidy(body.name, MAX_NAME_LENGTH);
+          if (!name) return json({ error: "a problem needs a name" }, 400);
           await db
-            .prepare(`UPDATE named_problem_generator SET name = ? WHERE id = ?`)
+            .prepare(`UPDATE math_practice_problem SET name = ? WHERE id = ?`)
             .bind(name, body.id)
             .run();
           return json({ ok: true, name });
         }
 
-        case "revise_named_problem_generator_prompt": {
-          const promptText = (body.prompt_text ?? "").trim();
-          if (!promptText) return json({ error: "a generator needs a prompt" }, 400);
-          // Revised in place. Sets already worked keep the text that made them in
-          // problem_set.prompt_text_as_generated, so editing here cannot rewrite
-          // the history of what was practised.
+        case "set_default_service_style": {
+          if (!["exact", "variant"].includes(String(body.default_service_style))) {
+            return json({ error: `bad service style: ${body.default_service_style}` }, 400);
+          }
           await db
-            .prepare(`UPDATE named_problem_generator SET prompt_text = ? WHERE id = ?`)
-            .bind(promptText, body.id)
+            .prepare(`UPDATE math_practice_problem SET default_service_style = ? WHERE id = ?`)
+            .bind(body.default_service_style, body.id)
             .run();
           return json({ ok: true });
         }
 
-        case "archive_named_problem_generator": {
+        case "archive_problem": {
           // One verb both directions, the way a mark is set and cleared.
           await db
             .prepare(
-              `UPDATE named_problem_generator
+              `UPDATE math_practice_problem
                   SET archived_at = CASE WHEN ?1 = 1
                         THEN strftime('%Y-%m-%dT%H:%M:%fZ', 'now') ELSE NULL END
                 WHERE id = ?2`,
@@ -1153,141 +450,68 @@ export default {
           return json({ ok: true });
         }
 
-        case "save_named_problem_generator": {
-          const promptText = (body.prompt ?? "").trim();
-          const shots = body.unsaved_image_attachments ?? [];
-          // A generator is its prompt and its screenshots. With neither, there
-          // is nothing to generate from later.
-          if (!promptText && !shots.length) {
-            return json({ error: "a generator needs a prompt or a screenshot" }, 400);
-          }
+        // ---- practising ----------------------------------------------------
+        case "open_practice_run": {
+          const ids = (body.problem_ids ?? []).map(Number).filter(Boolean);
+          if (!ids.length) return json({ error: "nothing ticked" }, 400);
 
-          const requested = Math.max(1, Math.min(40, Number(body.requested_count) || 2));
-          const typedName = (body.name ?? "").replace(/\s+/g, " ").trim().slice(0, 64);
-          // Naming is not generating, so it still happens -- it is a one-line
-          // call against the small model and the table is unreadable without it.
-          const name = typedName || (await suggestGeneratorName(env, promptText));
-
-          const generatorId = await insertNamedProblemGenerator(
-            db,
-            name,
-            promptText,
-            requested,
-            shots,
-          );
-          await setAllTagFields(db, generatorId, body.study_context_tags_by_field);
-          return json({ named_problem_generator_id: generatorId, name });
-        }
-
-        case "generate_problems": {
-          const requested = Math.max(1, Math.min(40, Number(body.requested_count) || 2));
-
-          // Two ways in, one verb: an existing generator practised again, or a
-          // prompt typed fresh, which becomes a generator on the way through.
-          if (body.named_problem_generator_id) {
-            const generator = await db
-              .prepare(
-                `SELECT id, prompt_text FROM named_problem_generator WHERE id = ?`,
-              )
-              .bind(body.named_problem_generator_id)
-              .first<{ id: number; prompt_text: string }>();
-            if (!generator) return json({ error: "no such generator" }, 404);
-
-            const shots = await attachmentsForGenerator(db, generator.id);
-
-            // Practising again started from nothing, so the model drifted back
-            // to the same few problems set after set. Capped at the largest set
-            // that can be asked for, which keeps all of the last set in view
-            // however big it was. Statements only: the walkthroughs would
-            // multiply the cost and add nothing to telling problems apart.
-            const given = await db
-              .prepare(
-                `SELECT p.problem_html
-                   FROM math_practice_problem p
-                   JOIN problem_set s ON s.id = p.problem_set_id
-                  WHERE s.named_problem_generator_id = ?
-                  ORDER BY s.id DESC, p.ordinal
-                  LIMIT 40`,
-              )
-              .bind(generator.id)
-              .all<{ problem_html: string }>();
-
-            const generated = await generateProblemsFromPrompt(
-              env,
-              generator.prompt_text,
-              shots,
-              requested,
-              // No marks: this is not further practice.
-              [],
-              given.results.map((row) => row.problem_html),
-            );
-            if (!generated.length) return json({ error: "model returned no problems" }, 502);
-
-            // The card remembers what you last asked it for.
-            await db
-              .prepare(`UPDATE named_problem_generator SET requested_count = ? WHERE id = ?`)
-              .bind(requested, generator.id)
-              .run();
-
-            return json(
-              await openSetAndRun(
-                db,
-                generator.id,
-                requested,
-                generated,
-                generator.prompt_text,
-              ),
-            );
-          }
-
-          const shots = body.unsaved_image_attachments ?? [];
-          const promptText = body.prompt ?? "";
-          const typedName = (body.name ?? "").replace(/\s+/g, " ").trim().slice(0, 64);
-
-          // A name typed on the way in is the name. The model is asked only when
-          // the box was left empty, and then alongside the problems rather than
-          // before them -- naming is a cheap call against a small model and
-          // generation is neither, so running them together costs no clock.
-          const [generated, suggested] = await Promise.all([
-            generateProblemsFromPrompt(env, promptText, shots, requested),
-            typedName ? Promise.resolve(typedName) : suggestGeneratorName(env, promptText),
-          ]);
-          const name = typedName || suggested;
-          if (!generated.length) return json({ error: "model returned no problems" }, 502);
-
-          const generatorId = await insertNamedProblemGenerator(
-            db,
-            name,
-            promptText,
-            requested,
-            shots,
-          );
-          await setAllTagFields(db, generatorId, body.study_context_tags_by_field);
-          return json(
-            await openSetAndRun(db, generatorId, requested, generated, promptText),
-          );
-        }
-
-        case "record_attempt": {
-          const inserted = await db
+          // Read back in the order asked for, and only what actually exists.
+          const placeholders = ids.map(() => "?").join(", ");
+          const { results: found } = await db
             .prepare(
-              `INSERT INTO problem_attempt
-                 (math_practice_problem_id, practice_run_id, elapsed_ms, self_grade)
-               VALUES (?, ?, ?, ?) RETURNING id`,
+              `SELECT id, name, textbook_problem_number_label, statement_html,
+                      broken_into_maneuvers_at
+                 FROM math_practice_problem WHERE id IN (${placeholders})`,
+            )
+            .bind(...ids)
+            .all<{ id: number }>();
+          const byId = new Map(found.map((row) => [row.id, row]));
+          const ordered = ids.map((id) => byId.get(id)).filter(Boolean) as typeof found;
+          if (!ordered.length) return json({ error: "no such problems" }, 404);
+
+          const run = await db
+            .prepare(`INSERT INTO practice_run DEFAULT VALUES RETURNING id`)
+            .first<{ id: number }>();
+          const runId = run!.id;
+
+          // Every attempt row is written up front, so the run needs no
+          // membership table of its own and backing out early simply leaves
+          // ungraded rows -- which are invisible everywhere.
+          await db.batch(
+            ordered.map((problem, idx) =>
+              db
+                .prepare(
+                  `INSERT INTO problem_attempt
+                     (math_practice_problem_id, practice_run_id, ordinal)
+                   VALUES (?, ?, ?)`,
+                )
+                .bind(problem.id, runId, idx),
+            ),
+          );
+
+          return json({ run_id: runId, problems: ordered });
+        }
+
+        case "record_problem_worked": {
+          await db
+            .prepare(
+              `UPDATE problem_attempt
+                  SET elapsed_ms = ?, needed_help_during_attempt = ?
+                WHERE practice_run_id = ? AND ordinal = ?`,
             )
             .bind(
-              body.problem_id,
-              body.run_id,
               Math.max(0, Math.round(Number(body.elapsed_ms) || 0)),
-              body.skipped ? "skipped" : null,
+              body.needed_help ? 1 : 0,
+              body.run_id,
+              body.id,
             )
-            .first<{ id: number }>();
-          return json({ attempt_id: inserted!.id });
+            .run();
+          return json({ ok: true });
         }
 
+        // The maneuver table is held back until the run asks for it, rather
+        // than shipped with the problems and hidden in the DOM.
         case "reveal_answers": {
-          // Answers are held back until the run asks for them, rather than
-          // shipped with the problems and hidden in the DOM.
           await db
             .prepare(
               `UPDATE practice_run
@@ -1297,127 +521,116 @@ export default {
             .bind(body.run_id)
             .run();
 
-          const { results } = await db
+          const { results: rows } = await db
             .prepare(
-              `SELECT a.id AS attempt_id, p.ordinal, p.problem_html,
-                      p.final_answer_html, p.solution_walkthrough_html,
-                      a.elapsed_ms, a.self_grade, a.marked_for_further_practice
+              `SELECT a.id AS attempt_id, a.ordinal, a.elapsed_ms, a.outcome,
+                      a.needed_help_during_attempt, a.marked_for_further_practice,
+                      p.id AS problem_id, p.name, p.textbook_problem_number_label,
+                      p.statement_html, p.broken_into_maneuvers_at
                  FROM problem_attempt a
                  JOIN math_practice_problem p ON p.id = a.math_practice_problem_id
                 WHERE a.practice_run_id = ?
-                ORDER BY p.ordinal`,
+                ORDER BY a.ordinal`,
+            )
+            .bind(body.run_id)
+            .all<{ attempt_id: number; problem_id: number }>();
+
+          const { results: maneuvers } = await db
+            .prepare(
+              // Matched with IN rather than a join: the same problem can be
+              // worked twice in one run -- deliberately, to drill it -- and a
+              // join would hand back its table once per attempt.
+              `SELECT m.id, m.math_practice_problem_id, m.ordinal, m.name,
+                      m.method_text, m.result_html
+                 FROM maneuver m
+                WHERE m.math_practice_problem_id IN (
+                        SELECT math_practice_problem_id FROM problem_attempt
+                         WHERE practice_run_id = ?)
+                ORDER BY m.math_practice_problem_id, m.ordinal`,
+            )
+            .bind(body.run_id)
+            .all<{ math_practice_problem_id: number }>();
+
+          const { results: marks } = await db
+            .prepare(
+              `SELECT c.problem_attempt_id, c.maneuver_id, c.got_it
+                 FROM per_maneuver_credit_mark c
+                 JOIN problem_attempt a ON a.id = c.problem_attempt_id
+                WHERE a.practice_run_id = ?`,
             )
             .bind(body.run_id)
             .all();
-          return json({ rows: results });
+
+          return json({ rows, maneuvers, marks });
         }
 
-        case "grade_attempt": {
-          if (!["right", "wrong", "skipped"].includes(String(body.self_grade))) {
-            return json({ error: `bad self_grade: ${body.self_grade}` }, 400);
-          }
+        // Grading is per maneuver; the attempt's own outcome is a rollup of
+        // these, never set by hand. Partial credit is what that rollup produces
+        // rather than a fourth button to press.
+        case "mark_maneuver_credit": {
           await db
-            .prepare(`UPDATE problem_attempt SET self_grade = ? WHERE id = ?`)
-            .bind(body.self_grade, body.attempt_id)
+            .prepare(
+              `INSERT INTO per_maneuver_credit_mark (problem_attempt_id, maneuver_id, got_it)
+               VALUES (?1, ?2, ?3)
+               ON CONFLICT (problem_attempt_id, maneuver_id)
+                 DO UPDATE SET got_it = ?3`,
+            )
+            .bind(body.attempt_id, body.maneuver_id, body.got_it ? 1 : 0)
             .run();
-          return json({ ok: true });
+          return json({ outcome: await rollUpOutcome(db, Number(body.attempt_id)) });
+        }
+
+        case "clear_maneuver_credit": {
+          await db
+            .prepare(
+              `DELETE FROM per_maneuver_credit_mark
+                WHERE problem_attempt_id = ? AND maneuver_id = ?`,
+            )
+            .bind(body.attempt_id, body.maneuver_id)
+            .run();
+          return json({ outcome: await rollUpOutcome(db, Number(body.attempt_id)) });
+        }
+
+        // A skip is the one outcome that is not a rollup: it records a problem
+        // not attempted, so any marks against it are cleared on the way.
+        case "skip_attempt": {
+          await db
+            .prepare(`DELETE FROM per_maneuver_credit_mark WHERE problem_attempt_id = ?`)
+            .bind(body.attempt_id)
+            .run();
+          await db
+            .prepare(`UPDATE problem_attempt SET outcome = 'skipped' WHERE id = ?`)
+            .bind(body.attempt_id)
+            .run();
+          return json({ outcome: "skipped" });
         }
 
         case "mark_for_further_practice": {
           await db
             .prepare(
-              `UPDATE problem_attempt
-                  SET marked_for_further_practice = ?
-                WHERE id = ?`,
+              `UPDATE problem_attempt SET marked_for_further_practice = ? WHERE id = ?`,
             )
             .bind(body.marked ? 1 : 0, body.attempt_id)
             .run();
           return json({ ok: true });
         }
 
-        case "further_practice": {
-          const origin = await db
-            .prepare(
-              `SELECT s.id AS problem_set_id, s.named_problem_generator_id,
-                      s.requested_count
-                 FROM practice_run r
-                 JOIN problem_set s ON s.id = r.problem_set_id
-                WHERE r.id = ?`,
-            )
-            .bind(body.run_id)
-            .first<{
-              problem_set_id: number;
-              named_problem_generator_id: number;
-              requested_count: number;
-            }>();
-          if (!origin) return json({ error: "no such run" }, 404);
-
-          const prompt = await db
-            .prepare(`SELECT prompt_text FROM named_problem_generator WHERE id = ?`)
-            .bind(origin.named_problem_generator_id)
-            .first<{ prompt_text: string }>();
-          if (!prompt) return json({ error: "no such generator" }, 404);
-
-          // Marks live on the attempt, so the run is the only thing the client
-          // has to send -- there is no list of ids to keep in sync.
-          const marked = await db
-            .prepare(
-              `SELECT p.problem_html
-                 FROM problem_attempt a
-                 JOIN math_practice_problem p ON p.id = a.math_practice_problem_id
-                WHERE a.practice_run_id = ? AND a.marked_for_further_practice = 1
-                ORDER BY p.ordinal`,
-            )
-            .bind(body.run_id)
-            .all<{ problem_html: string }>();
-
-          const shots = await attachmentsForGenerator(db, origin.named_problem_generator_id);
-
-          const generated = await generateProblemsFromPrompt(
-            env,
-            prompt.prompt_text,
-            shots,
-            origin.requested_count,
-            // No marks is not an error: it just means "more of the same",
-            // which is the old new-set behaviour.
-            marked.results.map((row) => row.problem_html),
-          );
-          if (!generated.length) return json({ error: "model returned no problems" }, 502);
-
-          // Further practice opens a NEW set against the same generator. The set
-          // just worked, and its attempts, are left untouched.
-          return json(
-            await openSetAndRun(
-              db,
-              origin.named_problem_generator_id,
-              origin.requested_count,
-              generated,
-              prompt.prompt_text,
-              origin.problem_set_id,
-            ),
-          );
-        }
-
         case "trophy_wall": {
           // Every attempt ever answered, oldest first -- the wall is permanent.
-          // A square is earned by grading, not by working: back out of a set
-          // before the answer page and those attempts stay off the wall.
-          // A skip earns nothing either. It is a grade, but it records a problem
-          // not attempted, and the wall is a record of problems answered.
+          // A square is earned by grading, not by working: back out of a run
+          // before the answers page and those attempts stay off the wall.
+          // A skip earns nothing either. It is an outcome, but it records a
+          // problem not attempted, and the wall is a record of problems answered.
           //
-          // The generator id rides along so this one payload also feeds the
-          // dashboard: every card's strip, count and accuracy is this list
-          // bucketed by generator, which is why no card needs its own query.
+          // The problem id rides along so this one payload also feeds the bank:
+          // every row's strip and the week's ledger are this list bucketed by
+          // problem, which is why no row needs a query of its own.
           const { results } = await db
             .prepare(
-              `SELECT a.id, a.created_at, a.self_grade,
-                      s.named_problem_generator_id
-                 FROM problem_attempt a
-                 JOIN practice_run r ON r.id = a.practice_run_id
-                 JOIN problem_set s  ON s.id = r.problem_set_id
-                WHERE a.self_grade IS NOT NULL
-                  AND a.self_grade <> 'skipped'
-                ORDER BY a.created_at, a.id`,
+              `SELECT id, created_at, outcome, math_practice_problem_id
+                 FROM problem_attempt
+                WHERE outcome IS NOT NULL AND outcome <> 'skipped'
+                ORDER BY created_at, id`,
             )
             .all();
           return json({ attempts: results });
@@ -1434,249 +647,109 @@ export default {
   },
 };
 
-interface StudyContextTagRow {
-  id: number;
-  field: StudyContextTagField;
-  name: string;
-  chip_color_ordinal: number;
-}
-
-/** Every tag there is, already grouped by field so the dashboard need not sort. */
-async function tagCatalogue(db: D1Database): Promise<StudyContextTagRow[]> {
-  const { results } = await db
-    .prepare(
-      `SELECT id, field, name, chip_color_ordinal
-         FROM study_context_tag ORDER BY field, name`,
-    )
-    .all<StudyContextTagRow>();
-  return results;
-}
-
 /**
- * Replace one field's tags on one generator, leaving the other fields alone --
- * editing the source must not silently clear the class.
+ * Recompute an attempt's outcome from its maneuver marks.
  *
- * A name this field has not seen before is created here and takes the next
- * colour round; a tag left wearing nothing afterwards is retired.
+ * An unmarked maneuver counts as not got once anything has been marked, so a
+ * half-graded problem reads as partial rather than as right.
  */
-async function setTagsForField(
-  db: D1Database,
-  generatorId: number,
-  field: StudyContextTagField,
-  names: string[],
-): Promise<void> {
-  // Each field starts at a different point in the palette, so tags differ from
-  // their neighbours down a column and a row of four chips is not four of the
-  // same colour.
-  const fieldOffset = STUDY_CONTEXT_TAG_FIELDS.indexOf(field) * 3;
+async function rollUpOutcome(db: D1Database, attemptId: number): Promise<string | null> {
+  const tally = await db
+    .prepare(
+      `SELECT (SELECT COUNT(*) FROM maneuver m
+                JOIN problem_attempt a ON a.math_practice_problem_id = m.math_practice_problem_id
+               WHERE a.id = ?1)                                        AS total,
+              (SELECT COUNT(*) FROM per_maneuver_credit_mark
+                WHERE problem_attempt_id = ?1)                          AS marked,
+              (SELECT COUNT(*) FROM per_maneuver_credit_mark
+                WHERE problem_attempt_id = ?1 AND got_it = 1)           AS got`,
+    )
+    .bind(attemptId)
+    .first<{ total: number; marked: number; got: number }>();
 
-  for (const name of names) {
-    // The colour is chosen inside the insert rather than read out first, so two
-    // tags created together cannot both claim the same count.
-    await db
-      .prepare(
-        `INSERT OR IGNORE INTO study_context_tag (field, name, chip_color_ordinal)
-         VALUES (?1, ?2,
-                 (?4 + (SELECT COUNT(*) FROM study_context_tag WHERE field = ?1))
-                 % ?3)`,
-      )
-      .bind(field, name, CHIP_COLOR_PALETTE.length, fieldOffset)
-      .run();
-  }
+  const { total, marked, got } = tally!;
+  const outcome = marked === 0 ? null : got === 0 ? "wrong" : got >= total ? "right" : "partial";
 
   await db
-    .prepare(
-      `DELETE FROM study_context_tag_membership
-        WHERE named_problem_generator_id = ?1
-          AND study_context_tag_id IN
-              (SELECT id FROM study_context_tag WHERE field = ?2)`,
-    )
-    .bind(generatorId, field)
+    .prepare(`UPDATE problem_attempt SET outcome = ? WHERE id = ?`)
+    .bind(outcome, attemptId)
     .run();
+  return outcome;
+}
 
-  if (names.length) {
-    // Bound placeholders, never interpolated names -- the strings are typed by
-    // hand and go nowhere near the SQL text.
-    const placeholders = names.map(() => "?").join(", ");
-    await db
+async function insertProblem(
+  db: D1Database,
+  problem: {
+    name: string;
+    label: string;
+    statementHtml: string;
+    origin: string;
+    mintedWith: string;
+    variedFrom?: number | null;
+    isolatedFrom?: number | null;
+  },
+): Promise<number> {
+  const inserted = await db
+    .prepare(
+      `INSERT INTO math_practice_problem
+         (name, textbook_problem_number_label, statement_html,
+          how_this_problem_came_to_be, text_that_minted_this_problem,
+          parent_problem_varied_from, the_maneuver_it_was_isolated_from)
+       VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING id`,
+    )
+    .bind(
+      problem.name,
+      problem.label || null,
+      problem.statementHtml,
+      problem.origin,
+      problem.mintedWith,
+      problem.variedFrom ?? null,
+      problem.isolatedFrom ?? null,
+    )
+    .first<{ id: number }>();
+
+  const id = inserted!.id;
+  // A problem minted from another inherits its filing, so a variant of a 6801
+  // homework problem is still findable under 6801.
+  if (problem.variedFrom) await inheritTags(db, problem.variedFrom, id);
+  return id;
+}
+
+async function saveScreenshots(
+  db: D1Database,
+  shots: UnsavedScreenshot[],
+): Promise<number[]> {
+  const ids: number[] = [];
+  for (const shot of shots) {
+    const row = await db
       .prepare(
-        `INSERT INTO study_context_tag_membership
-           (named_problem_generator_id, study_context_tag_id)
-         SELECT ?, id FROM study_context_tag
-          WHERE field = ? AND name IN (${placeholders})`,
+        `INSERT INTO screenshot_of_record
+           (mime_type, width_px, height_px, byte_size, image_bytes)
+         VALUES (?, ?, ?, ?, ?) RETURNING id`,
       )
-      .bind(generatorId, field, ...names)
-      .run();
+      .bind(shot.mimeType, shot.w, shot.h, shot.byteSize, base64ToBytes(shot.base64))
+      .first<{ id: number }>();
+    ids.push(row!.id);
   }
-
-  // A tag exists only as long as something wears it.
-  await db
-    .prepare(
-      `DELETE FROM study_context_tag
-        WHERE id NOT IN
-              (SELECT study_context_tag_id FROM study_context_tag_membership)`,
-    )
-    .run();
+  return ids;
 }
 
-/** The catalogue plus one generator's tag ids -- what an edit hands back. */
-async function tagStateFor(db: D1Database, generatorId: number) {
-  const tags = await tagCatalogue(db);
-  const { results } = await db
-    .prepare(
-      `SELECT study_context_tag_id FROM study_context_tag_membership
-        WHERE named_problem_generator_id = ?`,
-    )
-    .bind(generatorId)
-    .all<{ study_context_tag_id: number }>();
-  return {
-    study_context_tags: tags,
-    study_context_tag_ids: results.map((row) => row.study_context_tag_id),
-  };
-}
-
-/** Apply every field's tags at once, the way a fresh generate supplies them. */
-async function setAllTagFields(
+/** Screenshot bytes in the shape the model call wants them. */
+async function screenshotsForModel(
   db: D1Database,
-  generatorId: number,
-  byField: Record<string, unknown> | undefined,
-): Promise<void> {
-  if (!byField) return;
-  for (const field of STUDY_CONTEXT_TAG_FIELDS) {
-    const names = normalizeTagNames(byField[field] ?? []);
-    if (names.length) await setTagsForField(db, generatorId, field, names);
-  }
-}
-
-/** A generator's screenshots, in the shape the model call wants them. */
-async function attachmentsForGenerator(
-  db: D1Database,
-  generatorId: number,
+  ids: number[],
 ): Promise<{ base64: string; mimeType: string }[]> {
+  const placeholders = ids.map(() => "?").join(", ");
   const { results } = await db
     .prepare(
-      `SELECT mime_type, image_bytes
-         FROM math_prompt_image_attachment
-        WHERE named_problem_generator_id = ?
-        ORDER BY ordinal`,
+      `SELECT id, mime_type, image_bytes FROM screenshot_of_record
+        WHERE id IN (${placeholders}) ORDER BY id`,
     )
-    .bind(generatorId)
+    .bind(...ids)
     .all();
 
   return results.map((row: Record<string, unknown>) => ({
     base64: bytesToBase64(row.image_bytes),
     mimeType: String(row.mime_type),
   }));
-}
-
-async function insertNamedProblemGenerator(
-  db: D1Database,
-  name: string,
-  promptText: string,
-  requestedCount: number,
-  shots: UnsavedImageAttachment[],
-): Promise<number> {
-  const inserted = await db
-    .prepare(
-      `INSERT INTO named_problem_generator
-         (name, prompt_text, requested_count, model_id, system_prompt, reply_text)
-       VALUES (?, ?, ?, ?, '', NULL) RETURNING id`,
-    )
-    .bind(name, promptText, requestedCount, CURRENT_AUTHORING_MODEL_ID)
-    .first<{ id: number }>();
-
-  const generatorId = inserted!.id;
-
-  if (shots.length) {
-    await db.batch(
-      shots.map((shot, idx) =>
-        db
-          .prepare(
-            `INSERT INTO math_prompt_image_attachment
-               (named_problem_generator_id, ordinal, mime_type, width_px, height_px, byte_size, image_bytes)
-             VALUES (?, ?, ?, ?, ?, ?, ?)`,
-          )
-          .bind(
-            generatorId,
-            idx,
-            shot.mimeType,
-            shot.w,
-            shot.h,
-            shot.byteSize,
-            base64ToBytes(shot.base64),
-          ),
-      ),
-    );
-  }
-  return generatorId;
-}
-
-/** Persist a generated set, open a run over it, and return the problems without answers. */
-async function openSetAndRun(
-  db: D1Database,
-  generatorId: number,
-  requestedCount: number,
-  rows: GeneratedProblemRow[],
-  promptTextAsGenerated: string,
-  precedingProblemSetId: number | null = null,
-): Promise<{
-  set_id: number;
-  run_id: number;
-  requested_count: number;
-  problems: { id: number; ordinal: number; problem_html: string }[];
-}> {
-  const set = await db
-    .prepare(
-      `INSERT INTO problem_set
-         (named_problem_generator_id, requested_count, preceding_problem_set_id,
-          prompt_text_as_generated)
-       VALUES (?, ?, ?, ?) RETURNING id`,
-    )
-    .bind(generatorId, requestedCount, precedingProblemSetId, promptTextAsGenerated)
-    .first<{ id: number }>();
-  const setId = set!.id;
-
-  await db.batch(
-    rows.map((row, idx) =>
-      db
-        .prepare(
-          `INSERT INTO math_practice_problem
-             (problem_set_id, ordinal, problem_html,
-              final_answer_html, solution_walkthrough_html)
-           VALUES (?, ?, ?, ?, ?)`,
-        )
-        .bind(
-          setId,
-          idx,
-          row.problem_html,
-          row.final_answer_html,
-          row.solution_walkthrough_html,
-        ),
-    ),
-  );
-
-  const run = await db
-    .prepare(
-      `INSERT INTO practice_run (problem_set_id)
-       VALUES (?) RETURNING id`,
-    )
-    .bind(setId)
-    .first<{ id: number }>();
-
-  const { results } = await db
-    .prepare(
-      `SELECT id, ordinal, problem_html FROM math_practice_problem
-        WHERE problem_set_id = ? ORDER BY ordinal`,
-    )
-    .bind(setId)
-    .all<{ id: number; ordinal: number; problem_html: string }>();
-
-  // The count travels back so the run can show that a salvaged set came up
-  // short of what was asked for, rather than quietly serving fewer problems.
-  return {
-    set_id: setId,
-    run_id: run!.id,
-    requested_count: requestedCount,
-    problems: results,
-  };
 }

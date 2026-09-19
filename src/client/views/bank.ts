@@ -1,18 +1,18 @@
 import {
-  archiveNamedProblemGenerator,
-  listNamedProblemGenerators,
-  practiceNamedProblemGenerator,
-  renameNamedProblemGenerator,
-  retagNamedProblemGenerator,
-  reviseNamedProblemGeneratorPrompt,
+  archiveProblem,
+  listTheBank,
+  openPracticeRun,
+  renameProblem,
+  retagProblem,
   trophyWall,
 } from "../api";
 import { h } from "../lib/dom";
-import { parseTagNames, renderNewGeneratorForm } from "./compose";
+import { renderMathHtml } from "../lib/katex-boot";
+import { parseTagNames, renderIntake } from "./intake";
 import { square } from "./trophy-wall";
 import { STUDY_CONTEXT_TAG_FIELDS } from "../types";
 import type {
-  NamedProblemGenerator,
+  MathPracticeProblem,
   StudyContextTag,
   StudyContextTagField,
   Trophy,
@@ -23,12 +23,6 @@ import type {
 // four field columns.
 const STRIP_LENGTH = 12;
 
-// Prompts are not edited on the phone. A prompt is tuned against the
-// screenshots it was written for, and there is no way to hold both on a 390px
-// screen and still read the maths -- so the door is shut rather than left open
-// onto something unusable. Matches the stacking breakpoint in the stylesheet.
-const WIDE_ENOUGH_TO_EDIT = "(min-width: 46rem)";
-
 const ROLLING_WEEK_DAYS = 7;
 
 // Both counted in whole days, not elapsed time: something worked on Monday
@@ -37,8 +31,8 @@ const ROLLING_WEEK_DAYS = 7;
 const GONE_COLD_AFTER_DAYS = 7;
 const GOING_COLD_AFTER_DAYS = 2;
 
-// Select, name, four fields, strip, menu.
-const TABLE_COLUMN_COUNT = 8;
+// Select, label, name, four fields, strip, menu.
+const TABLE_COLUMN_COUNT = 9;
 
 const WEEKDAY_NAMES = [
   "sunday",
@@ -52,9 +46,9 @@ const WEEKDAY_NAMES = [
 
 const catalogueListId = (field: StudyContextTagField) => `tag-catalogue-${field}`;
 
-// Filing a type under a class and then working that class is a week's habit, not
-// a visit's, so the filter outlives the tab. Kept per-device rather than on the
-// server: the phone practises and the laptop authors, and they are rarely
+// Filing a problem under a class and then working that class is a week's habit,
+// not a visit's, so the filter outlives the tab. Kept per-device rather than on
+// the server: the phone practises and the laptop authors, and they are rarely
 // pointed at the same class.
 const STANDING_STUDY_CONTEXT_TAG_FILTER_KEY = "lightspeed.standing-study-context-tag-filter";
 
@@ -84,7 +78,7 @@ function writeStandingStudyContextTagFilter(id: number | null): void {
 let closeOpenMenu: (() => void) | null = null;
 document.addEventListener("click", () => closeOpenMenu?.());
 
-/** The most recent graded attempt against a type, and the squares to show for it. */
+/** The most recent graded attempt against a problem, and the squares to show. */
 function standingOf(trophies: Trophy[] | undefined): {
   lastWorkedAt: string | null;
   strip: Trophy[];
@@ -120,7 +114,7 @@ function daysBetween(from: Date, to: Date): number {
  *
  * Counted off the same graded attempts the trophy squares are drawn from, which
  * the page has already fetched -- so this costs no round trip of its own. It
- * measures problems *answered*: back out of a set before the answer page and
+ * measures problems *answered*: back out of a run before the answers page and
  * nothing here moves, which is the same bargain the wall makes.
  *
  * Each bar is split by class, with a key beneath naming the colours. The fills
@@ -130,7 +124,7 @@ function daysBetween(from: Date, to: Date): number {
  */
 function renderRollingWeekPracticeLedger(
   trophies: Trophy[],
-  generators: NamedProblemGenerator[],
+  problems: MathPracticeProblem[],
   tagCatalogue: StudyContextTag[],
 ): HTMLElement {
   // Creation order -- ids only grow -- so a new class takes the next colour
@@ -146,16 +140,16 @@ function renderRollingWeekPracticeLedger(
       ? `var(--ledger-class-fill-${(classTags.indexOf(tag) % 6) + 1})`
       : "var(--ledger-no-class-fill)";
   const classesOf = new Map(
-    generators.map((g) => [
-      g.id,
-      classTags.filter((tag) => g.study_context_tag_ids.includes(tag.id)),
+    problems.map((p) => [
+      p.id,
+      classTags.filter((tag) => p.study_context_tag_ids.includes(tag.id)),
     ]),
   );
 
-  // Keyed by class id, null for work on a type filed under no class. That work
-  // keeps a grey segment of its own: leaving it out would make a day look
-  // lighter than it was. A type in two classes splits its problems between
-  // them rather than counting twice, so the segments still add up to the day.
+  // Keyed by class id, null for work on a problem filed under no class. That
+  // work keeps a grey segment of its own: leaving it out would make a day look
+  // lighter than it was. A problem in two classes splits its count between them
+  // rather than counting twice, so the segments still add up to the day.
   const perDay = new Map<string, { count: number; byClass: Map<number | null, number> }>();
   for (const trophy of trophies) {
     const when = new Date(trophy.created_at);
@@ -164,7 +158,7 @@ function renderRollingWeekPracticeLedger(
     const tally = perDay.get(key) ?? { count: 0, byClass: new Map() };
     perDay.set(key, tally);
     tally.count += 1;
-    const classes = classesOf.get(trophy.named_problem_generator_id) ?? [];
+    const classes = classesOf.get(trophy.math_practice_problem_id) ?? [];
     if (!classes.length) tally.byClass.set(null, (tally.byClass.get(null) ?? 0) + 1);
     for (const tag of classes) {
       tally.byClass.set(tag.id, (tally.byClass.get(tag.id) ?? 0) + 1 / classes.length);
@@ -175,7 +169,7 @@ function renderRollingWeekPracticeLedger(
   // colour sits at the same end of the bar all week.
   const segmentOrder: (StudyContextTag | null)[] = [...classTags, null];
 
-  // Bucketed in local time rather than UTC: a set worked at 9pm belongs to that
+  // Bucketed in local time rather than UTC: a run worked at 9pm belongs to that
   // evening, not to the next morning in Greenwich.
   const today = new Date();
   const days = Array.from({ length: ROLLING_WEEK_DAYS }, (_, back) => {
@@ -249,12 +243,13 @@ function renderRollingWeekPracticeLedger(
   ]);
 }
 
-function buildGeneratorTable(body: HTMLElement): HTMLElement {
-  return h("table", { class: "generator-table" }, [
+function buildBankTable(body: HTMLElement): HTMLElement {
+  return h("table", { class: "bank-table" }, [
     h("thead", {}, [
       h("tr", {}, [
         h("th", { class: "col-select" }, []),
-        h("th", {}, ["practice type"]),
+        h("th", { class: "col-label" }, ["no."]),
+        h("th", {}, ["problem"]),
         ...STUDY_CONTEXT_TAG_FIELDS.map((field) =>
           h("th", { class: `col-field-${field}` }, [field]),
         ),
@@ -266,23 +261,20 @@ function buildGeneratorTable(body: HTMLElement): HTMLElement {
   ]);
 }
 
-export async function renderGenerators(
+export async function renderBank(
   root: HTMLElement,
   go: (view: View) => void,
 ): Promise<void> {
   root.replaceChildren(h("div", { id: "out" }, ["loading..."]));
 
-  let generators: NamedProblemGenerator[];
+  let problems: MathPracticeProblem[];
   let tagCatalogue: StudyContextTag[];
   let trophies: Trophy[];
   try {
     // Both in flight together: neither depends on the other, and the trophy
     // payload is what the strips and the ledger are built from.
-    const [listed, walled] = await Promise.all([
-      listNamedProblemGenerators(),
-      trophyWall(),
-    ]);
-    generators = listed.generators;
+    const [listed, walled] = await Promise.all([listTheBank(), trophyWall()]);
+    problems = listed.problems;
     tagCatalogue = listed.study_context_tags;
     trophies = walled.attempts;
   } catch (err) {
@@ -294,16 +286,16 @@ export async function renderGenerators(
     return;
   }
 
-  const byGenerator = new Map<number, Trophy[]>();
+  const byProblem = new Map<number, Trophy[]>();
   for (const trophy of trophies) {
-    const list = byGenerator.get(trophy.named_problem_generator_id);
+    const list = byProblem.get(trophy.math_practice_problem_id);
     if (list) list.push(trophy);
-    else byGenerator.set(trophy.named_problem_generator_id, [trophy]);
+    else byProblem.set(trophy.math_practice_problem_id, [trophy]);
   }
 
-  // One type is practised at a time, so the table is a list of radio buttons in
-  // all but appearance and the button beneath it acts on whichever is lit.
-  let selectedId: number | null = null;
+  // Several problems are practised at once now, so the bank is a list of
+  // checkboxes and the button beneath acts on every one that is ticked.
+  const ticked = new Set<number>();
 
   // A tag retired since the last visit cannot go on being the filter: it would
   // empty the table with no lit chip to explain why.
@@ -317,14 +309,14 @@ export async function renderGenerators(
     writeStandingStudyContextTagFilter(id);
   };
 
-  const rowsById = new Map<number, { row: HTMLElement; radio: HTMLInputElement }>();
+  const rowsById = new Map<number, { row: HTMLElement; box: HTMLInputElement }>();
 
   const bodyEl = h("tbody");
   const archivedBodyEl = h("tbody");
-  const tableEl = buildGeneratorTable(bodyEl);
-  const archivedTableEl = buildGeneratorTable(archivedBodyEl);
-  const emptyEl = h("div", { class: "generator-stats" }, ["nothing filed under that"]);
-  const archivedEmptyEl = h("div", { class: "generator-stats" });
+  const tableEl = buildBankTable(bodyEl);
+  const archivedTableEl = buildBankTable(archivedBodyEl);
+  const emptyEl = h("div", { class: "bank-note" }, ["nothing filed under that"]);
+  const archivedEmptyEl = h("div", { class: "bank-note" });
   const filterEl = h("div", { class: "study-context-tag-filter" });
 
   // One list per field: completing a source against the catalogue of classes
@@ -336,74 +328,76 @@ export async function renderGenerators(
     ]),
   );
 
-  let ledgerEl = renderRollingWeekPracticeLedger(trophies, generators, tagCatalogue);
+  let ledgerEl = renderRollingWeekPracticeLedger(trophies, problems, tagCatalogue);
 
-  // ---- the practice control, one for the whole table -----------------------
-  const practiceCountEl = h("input", { type: "number", min: 1, max: 40, value: 2 });
+  // ---- the practice control, one for the whole bank ------------------------
   const practiceEl = h("button", { type: "button", class: "practice", disabled: true }, [
     "practice",
   ]);
-  const practiceStatusEl = h("div", { class: "generator-stats" });
+  const tickAllEl = h("button", { type: "button" }, ["tick all shown"]);
+  const untickAllEl = h("button", { type: "button" }, ["clear"]);
+  const practiceStatusEl = h("div", { class: "bank-note" });
 
   const setPracticeStatus = (text: string, isError = false) => {
     practiceStatusEl.textContent = text;
-    practiceStatusEl.className = isError ? "generator-stats err" : "generator-stats";
+    practiceStatusEl.className = isError ? "bank-note err" : "bank-note";
   };
 
   practiceEl.addEventListener("click", async () => {
-    const selected = generators.find((g) => g.id === selectedId);
-    if (!selected) return;
+    if (!ticked.size) return;
     practiceEl.disabled = true;
-    // Opus at high effort with a 16k budget is slow enough that a silent button
-    // reads as a dead one.
-    setPracticeStatus("generating...");
+    setPracticeStatus("opening...");
     try {
-      const count = Math.max(1, Math.min(40, Number(practiceCountEl.value) || 2));
-      const set = await practiceNamedProblemGenerator(selected.id, count);
-      if (!set.problems.length) throw new Error("model returned no problems");
-      go({
-        name: "problem",
-        runId: set.run_id,
-        requestedCount: set.requested_count,
-        problems: set.problems,
-        index: 0,
-      });
+      // Served exactly, so there is no model call here at all -- the wait is a
+      // round trip and nothing more.
+      const order = shownProblems().filter((p) => ticked.has(p.id)).map((p) => p.id);
+      const run = await openPracticeRun(order);
+      if (!run.problems.length) throw new Error("nothing to serve");
+      go({ name: "problem", runId: run.run_id, problems: run.problems, index: 0 });
     } catch (err) {
       setPracticeStatus(err instanceof Error ? err.message : String(err), true);
       practiceEl.disabled = false;
     }
   });
 
-  function select(id: number | null): void {
-    selectedId = id;
-    const selected = id === null ? undefined : generators.find((g) => g.id === id);
-
-    for (const [rowId, entry] of rowsById) {
-      const on = rowId === id;
-      entry.row.classList.toggle("is-selected", on);
-      entry.radio.checked = on;
+  function paintTickState(): void {
+    for (const [id, entry] of rowsById) {
+      const on = ticked.has(id);
+      entry.row.classList.toggle("is-ticked", on);
+      entry.box.checked = on;
     }
-
-    practiceEl.disabled = !selected;
-    if (selected) {
-      // Each type remembers what it was last asked for, so the count follows
-      // the selection rather than making Mike retype it.
-      practiceCountEl.value = String(selected.requested_count);
-      setPracticeStatus(selected.name);
-    } else {
-      setPracticeStatus("");
-    }
+    practiceEl.disabled = ticked.size === 0;
+    setPracticeStatus(
+      ticked.size ? `${ticked.size} ticked` : "tick what to practise",
+    );
   }
+
+  const setTicked = (id: number, on: boolean): void => {
+    if (on) ticked.add(id);
+    else ticked.delete(id);
+    paintTickState();
+  };
+
+  // Select-by-tag, which is the whole point of filtering first: narrow to
+  // "6801 HW3", tick the lot, run.
+  tickAllEl.addEventListener("click", () => {
+    for (const problem of shownProblems()) ticked.add(problem.id);
+    paintTickState();
+  });
+  untickAllEl.addEventListener("click", () => {
+    ticked.clear();
+    paintTickState();
+  });
 
   // ---- tags ----------------------------------------------------------------
   const tagById = () => new Map(tagCatalogue.map((tag) => [tag.id, tag]));
 
   function tagsOf(
-    generator: NamedProblemGenerator,
+    problem: MathPracticeProblem,
     field: StudyContextTagField,
   ): StudyContextTag[] {
     const byId = tagById();
-    return generator.study_context_tag_ids
+    return problem.study_context_tag_ids
       .map((id) => byId.get(id))
       .filter((tag): tag is StudyContextTag => Boolean(tag) && tag!.field === field)
       .sort((a, b) => a.name.localeCompare(b.name));
@@ -458,32 +452,52 @@ export async function renderGenerators(
     filterEl.hidden = !groups.length;
   }
 
-  function shownIn(list: NamedProblemGenerator[]): NamedProblemGenerator[] {
+  function shownIn(list: MathPracticeProblem[]): MathPracticeProblem[] {
     return filterTagId === null
       ? list
-      : list.filter((g) => g.study_context_tag_ids.includes(filterTagId!));
+      : list.filter((p) => p.study_context_tag_ids.includes(filterTagId!));
   }
 
-  /** Repaint both tables from the local list. Archiving moves a row between them. */
-  function paintAll(): void {
-    const active = shownIn(generators.filter((g) => !g.archived_at));
-    const archived = shownIn(generators.filter((g) => g.archived_at));
+  /**
+   * What the active table is currently showing: unvaried originals only, in the
+   * order they are painted. Variants of a problem are reached by expanding it
+   * rather than listed beside it, so the bank stays as long as what was put in.
+   */
+  function shownProblems(): MathPracticeProblem[] {
+    return sortForBank(
+      shownIn(
+        problems.filter(
+          (p) =>
+            !p.archived_at &&
+            p.parent_problem_varied_from === null &&
+            p.the_maneuver_it_was_isolated_from === null,
+        ),
+      ),
+    );
+  }
 
-    // Never-worked first -- those are the types with coverage but no practice,
-    // which is exactly what the dashboard is for noticing. Everything else by
-    // how recently it was touched.
-    active.sort((a, b) => {
-      const aAt = standingOf(byGenerator.get(a.id)).lastWorkedAt;
-      const bAt = standingOf(byGenerator.get(b.id)).lastWorkedAt;
+  // Never-worked first -- those are the problems in the bank with no practice
+  // against them, which is exactly what this page is for noticing. Everything
+  // else by how recently it was touched.
+  function sortForBank(list: MathPracticeProblem[]): MathPracticeProblem[] {
+    return [...list].sort((a, b) => {
+      const aAt = standingOf(byProblem.get(a.id)).lastWorkedAt;
+      const bAt = standingOf(byProblem.get(b.id)).lastWorkedAt;
       if (!aAt && !bAt) return b.id - a.id;
       if (!aAt) return -1;
       if (!bAt) return 1;
       return bAt < aAt ? -1 : bAt > aAt ? 1 : 0;
     });
+  }
+
+  /** Repaint both tables from the local list. Archiving moves a row between them. */
+  function paintAll(): void {
+    const active = shownProblems();
+    const archived = sortForBank(shownIn(problems.filter((p) => p.archived_at)));
 
     rowsById.clear();
-    bodyEl.replaceChildren(...active.map(generatorRow));
-    archivedBodyEl.replaceChildren(...archived.map(generatorRow));
+    bodyEl.replaceChildren(...active.map(bankRow));
+    archivedBodyEl.replaceChildren(...archived.map(bankRow));
 
     tableEl.hidden = !active.length;
     emptyEl.hidden = Boolean(active.length) || filterTagId === null;
@@ -493,27 +507,28 @@ export async function renderGenerators(
       filterTagId === null ? "nothing archived" : "nothing filed under that";
     archivedTabEl.textContent = `archived (${archived.length})`;
 
-    // Recoloured with the table, since a retag can move a type between classes.
-    const nextLedgerEl = renderRollingWeekPracticeLedger(trophies, generators, tagCatalogue);
+    // Recoloured with the table, since a retag can move a problem between classes.
+    const nextLedgerEl = renderRollingWeekPracticeLedger(trophies, problems, tagCatalogue);
     ledgerEl.replaceWith(nextLedgerEl);
     ledgerEl = nextLedgerEl;
 
-    // A selection the filter has just hidden is not a selection any more.
-    select(selectedId !== null && rowsById.has(selectedId) ? selectedId : null);
+    // A tick the filter has just hidden is not a tick any more.
+    for (const id of [...ticked]) if (!rowsById.has(id)) ticked.delete(id);
+    paintTickState();
   }
 
-  function generatorRow(generator: NamedProblemGenerator): HTMLElement {
-    const row = h("tr", { class: "generator-row" });
-    const standing = standingOf(byGenerator.get(generator.id));
+  function bankRow(problem: MathPracticeProblem): HTMLElement {
+    const row = h("tr", { class: "bank-row" });
+    const standing = standingOf(byProblem.get(problem.id));
 
     // Never practised counts as gone cold: it is at least as far from being
     // worked as something last touched a fortnight ago.
     const daysSinceWorked = standing.lastWorkedAt
       ? daysBetween(new Date(standing.lastWorkedAt), new Date())
       : null;
-    // Archived types are not meant to be kept warm, and tinting them would
+    // Archived problems are not meant to be kept warm, and tinting them would
     // paint nearly the whole archived tab.
-    if (!generator.archived_at) {
+    if (!problem.archived_at) {
       if (daysSinceWorked === null || daysSinceWorked >= GONE_COLD_AFTER_DAYS) {
         row.classList.add("is-gone-cold");
       } else if (daysSinceWorked > GOING_COLD_AFTER_DAYS) {
@@ -521,26 +536,31 @@ export async function renderGenerators(
       }
     }
 
-    const radioEl = h("input", {
-      type: "radio",
-      name: "selected-practice-type",
-      "aria-label": generator.name,
+    const boxEl = h("input", { type: "checkbox", "aria-label": problem.name });
+    boxEl.addEventListener("click", (event) => {
+      event.stopPropagation();
+      setTicked(problem.id, boxEl.checked);
     });
 
-    const nameCell = h("td", { class: "generator-name", title: generator.prompt_text }, [
-      generator.name,
+    const nameCell = h("td", { class: "problem-name", title: problem.statement_html }, [
+      problem.name,
+      // A problem with no table has nothing to reveal at the end of a run, so
+      // the bank says so rather than letting it surprise you there.
+      ...(problem.broken_into_maneuvers_at
+        ? []
+        : [h("span", { class: "awaiting-break" }, ["  · no table yet"])]),
     ]);
     const menuCell = h("td", { class: "col-menu" });
 
-    rowsById.set(generator.id, { row, radio: radioEl });
+    rowsById.set(problem.id, { row, box: boxEl });
 
-    // The row is the selection target. Anything inside it that does something
-    // else stops the click before it gets here.
-    row.addEventListener("click", () => select(generator.id));
+    // The row is the tick target. Anything inside it that does something else
+    // stops the click before it gets here.
+    row.addEventListener("click", () => setTicked(problem.id, !ticked.has(problem.id)));
 
     // ---- rename ------------------------------------------------------------
     function beginRename(): void {
-      const input = h("input", { class: "generator-name-input", value: generator.name });
+      const input = h("input", { class: "problem-name-input", value: problem.name });
       nameCell.replaceChildren(input);
       input.focus();
       input.select();
@@ -550,20 +570,21 @@ export async function renderGenerators(
         if (settled) return;
         settled = true;
         const next = input.value.replace(/\s+/g, " ").trim().slice(0, 64);
-        const keep = save && Boolean(next) && next !== generator.name;
-        nameCell.replaceChildren(keep ? next : generator.name);
+        const keep = save && Boolean(next) && next !== problem.name;
+        nameCell.replaceChildren(keep ? next : problem.name);
         if (!keep) return;
 
-        const previous = generator.name;
-        generator.name = next;
+        const previous = problem.name;
+        problem.name = next;
         try {
-          await renameNamedProblemGenerator(generator.id, next);
+          await renameProblem(problem.id, next);
         } catch {
-          generator.name = previous;
+          problem.name = previous;
           nameCell.replaceChildren(previous);
         }
       };
 
+      input.addEventListener("click", (event) => event.stopPropagation());
       input.addEventListener("keydown", (event) => {
         const key = (event as KeyboardEvent).key;
         if (key === "Enter") {
@@ -581,7 +602,7 @@ export async function renderGenerators(
       const cell = h("td", { class: `study-context-tag-cell col-field-${field}` });
 
       function paint(): void {
-        const tags = tagsOf(generator, field);
+        const tags = tagsOf(problem, field);
         cell.replaceChildren(
           ...(tags.length
             ? tags.map((tag) => chipOf(tag))
@@ -590,7 +611,7 @@ export async function renderGenerators(
       }
 
       function beginEdit(): void {
-        const before = tagsOf(generator, field).map((tag) => tag.name);
+        const before = tagsOf(problem, field).map((tag) => tag.name);
         const input = h("input", {
           class: "study-context-tag-input",
           list: catalogueListId(field),
@@ -611,13 +632,9 @@ export async function renderGenerators(
           if (!save || unchanged) return;
 
           try {
-            const result = await retagNamedProblemGenerator(generator.id, field, next);
+            const result = await retagProblem(problem.id, field, next);
             tagCatalogue = result.study_context_tags;
-            generator.study_context_tag_ids = result.study_context_tag_ids;
-            // A tag just retired cannot go on being the filter.
-            if (filterTagId !== null && !tagCatalogue.some((t) => t.id === filterTagId)) {
-              setFilterTagId(null);
-            }
+            problem.study_context_tag_ids = result.study_context_tag_ids;
             paintTagCatalogue();
             paintAll();
           } catch (err) {
@@ -647,90 +664,64 @@ export async function renderGenerators(
       return cell;
     }
 
-    // ---- edit prompt -------------------------------------------------------
-    function beginPromptEdit(): void {
-      if ((row.nextElementSibling as HTMLElement | null)?.classList.contains("prompt-editor-row")) {
+    // ---- look at it --------------------------------------------------------
+    // The statement, the screenshots it was read off, and what minted it. A
+    // row of a table is no place to read a maths problem, and identifying one
+    // is exactly what the bank is for.
+    function openDetail(): void {
+      if ((row.nextElementSibling as HTMLElement | null)?.classList.contains("detail-row")) {
         return;
       }
+      const statementEl = h("div", { class: "problem-body" });
+      renderMathHtml(statementEl, problem.statement_html);
 
-      const textarea = h("textarea", { class: "generator-prompt" });
-      textarea.value = generator.prompt_text;
-
-      const statusEl = h("div", { class: "generator-stats" });
-      const cancelEl = h("button", { type: "button", class: "grade" }, ["cancel"]);
-      const saveEl = h("button", { type: "button", class: "grade" }, ["save"]);
-
-      // The screenshots are as much of the prompt as the words are -- several of
-      // these prompts say little more than "problems like this" -- so tuning the
-      // text without seeing them is guesswork. Each links to itself at full size.
-      const shotsEl = h("ul", { class: "shots generator-shots" },
-        generator.attachment_ids.map((id) =>
-          h("li", {}, [
-            h("a", { href: `/?shot=${id}`, target: "_blank", rel: "noreferrer" }, [
-              h("img", { src: `/?shot=${id}`, alt: "" }),
-            ]),
-          ]),
-        ),
-      );
-
-      const count = generator.attachment_ids.length;
-      // Side by side, so the words being tuned and the pictures they refer to
-      // are both on screen at once. Stacked, one of them is always scrolled off.
-      const panel = h("div", { class: count ? "prompt-editor has-shots" : "prompt-editor" }, [
-        textarea,
-        ...(count
-          ? [
-              h("div", { class: "shots-panel" }, [
-                h("div", { class: "generator-stats" }, [
-                  `${count} screenshot${count === 1 ? "" : "s"} the model sees`,
+      const detailRow = h("tr", { class: "detail-row" }, [
+        h("td", { colspan: TABLE_COLUMN_COUNT }, [
+          statementEl,
+          ...(problem.screenshot_of_record_ids.length
+            ? [
+                h(
+                  "ul",
+                  { class: "shots" },
+                  problem.screenshot_of_record_ids.map((id) =>
+                    h("li", {}, [
+                      h("a", { href: `/?shot=${id}`, target: "_blank", rel: "noreferrer" }, [
+                        h("img", { src: `/?shot=${id}`, alt: "" }),
+                      ]),
+                    ]),
+                  ),
+                ),
+              ]
+            : []),
+          ...(problem.text_that_minted_this_problem
+            ? [
+                h("div", { class: "bank-note" }, [
+                  `minted with: ${problem.text_that_minted_this_problem}`,
                 ]),
-                shotsEl,
-              ]),
-            ]
-          : []),
-        h("div", { class: "acts" }, [saveEl, cancelEl, statusEl]),
+              ]
+            : []),
+          h("div", { class: "acts" }, [
+            h(
+              "button",
+              { type: "button", class: "grade", onclick: () => detailRow.remove() },
+              ["close"],
+            ),
+          ]),
+        ]),
       ]);
-
-      const editorRow = h("tr", { class: "prompt-editor-row" }, [
-        h("td", { colspan: TABLE_COLUMN_COUNT }, [panel]),
-      ]);
-      editorRow.addEventListener("click", (event) => event.stopPropagation());
-      row.after(editorRow);
-      textarea.focus();
-
-      cancelEl.addEventListener("click", () => editorRow.remove());
-      saveEl.addEventListener("click", async () => {
-        const next = textarea.value.trim();
-        if (!next) {
-          statusEl.textContent = "a generator needs a prompt";
-          statusEl.className = "generator-stats err";
-          return;
-        }
-        editorRow.remove();
-        if (next === generator.prompt_text) return;
-
-        const previous = generator.prompt_text;
-        generator.prompt_text = next;
-        nameCell.setAttribute("title", next);
-        try {
-          await reviseNamedProblemGeneratorPrompt(generator.id, next);
-        } catch (err) {
-          generator.prompt_text = previous;
-          nameCell.setAttribute("title", previous);
-          setPracticeStatus(err instanceof Error ? err.message : String(err), true);
-        }
-      });
+      detailRow.addEventListener("click", (event) => event.stopPropagation());
+      row.after(detailRow);
     }
 
     // ---- archive / restore -------------------------------------------------
     async function setArchived(archived: boolean): Promise<void> {
-      const previous = generator.archived_at;
-      generator.archived_at = archived ? new Date().toISOString() : null;
+      const previous = problem.archived_at;
+      problem.archived_at = archived ? new Date().toISOString() : null;
       paintAll();
       try {
-        await archiveNamedProblemGenerator(generator.id, archived);
+        await archiveProblem(problem.id, archived);
       } catch {
-        generator.archived_at = previous;
+        problem.archived_at = previous;
         paintAll();
       }
     }
@@ -741,17 +732,10 @@ export async function renderGenerators(
       const item = (label: string, act: () => void) =>
         h("button", { type: "button", onclick: act }, [label]);
 
-      // Read at open time, not at render time, so a resized window is respected
-      // without repainting the table.
-      const wideEnough = window.matchMedia(WIDE_ENOUGH_TO_EDIT).matches;
-      const editEl = wideEnough
-        ? item("edit prompt", beginPromptEdit)
-        : h("button", { type: "button", disabled: true }, ["edit prompt (desktop)"]);
-
-      const menu = h("div", { class: "generator-menu" }, [
+      const menu = h("div", { class: "row-menu" }, [
+        item("look at it", openDetail),
         item("rename", beginRename),
-        editEl,
-        generator.archived_at
+        problem.archived_at
           ? item("restore", () => void setArchived(false))
           : item("archive", () => void setArchived(true)),
       ]);
@@ -767,7 +751,7 @@ export async function renderGenerators(
         "button",
         {
           type: "button",
-          class: "generator-menu-open",
+          class: "row-menu-open",
           title: "options",
           "aria-label": "options",
           onclick: (event: Event) => {
@@ -788,11 +772,12 @@ export async function renderGenerators(
     });
 
     row.append(
-      h("td", { class: "col-select" }, [radioEl]),
+      h("td", { class: "col-select" }, [boxEl]),
+      h("td", { class: "col-label" }, [problem.textbook_problem_number_label ?? ""]),
       nameCell,
       ...STUDY_CONTEXT_TAG_FIELDS.map(fieldCell),
       h("td", { class: "col-strip" }, [
-        h("span", { class: "generator-strip" }, standing.strip.map(square)),
+        h("span", { class: "problem-strip" }, standing.strip.map(square)),
       ]),
       menuCell,
     );
@@ -800,36 +785,36 @@ export async function renderGenerators(
   }
 
   // ---- tabs ----------------------------------------------------------------
-  const composeForm = renderNewGeneratorForm(go, () => tagCatalogue);
-  const generatePane = h("div", {}, [composeForm.el]);
+  const intake = renderIntake(
+    // New problems land in the bank, so the page is rebuilt rather than patched.
+    () => void renderBank(root, go),
+    () => tagCatalogue,
+  );
+  const intakePane = h("div", {}, [intake.el]);
   const practiceLaunchEl = h("div", { class: "row practice-launch-control" }, [
-    practiceCountEl,
     practiceEl,
+    tickAllEl,
+    untickAllEl,
   ]);
-  const tablePane = h("div", {}, [
-    filterEl,
-    tableEl,
-    emptyEl,
-    practiceLaunchEl,
-    practiceStatusEl,
-  ]);
+  const bankPane = h("div", {}, [filterEl, tableEl, emptyEl, practiceLaunchEl, practiceStatusEl]);
   const archivedPane = h("div", {}, [archivedTableEl, archivedEmptyEl]);
 
   // Both lists share one filter and one practice button, carried into whichever
   // pane is opened -- so a filter set on one list is still visibly set on the
-  // other, and an archived type can be practised without restoring it first.
-  // The selection is dropped on the way, or the button would act on a row in
-  // the pane just left.
+  // other, and an archived problem can be practised without restoring it first.
+  // The ticks are dropped on the way, or the button would act on rows in the
+  // pane just left.
   const showList = (pane: HTMLElement) => () => {
     pane.prepend(filterEl);
     pane.append(practiceLaunchEl, practiceStatusEl);
-    select(null);
+    ticked.clear();
+    paintTickState();
   };
 
   const tabs: { label: string; pane: HTMLElement; onShow?: () => void }[] = [
-    { label: "table", pane: tablePane, onShow: showList(tablePane) },
-    // Tags created or retired in the table while this form sat hidden.
-    { label: "generate", pane: generatePane, onShow: composeForm.refreshTagChips },
+    { label: "bank", pane: bankPane, onShow: showList(bankPane) },
+    // Tags created in the bank while this form sat hidden.
+    { label: "intake", pane: intakePane, onShow: intake.refreshTagChips },
     { label: "archived", pane: archivedPane, onShow: showList(archivedPane) },
   ];
   const tabEls = tabs.map(({ label }) => h("button", { type: "button", class: "tab" }, [label]));
@@ -846,15 +831,15 @@ export async function renderGenerators(
 
   paintTagCatalogue();
   paintAll();
-  // The table opens: most visits are to pick something to practise, not to make
-  // a new type.
+  // The bank opens: most visits are to pick something to practise, not to put
+  // something new in.
   showTab(0);
 
   root.replaceChildren(
     ledgerEl,
     h("div", { class: "tab-strip" }, tabEls),
-    tablePane,
-    generatePane,
+    bankPane,
+    intakePane,
     archivedPane,
     ...catalogueEls.values(),
     h("div", { class: "lightspeed-motto-line" }, ["limitations are in the mind"]),

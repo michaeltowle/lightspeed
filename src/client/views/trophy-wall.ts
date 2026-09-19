@@ -13,20 +13,20 @@ export function mountTrophyWall(): HTMLElement {
   return layer;
 }
 
-/** Exported so a generator card's strip is the same square, not a lookalike. */
+/** Exported so a bank row's strip is the same square, not a lookalike. */
 export function square(trophy: Trophy): HTMLElement {
   // The worker sends answered attempts only, so there is no ungraded square
-  // and no skipped one.
+  // and no skipped one. Partial earns one too: it is a problem answered.
   return h("i", {
-    class: `trophy trophy-${trophy.self_grade}`,
+    class: `trophy trophy-${trophy.outcome}`,
     title: trophy.created_at,
   });
 }
 
 /**
- * The wall is hidden on the dashboard, where every card already carries its own
- * strip of the same squares: one wall behind twenty-nine little walls is noise,
- * and the cards say which practice earned what, which the wall never could.
+ * The wall is hidden on the bank, where every row already carries its own strip
+ * of the same squares: one wall behind a hundred little walls is noise, and the
+ * rows say which problem earned what, which the wall never could.
  * It stays up everywhere else.
  */
 export function setTrophyWallVisible(visible: boolean): void {

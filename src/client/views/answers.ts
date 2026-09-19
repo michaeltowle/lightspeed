@@ -1,22 +1,64 @@
-import { furtherPractice, gradeAttempt, markForFurtherPractice, revealAnswers } from "../api";
+import {
+  breakIntoManeuvers,
+  clearManeuverCredit,
+  markForFurtherPractice,
+  markManeuverCredit,
+  revealAnswers,
+  skipAttempt,
+} from "../api";
 import { formatElapsed, h } from "../lib/dom";
 import { renderMathHtml } from "../lib/katex-boot";
+import { renderManeuverTable } from "../lib/maneuver-table";
+import type { ManeuverCredit } from "../lib/maneuver-table";
 import { refreshTrophyWall } from "./trophy-wall";
-import type { AnswerRow, SelfGrade, View } from "../types";
+import type {
+  AnswerRow,
+  AttemptOutcome,
+  Maneuver,
+  PerManeuverCreditMark,
+  View,
+} from "../types";
 
-const GRADES: SelfGrade[] = ["right", "wrong", "skipped"];
+const OUTCOME_WORDS: Record<AttemptOutcome, string> = {
+  right: "right",
+  partial: "partly right",
+  wrong: "wrong",
+  skipped: "skipped",
+};
 
-function answerRow(row: AnswerRow): HTMLElement {
+function answerRow(
+  row: AnswerRow,
+  maneuvers: Maneuver[],
+  marks: PerManeuverCreditMark[],
+  onRebroken: () => void,
+): HTMLElement {
   const item = h("li", {});
-  let current = row.self_grade;
   let marked = row.marked_for_further_practice === 1;
+  let outcome: AttemptOutcome | null = row.outcome;
+
+  // Credit is held here and pushed to the worker, so a cell repaints on the
+  // click rather than after the round trip.
+  const credit = new Map<number, ManeuverCredit>();
+  for (const mark of marks) {
+    credit.set(mark.maneuver_id, mark.got_it === 1 ? "got" : "missed");
+  }
+
+  const outcomeEl = h("span", { class: "outcome-readout" });
+  const paintOutcome = () => {
+    outcomeEl.replaceChildren(
+      ...(outcome
+        ? ["outcome: ", h("strong", {}, [OUTCOME_WORDS[outcome]])]
+        : [`${maneuvers.length ? "grade the maneuvers above" : ""}`]),
+    );
+    item.classList.toggle("is-skipped", outcome === "skipped");
+  };
 
   const markBox = h("input", { type: "checkbox" });
   markBox.checked = marked;
 
   const paintMark = () => {
     markBox.checked = marked;
-    item.className = marked ? "marked" : "";
+    item.classList.toggle("marked", marked);
   };
 
   async function setMarked(next: boolean): Promise<void> {
@@ -32,77 +74,98 @@ function answerRow(row: AnswerRow): HTMLElement {
     }
   }
 
-  const buttons = h("div", { class: "acts" });
-
-  const paintGrade = () => {
-    GRADES.forEach((grade, idx) => {
-      const child = buttons.children[idx];
-      child.className = grade === current ? "grade grade-on" : "grade";
-    });
-  };
-
-  for (const grade of GRADES) {
-    buttons.append(
-      h(
-        "button",
-        {
-          type: "button",
-          onclick: async () => {
-            const previous = current;
-            current = grade;
-            paintGrade();
-            try {
-              await gradeAttempt(row.attempt_id, grade);
-              void refreshTrophyWall();
-              // A wrong answer is almost always something to practise again, so
-              // it ticks the box for you. Changing the grade afterwards does not
-              // untick it -- dropping a problem from the next set stays a choice
-              // you make, never one made for you.
-              if (grade === "wrong") void setMarked(true);
-            } catch {
-              current = previous;
-              paintGrade();
-            }
-          },
-        },
-        [grade],
-      ),
-    );
-  }
-  paintGrade();
-
-  buttons.append(
-    h("label", { class: "mark" }, [markBox, "marked for further practice"]),
-  );
-  markBox.addEventListener("change", () => void setMarked(markBox.checked));
-
   const problemEl = h("div", { class: "problem-body" });
-  renderMathHtml(problemEl, row.problem_html);
+  renderMathHtml(problemEl, row.statement_html);
 
   // The answer stands alone and always visible -- checking paper against it is
-  // the first thing done on this page. The steps are a second, deliberate look,
-  // so the walkthrough starts folded.
+  // the first thing done on this page. It is the last maneuver's result, so
+  // there is no separately stated answer to drift out of step with the steps.
+  const finalManeuver = maneuvers[maneuvers.length - 1];
   const answerEl = h("div", { class: "final-answer" });
-  renderMathHtml(answerEl, row.final_answer_html || "—");
+  renderMathHtml(answerEl, finalManeuver ? finalManeuver.result_html : "—");
 
-  const walkthroughEl = h("div", { class: "walkthrough-body" });
-  renderMathHtml(walkthroughEl, row.solution_walkthrough_html);
+  const tableEl = maneuvers.length
+    ? renderManeuverTable(maneuvers, {
+        mode: "grade",
+        creditOf: (m) => credit.get(m.id) ?? "unmarked",
+        onCycle: async (m, next) => {
+          const previous = credit.get(m.id) ?? "unmarked";
+          credit.set(m.id, next);
+          try {
+            const result =
+              next === "unmarked"
+                ? await clearManeuverCredit(row.attempt_id, m.id)
+                : await markManeuverCredit(row.attempt_id, m.id, next === "got");
+            outcome = result.outcome;
+            paintOutcome();
+            void refreshTrophyWall();
+            // A missed step is almost always something to practise again, so it
+            // ticks the box for you. Changing the grade afterwards does not
+            // untick it -- dropping a problem from the next set stays a choice
+            // you make, never one made for you.
+            if (next === "missed") void setMarked(true);
+          } catch {
+            credit.set(m.id, previous);
+          }
+        },
+      })
+    : h("div", { class: "bank-note" }, ["no maneuver table for this problem yet"]);
+
+  // A problem served before its table landed has nothing to grade. Breaking it
+  // here beats sending Mike back to the bank to do it.
+  const breakEl = h("button", { type: "button", class: "grade" }, ["break it into maneuvers"]);
+  breakEl.addEventListener("click", async () => {
+    breakEl.disabled = true;
+    breakEl.textContent = "breaking...";
+    try {
+      await breakIntoManeuvers(row.problem_id);
+      onRebroken();
+    } catch (err) {
+      breakEl.textContent = err instanceof Error ? err.message : String(err);
+      breakEl.disabled = false;
+    }
+  });
+
+  const skipEl = h("button", { type: "button", class: "grade" }, ["skipped"]);
+  skipEl.addEventListener("click", async () => {
+    try {
+      const result = await skipAttempt(row.attempt_id);
+      credit.clear();
+      outcome = result.outcome;
+      paintOutcome();
+      void refreshTrophyWall();
+    } catch {
+      // Leave the page as it stands; the outcome simply did not move.
+    }
+  });
 
   paintMark();
+  paintOutcome();
   item.append(
     h("div", { class: "meta" }, [
       `#${row.ordinal + 1}`,
+      ...(row.textbook_problem_number_label
+        ? ["  ·  ", h("span", { class: "textbook-problem-number-label" }, [
+            row.textbook_problem_number_label,
+          ])]
+        : []),
       "  ·  ",
-      formatElapsed(row.elapsed_ms),
+      row.elapsed_ms === null ? "not worked" : formatElapsed(row.elapsed_ms),
+      ...(row.needed_help_during_attempt === 1
+        ? ["  ·  ", h("span", { class: "took-help" }, ["took help"])]
+        : []),
     ]),
     problemEl,
     answerEl,
-    h("details", { class: "solution-walkthrough" }, [
-      h("summary", {}, ["walkthrough"]),
-      walkthroughEl,
+    tableEl,
+    h("div", { class: "acts" }, [
+      ...(maneuvers.length ? [] : [breakEl]),
+      skipEl,
+      outcomeEl,
+      h("label", { class: "mark" }, [markBox, "marked for further practice"]),
     ]),
-    buttons,
   );
+  markBox.addEventListener("change", () => void setMarked(markBox.checked));
   return item;
 }
 
@@ -114,8 +177,10 @@ export async function renderAnswers(
   root.replaceChildren(h("div", { id: "out" }, ["loading answers..."]));
 
   let rows: AnswerRow[];
+  let maneuvers: Maneuver[];
+  let marks: PerManeuverCreditMark[];
   try {
-    ({ rows } = await revealAnswers(runId));
+    ({ rows, maneuvers, marks } = await revealAnswers(runId));
   } catch (err) {
     root.replaceChildren(
       h("div", { id: "out", class: "err" }, [
@@ -125,50 +190,30 @@ export async function renderAnswers(
     return;
   }
 
-  const total = rows.reduce((sum, row) => sum + row.elapsed_ms, 0);
-  const statusEl = h("div", { id: "out" });
+  const maneuversOf = (problemId: number) =>
+    maneuvers.filter((m) => m.math_practice_problem_id === problemId);
+  const marksOf = (attemptId: number) =>
+    marks.filter((m) => m.problem_attempt_id === attemptId);
 
-  // With nothing marked this is just another set on the same prompt, which is
-  // the behaviour the button had before it learned to read the marks.
-  const furtherEl = h(
-    "button",
-    {
-      type: "button",
-      id: "go",
-      onclick: async () => {
-        furtherEl.disabled = true;
-        statusEl.textContent = "generating...";
-        statusEl.className = "";
-        try {
-          const set = await furtherPractice(runId);
-          if (!set.problems.length) throw new Error("model returned no problems");
-          go({
-            name: "problem",
-            runId: set.run_id,
-            requestedCount: set.requested_count,
-            problems: set.problems,
-            index: 0,
-          });
-        } catch (err) {
-          statusEl.textContent = err instanceof Error ? err.message : String(err);
-          statusEl.className = "err";
-          furtherEl.disabled = false;
-        }
-      },
-    },
-    ["further practice"],
-  );
+  const worked = rows.filter((row) => row.elapsed_ms !== null);
+  const total = worked.reduce((sum, row) => sum + (row.elapsed_ms ?? 0), 0);
+
+  // Breaking a problem down from this page changes what there is to grade, so
+  // the page is rebuilt from the worker rather than patched in place.
+  const again = () => void renderAnswers(root, runId, go);
 
   root.replaceChildren(
     h("h1", {}, ["answers"]),
     h("div", { class: "meta" }, [
       `${rows.length} problems  ·  ${formatElapsed(total)} total`,
     ]),
-    h("ul", { id: "saved" }, rows.map(answerRow)),
+    h(
+      "ul",
+      { id: "saved" },
+      rows.map((row) => answerRow(row, maneuversOf(row.problem_id), marksOf(row.attempt_id), again)),
+    ),
     h("div", { class: "row" }, [
-      furtherEl,
-      h("button", { type: "button", onclick: () => go({ name: "generators" }) }, ["home"]),
+      h("button", { type: "button", id: "go", onclick: () => go({ name: "bank" }) }, ["home"]),
     ]),
-    statusEl,
   );
 }
