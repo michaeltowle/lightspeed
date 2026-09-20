@@ -94,6 +94,53 @@ const BUILD_TO_ORDER_DIRECTIVE = [
 ].join("\n");
 
 /**
+ * Writing problems that drill one maneuver on its own.
+ *
+ * The hard part, and the reason this is its own directive: a maneuver is not a
+ * problem. "Convert the limits" means nothing without a substitution to convert
+ * them in, and "add the two halves" is arithmetic. So the instruction cannot be
+ * "write problems that do this step" -- it has to be "build the smallest
+ * problem in which this step is the whole task", inventing just enough setup to
+ * make it bite.
+ *
+ * It is also allowed to return nothing. Some steps -- restating an answer,
+ * adding two numbers already found -- carry no skill, and three weak problems
+ * would be worse than saying so.
+ */
+const TMPNAME_DRILL_DIRECTIVE = [
+  "You write practice problems that drill one step of a method, on its own.",
+  "",
+  "You are given one step from a worked problem: what it is called, how it is",
+  "carried out in words, and what it produced. You are also given the problem",
+  "it came from, for calibration only -- do not reproduce it, and do not stay",
+  "on its numbers or its setting.",
+  "",
+  "Write problems whose whole task is that step. Build the smallest problem in",
+  "which the step is the entire job: invent just enough setup for the step to",
+  "be asked, and stop there. The reader should be able to finish in one move,",
+  "or two where the step genuinely takes two.",
+  "",
+  "Do not require the steps that came before it, beyond what the statement",
+  "itself supplies -- hand the reader the state the step begins from. Do not",
+  "ask for the steps that come after it.",
+  "",
+  "Drill the skill, not the instance. Change the setting, the function, the",
+  "distribution and the structure between problems; changing only the numbers",
+  "is not variation. Each problem must be workable with nothing else in view.",
+  "",
+  NAME_RULE,
+  "",
+  "Some steps cannot be drilled on their own. A step that only restates a",
+  "result, adds two quantities already found, or names an answer carries no",
+  "skill to practise. If this is such a step, return no problems at all.",
+  "Returning nothing is the right answer there; padding it is not.",
+  "",
+  "Do not solve anything. Statements only.",
+  "",
+  MARKUP_RULES,
+].join("\n");
+
+/**
  * Breaking a problem into the table Mike grades himself against.
  *
  * Two constraints carry the whole idea. A maneuver must produce something, or
@@ -378,6 +425,59 @@ export async function buildToOrderFromPrompt(
       {
         role: "user",
         content: `${promptText.trim() || "(no prompt)"}${history}\n\nWrite exactly ${requestedCount} problems.`,
+      },
+    ],
+  });
+  return object.problems;
+}
+
+/**
+ * Problems that isolate one maneuver.
+ *
+ * May come back empty on purpose -- see the directive. The caller turns that
+ * into a plain "nothing to drill here" rather than an error.
+ */
+export async function tmpnameDrillOneManeuver(
+  env: Env,
+  maneuver: { name: string; method_text: string; result_html: string },
+  parentStatementHtml: string,
+  requestedCount: number,
+  problemsNotToRepeatHtml: string[] = [],
+): Promise<BuiltProblem[]> {
+  const history = problemsNotToRepeatHtml.length
+    ? [
+        "",
+        "",
+        "These drills have already been given for this step. They say what not",
+        "to repeat; the step above alone sets the skill.",
+        "",
+        ...problemsNotToRepeatHtml.map((html, idx) => `${idx + 1}. ${html}`),
+      ].join("\n")
+    : "";
+
+  const { object } = await generateObject({
+    model: anthropicFor(env)(CURRENT_AUTHORING_MODEL_ID),
+    maxTokens: 16000,
+    schema: BUILD_TO_ORDER_SCHEMA,
+    system: TMPNAME_DRILL_DIRECTIVE,
+    messages: [
+      {
+        role: "user",
+        content: [
+          `The step to drill.`,
+          ``,
+          `  name    ${maneuver.name}`,
+          `  method  ${maneuver.method_text}`,
+          `  result  ${maneuver.result_html}`,
+          ``,
+          `The problem it came from, for calibration only:`,
+          ``,
+          parentStatementHtml,
+          history,
+          ``,
+          `Write ${requestedCount} problems that drill this step, or none if it`,
+          `cannot be drilled on its own.`,
+        ].join("\n"),
       },
     ],
   });

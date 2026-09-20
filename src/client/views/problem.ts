@@ -52,13 +52,24 @@ export function renderProblem(
     neededHelp = true;
     try {
       const { maneuvers } = await peekAtManeuvers(problem.id);
-      helpPanelEl.replaceChildren(renderManeuverTable(maneuvers, { mode: "help" }));
+      helpPanelEl.replaceChildren(
+        renderManeuverTable(maneuvers, { mode: "help", onDrill: openDrillTab }),
+      );
     } catch (err) {
       statusEl.textContent = err instanceof Error ? err.message : String(err);
       statusEl.className = "err";
       helpEl.disabled = false;
     }
   });
+
+  /**
+   * The step, drilled in a tab of its own. A new tab rather than a navigation
+   * on purpose: the run stays exactly where it is, so dropping down to
+   * practise a move costs nothing but the tab switch back.
+   */
+  function openDrillTab(maneuver: { id: number }): void {
+    window.open(`/?tmpname_drill=${maneuver.id}`, "_blank", "noopener");
+  }
 
   function onward(): void {
     if (isLast) go({ name: "answers", runId });

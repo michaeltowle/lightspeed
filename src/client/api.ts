@@ -75,6 +75,20 @@ export const buildToOrderFromPrompt = (
     study_context_tags_by_field: tagsByField,
   });
 
+/**
+ * Problems that drill one maneuver on its own, minted and filed under the
+ * class and assignment of the problem the step was taken from.
+ *
+ * A step carrying no skill of its own comes back as an error rather than as
+ * padding -- see the directive behind it.
+ */
+export const tmpnameDrillOneManeuver = (maneuverId: number, count: number) =>
+  post<{ problem_ids: number[]; maneuver_name: string }>({
+    action: "tmpname_drill_one_maneuver",
+    maneuver_id: maneuverId,
+    requested_drill_count: count,
+  });
+
 /** One problem's table. Fired per problem so an intake need not wait on them. */
 export const breakIntoManeuvers = (problemId: number) =>
   post<{ maneuver_count: number }>({ action: "break_into_maneuvers", id: problemId });

@@ -87,6 +87,11 @@ function answerRow(
   const tableEl = maneuvers.length
     ? renderManeuverTable(maneuvers, {
         mode: "grade",
+        // Where a missed maneuver is staring at you is the best place to be
+        // offered practice at it.
+        onDrill: (m) => {
+          window.open(`/?tmpname_drill=${m.id}`, "_blank", "noopener");
+        },
         creditOf: (m) => credit.get(m.id) ?? "unmarked",
         onCycle: async (m, next) => {
           const previous = credit.get(m.id) ?? "unmarked";

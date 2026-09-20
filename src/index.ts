@@ -3,6 +3,7 @@ import { indexPageDocument } from "./page";
 import {
   breakIntoManeuvers,
   buildToOrderFromPrompt,
+  tmpnameDrillOneManeuver,
   transcribeFromScreenshot,
 } from "./model";
 import {
@@ -162,6 +163,7 @@ export default {
       run_id?: number;
       attempt_id?: number;
       maneuver_id?: number;
+      requested_drill_count?: number;
       got_it?: boolean;
       elapsed_ms?: number;
       needed_help?: boolean;
@@ -366,6 +368,80 @@ export default {
         // One problem at a time, fired in parallel by the client. That is what
         // lets an intake hand back statements immediately and fill in the
         // tables behind it.
+        // TMPNAME_DRILL_ONE_MANEUVER awaits christening.
+        //
+        // Problems that isolate one step, minted like any other -- the problem
+        // stays the atom, and where it came from is a column. The bank already
+        // hides anything isolated from a maneuver, so drills never crowd it.
+        case "tmpname_drill_one_maneuver": {
+          const maneuver = await db
+            .prepare(
+              `SELECT m.id, m.name, m.method_text, m.result_html,
+                      m.math_practice_problem_id AS parent_id,
+                      p.statement_html AS parent_statement_html
+                 FROM maneuver m
+                 JOIN math_practice_problem p
+                   ON p.id = m.math_practice_problem_id
+                WHERE m.id = ?`,
+            )
+            .bind(body.maneuver_id)
+            .first<{
+              id: number;
+              name: string;
+              method_text: string;
+              result_html: string;
+              parent_id: number;
+              parent_statement_html: string;
+            }>();
+          if (!maneuver) return json({ error: "no such maneuver" }, 404);
+
+          const wanted = Math.max(1, Math.min(10, Number(body.requested_drill_count) || 3));
+
+          // What this step has already been drilled with, so a second press
+          // does not hand back the first press's problems.
+          const { results: already } = await db
+            .prepare(
+              `SELECT statement_html FROM math_practice_problem
+                WHERE the_maneuver_it_was_isolated_from = ?
+                ORDER BY id DESC LIMIT 20`,
+            )
+            .bind(maneuver.id)
+            .all<{ statement_html: string }>();
+
+          const written = await tmpnameDrillOneManeuver(
+            env,
+            maneuver,
+            maneuver.parent_statement_html,
+            wanted,
+            already.map((row) => row.statement_html),
+          );
+          // Empty is a verdict, not a failure: the directive lets the model
+          // refuse a step that carries no skill.
+          if (!written.length) {
+            return json({ error: "this step cannot be drilled on its own" }, 422);
+          }
+
+          const minted: number[] = [];
+          for (const problem of written) {
+            const id = await insertProblem(db, {
+              name: tidy(problem.name, MAX_NAME_LENGTH) || "untitled drill",
+              label: "",
+              statementHtml: problem.statement_html,
+              origin: "isolated_from_one_maneuver",
+              mintedWith: maneuver.name,
+              isolatedFrom: maneuver.id,
+            });
+            // The class and the assignment come down from the problem the step
+            // was taken from, so a drill still counts where its parent counts.
+            await inheritTags(db, maneuver.parent_id, id);
+            minted.push(id);
+          }
+          return json({
+            problem_ids: minted,
+            maneuver_name: maneuver.name,
+          });
+        }
+
         case "break_into_maneuvers": {
           const problem = await db
             .prepare(
