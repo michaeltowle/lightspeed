@@ -4,7 +4,6 @@ import {
   markForFurtherPractice,
   markManeuverCredit,
   revealAnswers,
-  skipAttempt,
 } from "../api";
 import { formatElapsed, h } from "../lib/dom";
 import { renderMathHtml } from "../lib/katex-boot";
@@ -94,9 +93,22 @@ function answerRow(
         },
         creditOf: (m) => credit.get(m.id) ?? "unmarked",
         onCycle: async (m, next) => {
-          const previous = credit.get(m.id) ?? "unmarked";
-          credit.set(m.id, next);
+          const before = new Map(credit);
+          // The last maneuver is the final answer, so getting it is getting the
+          // whole problem: marking that row green marks every row green rather
+          // than asking for the same click eight times over. Only green, and
+          // only from the last row -- missing the answer says nothing about
+          // which step lost it, which is exactly what the other rows are for.
+          const allRight = next === "got" && m.id === finalManeuver?.id;
+          const marking = allRight ? maneuvers : [m];
+          for (const each of marking) credit.set(each.id, next);
+
           try {
+            // The rollup is computed server-side per mark, so the row that
+            // decides the outcome goes last and its answer is the one kept.
+            for (const each of marking.filter((one) => one.id !== m.id)) {
+              await markManeuverCredit(row.attempt_id, each.id, true);
+            }
             const result =
               next === "unmarked"
                 ? await clearManeuverCredit(row.attempt_id, m.id)
@@ -110,7 +122,8 @@ function answerRow(
             // you make, never one made for you.
             if (next === "missed") void setMarked(true);
           } catch {
-            credit.set(m.id, previous);
+            credit.clear();
+            for (const [id, had] of before) credit.set(id, had);
           }
         },
       })
@@ -128,19 +141,6 @@ function answerRow(
     } catch (err) {
       breakEl.textContent = err instanceof Error ? err.message : String(err);
       breakEl.disabled = false;
-    }
-  });
-
-  const skipEl = h("button", { type: "button", class: "grade" }, ["skipped"]);
-  skipEl.addEventListener("click", async () => {
-    try {
-      const result = await skipAttempt(row.attempt_id);
-      credit.clear();
-      outcome = result.outcome;
-      paintOutcome();
-      void refreshTrophyWall();
-    } catch {
-      // Leave the page as it stands; the outcome simply did not move.
     }
   });
 
@@ -165,7 +165,6 @@ function answerRow(
     tableEl,
     h("div", { class: "acts" }, [
       ...(maneuvers.length ? [] : [breakEl]),
-      skipEl,
       outcomeEl,
       h("label", { class: "mark" }, [markBox, "marked for further practice"]),
     ]),
