@@ -3,6 +3,7 @@ import {
   openPracticeRun,
   renameProblem,
   retagProblem,
+  setProblemComment,
   trophyWall,
 } from "../api";
 import { h } from "../lib/dom";
@@ -31,7 +32,10 @@ const GONE_COLD_AFTER_DAYS = 7;
 const GOING_COLD_AFTER_DAYS = 2;
 
 // Select, label, name, four fields, strip, menu.
-const TABLE_COLUMN_COUNT = 9;
+// select, label, problem, the tag fields, comment, strip, menu. Derived so a
+// field added or dropped cannot leave the detail row spanning the wrong width.
+const TABLE_COLUMN_COUNT = 6 + STUDY_CONTEXT_TAG_FIELDS.length;
+
 
 const WEEKDAY_NAMES = [
   "sunday",
@@ -252,6 +256,7 @@ function buildBankTable(body: HTMLElement): HTMLElement {
         ...STUDY_CONTEXT_TAG_FIELDS.map((field) =>
           h("th", { class: `col-field-${field}` }, [field]),
         ),
+        h("th", { class: "col-comment" }, ["comment"]),
         h("th", { class: "col-strip" }, []),
         h("th", { class: "col-menu" }, []),
       ]),
@@ -363,7 +368,11 @@ export async function renderBank(
       entry.box.checked = on;
     }
     practiceEl.disabled = ticked.size === 0;
-    setPracticeStatus(ticked.size ? `${ticked.size} ticked` : "");
+    // The count rides on the button rather than a line beneath it: it is what
+    // the press is about to do, and the line below is left for what the press
+    // then says.
+    practiceEl.textContent = ticked.size ? `practice ${ticked.size}` : "practice";
+    setPracticeStatus("");
   }
 
   const setTicked = (id: number, on: boolean): void => {
@@ -763,11 +772,74 @@ export async function renderBank(
       openMenu();
     });
 
+    // ---- the comment -------------------------------------------------------
+    //
+    // Click to write, Enter or blur to keep, Escape to drop it. The same
+    // bargain the name makes, and for the same reason: a cell that turns into
+    // its own editor beats a dialogue for something typed in passing.
+    const commentCell = h("td", { class: "col-comment" });
+
+    function paintComment(): void {
+      commentCell.replaceChildren(
+        ...(problem.comment
+          ? [h("span", { class: "problem-comment" }, [problem.comment])]
+          : []),
+      );
+    }
+
+    commentCell.addEventListener("click", (event) => {
+      event.stopPropagation();
+      if (commentCell.querySelector("input")) return;
+
+      const input = h("input", {
+        class: "problem-comment-input",
+        value: problem.comment,
+      });
+      commentCell.replaceChildren(input);
+      input.focus();
+
+      let settled = false;
+      const finish = async (save: boolean): Promise<void> => {
+        if (settled) return;
+        settled = true;
+        const next = input.value.replace(/\s+/g, " ").trim().slice(0, 280);
+        if (!save || next === problem.comment) {
+          paintComment();
+          return;
+        }
+        const previous = problem.comment;
+        problem.comment = next;
+        paintComment();
+        try {
+          await setProblemComment(problem.id, next);
+        } catch {
+          problem.comment = previous;
+          paintComment();
+        }
+      };
+
+      input.addEventListener("click", (event) => event.stopPropagation());
+      input.addEventListener("keydown", (event) => {
+        const key = (event as KeyboardEvent).key;
+        if (key === "Enter") {
+          event.preventDefault();
+          void finish(true);
+        } else if (key === "Escape") {
+          event.preventDefault();
+          void finish(false);
+        }
+      });
+      input.addEventListener("blur", () => void finish(true));
+    });
+
+    paintComment();
+
     row.append(
       h("td", { class: "col-select" }, [boxEl]),
       h("td", { class: "col-label" }, [problem.textbook_problem_number_label ?? ""]),
       nameCell,
       ...STUDY_CONTEXT_TAG_FIELDS.map(fieldCell),
+      commentCell,
       h("td", { class: "col-strip" }, [
         h("span", { class: "problem-strip" }, standing.strip.map(square)),
       ]),

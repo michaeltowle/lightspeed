@@ -101,6 +101,10 @@ export const retagProblem = (
 export const renameProblem = (id: number, name: string) =>
   post<{ ok: true; name: string }>({ action: "rename_problem", id, name });
 
+/** Free text of Mike's own. Saving an empty one clears it. */
+export const setProblemComment = (id: number, comment: string) =>
+  post<{ ok: true }>({ action: "set_problem_comment", id, comment });
+
 export const setDefaultServiceStyle = (id: number, style: DefaultServiceStyle) =>
   post<{ ok: true }>({ action: "set_default_service_style", id, default_service_style: style });
 

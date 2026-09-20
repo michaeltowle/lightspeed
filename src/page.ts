@@ -35,7 +35,7 @@ export function indexPageDocument(env: Env): string {
   main#app {
     position: relative;
     z-index: 1;
-    max-width: 52rem;
+    max-width: 67.6rem;
     margin: 0 auto;
     padding: 1rem 1rem 5rem;
   }
@@ -148,8 +148,7 @@ export function indexPageDocument(env: Env): string {
     .bank-table th, .bank-table td {
       padding-left: 0.2rem; padding-right: 0.2rem;
     }
-    .col-strip, .col-field-assignment, .col-field-source, .col-field-target,
-    .col-field-status {
+    .col-strip, .col-field-assignment, .col-comment {
       display: none;
     }
     td.problem-name { min-width: 0; }
@@ -206,7 +205,22 @@ export function indexPageDocument(env: Env): string {
 
   /* One practice button for the bank, acting on every ticked row. */
   .practice-launch-control { margin-top: 0.85rem; }
-  .practice-launch-control .practice { font-weight: 600; }
+
+  /* Wide enough to read a line of it, and it wraps rather than stretching the
+     row: a comment is prose and will run as long as Mike wants. No placeholder
+     glyph when empty -- the whole cell is the target, so there is nothing to
+     aim at. */
+  .col-comment { min-width: 13rem; cursor: text; }
+  .problem-comment { opacity: 0.75; font-size: 0.8rem; }
+  /* Square and full-bleed, so opening the editor does not shrink the cell it
+     replaces. Its own class rather than the name's: that one sits in a
+     narrower cell and is bold, which a comment is not. */
+  .problem-comment-input {
+    display: block; box-sizing: border-box; width: 100%; min-height: 2.4rem;
+    padding: 0.35rem 0.45rem; font: inherit; font-size: 0.8rem;
+    color: inherit; border: 1px solid rgba(128,128,128,0.6); border-radius: 0;
+    background: rgba(127,127,127,0.04);
+  }
 
   /* The same chip reads a row and, as a button, filters the table. */
   .study-context-tag-cell { cursor: text; min-width: 5rem; }
@@ -265,8 +279,10 @@ ${chipColorPaletteCss}
   .row-menu button:disabled:hover { background: none; }
 
   /* What was worked on each of the last seven days. A fixed rail on the Dells,
-     where there is gutter going spare beside a 52rem column; above the table on
-     anything narrower, since there is nowhere else for it to be. */
+     where there is gutter going spare beside a 67.6rem column; above the table
+     on anything narrower, since there is nowhere else for it to be. The
+     breakpoint below tracks that width -- the rail is 10rem in a 1rem margin,
+     so it needs the column plus about 22rem before it can sit beside it. */
   .rolling-week-practice-ledger {
     position: fixed; left: 1rem; top: 1rem; width: 10rem; z-index: 2;
     padding: 0.55rem 0.65rem; font-size: 0.7rem;
@@ -337,7 +353,7 @@ ${chipColorPaletteCss}
   }
   /* 52rem of column plus a 10rem rail and its margins. Below that the gutter is
      gone and the rail would sit on top of the table. */
-  @media (max-width: 76rem) {
+  @media (max-width: 90rem) {
     .rolling-week-practice-ledger {
       position: static; width: 100%; max-width: 18rem; margin: 0 0 1.25rem;
     }

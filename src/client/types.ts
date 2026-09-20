@@ -23,6 +23,9 @@ export interface MathPracticeProblem {
   parent_problem_varied_from: number | null;
   the_maneuver_it_was_isolated_from: number | null;
   text_that_minted_this_problem: string;
+  // Mike's own note on this problem. Free text, his alone -- nothing generates
+  // or reads it but him.
+  comment: string;
   default_service_style: DefaultServiceStyle;
   // Null until the maneuver table lands. A problem is servable before then;
   // it simply has no answer to reveal yet.
@@ -69,6 +72,9 @@ export interface AnswerRow {
 /** What a run serves: statements only, with no table attached. */
 export interface ServedProblem {
   id: number;
+  // The attempt written when the run opened. Carried so a problem can be
+  // skipped from the page it is worked on.
+  problem_attempt_id: number | null;
   name: string;
   textbook_problem_number_label: string | null;
   statement_html: string;
@@ -86,15 +92,12 @@ export interface Trophy {
 }
 
 
-export const STUDY_CONTEXT_TAG_FIELDS = [
-  "class",
-  // Beside class rather than at the end: the two together are what an
-  // assignment is filed under, and the order drives the chip palette offset.
-  "assignment",
-  "source",
-  "target",
-  "status",
-] as const;
+// The columns a problem is filed under. Fixed for now, and short on purpose:
+// a field earns its place by a use-case asking for it. `source`, `target` and
+// `status` were here before anything needed them and carried no rows, so they
+// are gone from the schema's point of view too -- the CHECK still admits them,
+// which costs nothing and leaves the door open.
+export const STUDY_CONTEXT_TAG_FIELDS = ["class", "assignment"] as const;
 
 export type StudyContextTagField = (typeof STUDY_CONTEXT_TAG_FIELDS)[number];
 

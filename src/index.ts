@@ -20,6 +20,7 @@ export type { Env };
 
 const MAX_NAME_LENGTH = 64;
 const MAX_LABEL_LENGTH = 24;
+const MAX_COMMENT_LENGTH = 280;
 
 interface UnsavedScreenshot {
   base64: string;
@@ -148,6 +149,7 @@ export default {
       action?: string;
       id?: number;
       name?: string;
+      comment?: string;
       note?: string;
       prompt?: string;
       requested_count?: number;
@@ -180,7 +182,7 @@ export default {
               `SELECT id, name, textbook_problem_number_label, statement_html,
                       how_this_problem_came_to_be, parent_problem_varied_from,
                       the_maneuver_it_was_isolated_from, text_that_minted_this_problem,
-                      default_service_style, broken_into_maneuvers_at,
+                      comment, default_service_style, broken_into_maneuvers_at,
                       created_at, archived_at
                  FROM math_practice_problem
                 ORDER BY id DESC`,
@@ -459,6 +461,16 @@ export default {
           return json({ ok: true, name });
         }
 
+        case "set_problem_comment": {
+          // Cleared by saving an empty one, so there is no separate verb for
+          // taking a comment off.
+          await db
+            .prepare(`UPDATE math_practice_problem SET comment = ? WHERE id = ?`)
+            .bind(tidy(body.comment, MAX_COMMENT_LENGTH), body.id)
+            .run();
+          return json({ ok: true });
+        }
+
         case "set_default_service_style": {
           if (!["exact", "variant"].includes(String(body.default_service_style))) {
             return json({ error: `bad service style: ${body.default_service_style}` }, 400);
@@ -523,7 +535,25 @@ export default {
             ),
           );
 
-          return json({ run_id: runId, problems: ordered });
+          // Read back so each served problem carries its attempt, which is what
+          // lets it be skipped from the page it is worked on rather than only
+          // from the answers page afterwards.
+          const { results: attempts } = await db
+            .prepare(
+              `SELECT id, ordinal FROM problem_attempt
+                WHERE practice_run_id = ? ORDER BY ordinal`,
+            )
+            .bind(runId)
+            .all<{ id: number; ordinal: number }>();
+          const attemptByOrdinal = new Map(attempts.map((a) => [a.ordinal, a.id]));
+
+          return json({
+            run_id: runId,
+            problems: ordered.map((problem, idx) => ({
+              ...problem,
+              problem_attempt_id: attemptByOrdinal.get(idx) ?? null,
+            })),
+          });
         }
 
         case "record_problem_worked": {

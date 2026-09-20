@@ -1,4 +1,4 @@
-export const STUDY_CONTEXT_TAG_FIELDS = ["class", "assignment", "source", "target", "status"] as const;
+export const STUDY_CONTEXT_TAG_FIELDS = ["class", "assignment"] as const;
 export type StudyContextTagField = (typeof STUDY_CONTEXT_TAG_FIELDS)[number];
 
 export const isStudyContextTagField = (value: unknown): value is StudyContextTagField =>

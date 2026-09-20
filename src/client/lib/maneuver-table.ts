@@ -61,7 +61,7 @@ export function renderManeuverTable(
         event.stopPropagation();
         renderMathHtml(resultCell, maneuver.result_html);
       });
-      resultCell.append(h("span", { class: "result-veil" }, ["hidden", reveal]));
+      resultCell.append(h("span", { class: "result-veil" }, [reveal]));
     }
 
     row.append(

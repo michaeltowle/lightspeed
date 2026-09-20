@@ -1,4 +1,4 @@
-import { peekAtManeuvers, recordProblemWorked } from "../api";
+import { peekAtManeuvers, recordProblemWorked, skipAttempt } from "../api";
 import { h } from "../lib/dom";
 import { renderMathHtml } from "../lib/katex-boot";
 import { renderManeuverTable } from "../lib/maneuver-table";
@@ -52,16 +52,38 @@ export function renderProblem(
     neededHelp = true;
     try {
       const { maneuvers } = await peekAtManeuvers(problem.id);
-      helpPanelEl.replaceChildren(
-        h("div", { class: "meta" }, ["the method — results covered until you uncover them"]),
-        renderManeuverTable(maneuvers, { mode: "help" }),
-      );
+      helpPanelEl.replaceChildren(renderManeuverTable(maneuvers, { mode: "help" }));
     } catch (err) {
       statusEl.textContent = err instanceof Error ? err.message : String(err);
       statusEl.className = "err";
       helpEl.disabled = false;
     }
   });
+
+  function onward(): void {
+    if (isLast) go({ name: "answers", runId });
+    else go({ name: "problem", runId, problems, index: index + 1 });
+  }
+
+  /**
+   * Passed over rather than worked. The attempt is marked skipped, which keeps
+   * it off the wall and out of the accuracy, and no interval is recorded --
+   * time spent deciding not to do a problem is not time spent on it.
+   */
+  async function skip(): Promise<void> {
+    if (advancing) return;
+    advancing = true;
+    try {
+      if (problem.problem_attempt_id !== null) {
+        await skipAttempt(problem.problem_attempt_id);
+      }
+      onward();
+    } catch (err) {
+      statusEl.textContent = err instanceof Error ? err.message : String(err);
+      statusEl.className = "err";
+      advancing = false;
+    }
+  }
 
   async function advance(): Promise<void> {
     if (advancing) return;
@@ -74,8 +96,7 @@ export function renderProblem(
       // stays null until the answers page, which is why nothing appears on the
       // wall yet.
       await recordProblemWorked(runId, index, Math.round(elapsed), neededHelp);
-      if (isLast) go({ name: "answers", runId });
-      else go({ name: "problem", runId, problems, index: index + 1 });
+      onward();
     } catch (err) {
       statusEl.textContent = err instanceof Error ? err.message : String(err);
       statusEl.className = "err";
@@ -99,10 +120,11 @@ export function renderProblem(
     ]),
     bodyEl,
     h("div", { class: "row" }, [
-      h("button", { type: "button", id: "go", onclick: () => void advance() }, [
+      h("button", { type: "button", onclick: () => void advance() }, [
         isLast ? "next (finish)" : "next",
       ]),
       helpEl,
+      h("button", { type: "button", onclick: () => void skip() }, ["skip"]),
     ]),
     helpPanelEl,
     statusEl,
