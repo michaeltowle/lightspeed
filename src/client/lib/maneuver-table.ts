@@ -40,13 +40,39 @@ export function renderManeuverTable(
     const row = h("tr", { class: "maneuver-row" });
 
     const resultCell = h("td", { class: "maneuver-result" });
+    // The result lives in a span of its own so that repainting it -- or
+    // uncovering it -- cannot take the buttons beside it with it.
+    const valueEl = h("span", { class: "maneuver-result-value" });
+
+    // Both live beside the result rather than out by the name: seeing the
+    // answer and going to practise it are the two things this cell offers.
+    const drillEl = onDrill
+      ? h(
+          "button",
+          {
+            type: "button",
+            class: "maneuver-drill",
+            title: "drill this maneuver in a new tab",
+            onclick: (event: Event) => {
+              event.stopPropagation();
+              onDrill(maneuver);
+            },
+          },
+          ["drill"],
+        )
+      : null;
+
     const paintResult = () => {
       resultCell.className = creditClass(creditOf?.(maneuver) ?? "unmarked");
-      renderMathHtml(resultCell, maneuver.result_html);
+      renderMathHtml(valueEl, maneuver.result_html);
     };
 
     if (mode === "grade") {
       paintResult();
+      resultCell.append(
+        valueEl,
+        ...(drillEl ? [h("span", { class: "maneuver-result-controls" }, [drillEl])] : []),
+      );
       resultCell.addEventListener("click", () => {
         const next = nextCredit(creditOf?.(maneuver) ?? "unmarked");
         onCycle?.(maneuver, next);
@@ -56,35 +82,25 @@ export function renderManeuverTable(
     } else {
       // Covered until asked for. The result is already on the page, so
       // uncovering is instant -- but nothing was fetched until help was pressed.
+      // Revealing retires its own button and leaves drill standing: having seen
+      // the step is usually the moment you decide you want practice at it.
       const reveal = h("button", { type: "button" }, ["reveal"]);
       reveal.addEventListener("click", (event) => {
         event.stopPropagation();
-        renderMathHtml(resultCell, maneuver.result_html);
+        renderMathHtml(valueEl, maneuver.result_html);
+        reveal.remove();
       });
-      resultCell.append(h("span", { class: "result-veil" }, [reveal]));
+      resultCell.append(
+        valueEl,
+        h("span", { class: "maneuver-result-controls" }, [
+          reveal,
+          ...(drillEl ? [drillEl] : []),
+        ]),
+      );
     }
 
     row.append(
-      h("td", { class: "maneuver-name" }, [
-        maneuver.name,
-        ...(onDrill
-          ? [
-              h(
-                "button",
-                {
-                  type: "button",
-                  class: "maneuver-drill",
-                  title: "drill this maneuver",
-                  onclick: (event: Event) => {
-                    event.stopPropagation();
-                    onDrill(maneuver);
-                  },
-                },
-                ["drill"],
-              ),
-            ]
-          : []),
-      ]),
+      h("td", { class: "maneuver-name" }, [maneuver.name]),
       h("td", { class: "maneuver-method" }, [maneuver.method_text]),
       resultCell,
     );

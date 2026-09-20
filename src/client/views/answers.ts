@@ -90,7 +90,7 @@ function answerRow(
         // Where a missed maneuver is staring at you is the best place to be
         // offered practice at it.
         onDrill: (m) => {
-          window.open(`/?tmpname_drill=${m.id}`, "_blank", "noopener");
+          window.open(`/?drill=${m.id}`, "_blank", "noopener");
         },
         creditOf: (m) => credit.get(m.id) ?? "unmarked",
         onCycle: async (m, next) => {

@@ -430,18 +430,29 @@ ${chipColorPaletteCss}
   /* Help on the problem page: the method is readable, every result is not,
      and each can be uncovered on its own so one step can be checked without
      giving up the rest. */
-  .result-veil {
-    display: inline-flex; align-items: center; gap: 0.4rem;
-    font-size: 0.72rem; opacity: 0.6;
+  .maneuver-result-value:not(:empty) { display: block; margin-bottom: 0.3rem; }
+
+  /* The two things a result offers -- see it, go practise it -- as a matched
+     pair. Quiet until the row is under the cursor, so a table being read is
+     not a table covered in buttons. */
+  .maneuver-result-controls {
+    display: inline-flex; align-items: center; gap: 0.3rem;
   }
-  .result-veil button {
-    font-size: 0.68rem; padding: 0.1rem 0.5rem; border-radius: 999px;
+  .maneuver-result-controls button {
+    font: inherit; font-size: 0.66rem; letter-spacing: 0.02em;
+    line-height: 1.5; padding: 0.1rem 0.6rem; border-radius: 999px;
+    border: 1px solid rgba(128,128,128,0.45);
+    background: rgba(127,127,127,0.05); color: inherit;
+    opacity: 0.55; transition: opacity 120ms ease, background 120ms ease,
+    border-color 120ms ease;
   }
-  .maneuver-drill {
-    font-size: 0.68rem; padding: 0.1rem 0.5rem; opacity: 0.55;
-    border-color: transparent; background: none;
+  .maneuver-row:hover .maneuver-result-controls button { opacity: 0.95; }
+  .maneuver-result-controls button:hover {
+    opacity: 1; background: rgba(127,127,127,0.16);
+    border-color: rgba(128,128,128,0.75);
   }
-  .maneuver-row:hover .maneuver-drill { opacity: 1; border-color: rgba(128,128,128,0.5); }
+  /* Drill leaves the page, so it reads as the quieter of the two. */
+  .maneuver-drill { border-style: dashed; }
 
   #out {
     margin-top: 1rem; padding: 0.75rem; border-radius: 6px; min-height: 1rem;

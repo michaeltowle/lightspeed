@@ -123,7 +123,7 @@ export type View =
   | { name: "bank" }
   // Opened in a tab of its own from a maneuver's drill button, so the run it
   // interrupts is still sitting in the tab behind it.
-  | { name: "tmpname_maneuver_drill"; maneuverId: number }
+  | { name: "maneuver_drill"; maneuverId: number }
   | {
       name: "problem";
       runId: number;

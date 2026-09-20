@@ -68,7 +68,7 @@ export function renderProblem(
    * practise a move costs nothing but the tab switch back.
    */
   function openDrillTab(maneuver: { id: number }): void {
-    window.open(`/?tmpname_drill=${maneuver.id}`, "_blank", "noopener");
+    window.open(`/?drill=${maneuver.id}`, "_blank", "noopener");
   }
 
   function onward(): void {

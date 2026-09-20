@@ -3,7 +3,7 @@ import { indexPageDocument } from "./page";
 import {
   breakIntoManeuvers,
   buildToOrderFromPrompt,
-  tmpnameDrillOneManeuver,
+  drillOneManeuver,
   transcribeFromScreenshot,
 } from "./model";
 import {
@@ -368,12 +368,10 @@ export default {
         // One problem at a time, fired in parallel by the client. That is what
         // lets an intake hand back statements immediately and fill in the
         // tables behind it.
-        // TMPNAME_DRILL_ONE_MANEUVER awaits christening.
-        //
         // Problems that isolate one step, minted like any other -- the problem
         // stays the atom, and where it came from is a column. The bank already
         // hides anything isolated from a maneuver, so drills never crowd it.
-        case "tmpname_drill_one_maneuver": {
+        case "drill_one_maneuver": {
           const maneuver = await db
             .prepare(
               `SELECT m.id, m.name, m.method_text, m.result_html,
@@ -408,7 +406,7 @@ export default {
             .bind(maneuver.id)
             .all<{ statement_html: string }>();
 
-          const written = await tmpnameDrillOneManeuver(
+          const written = await drillOneManeuver(
             env,
             maneuver,
             maneuver.parent_statement_html,

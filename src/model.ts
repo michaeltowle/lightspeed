@@ -107,7 +107,7 @@ const BUILD_TO_ORDER_DIRECTIVE = [
  * adding two numbers already found -- carry no skill, and three weak problems
  * would be worse than saying so.
  */
-const TMPNAME_DRILL_DIRECTIVE = [
+const DRILL_DIRECTIVE = [
   "You write practice problems that drill one step of a method, on its own.",
   "",
   "You are given one step from a worked problem: what it is called, how it is",
@@ -437,7 +437,7 @@ export async function buildToOrderFromPrompt(
  * May come back empty on purpose -- see the directive. The caller turns that
  * into a plain "nothing to drill here" rather than an error.
  */
-export async function tmpnameDrillOneManeuver(
+export async function drillOneManeuver(
   env: Env,
   maneuver: { name: string; method_text: string; result_html: string },
   parentStatementHtml: string,
@@ -459,7 +459,7 @@ export async function tmpnameDrillOneManeuver(
     model: anthropicFor(env)(CURRENT_AUTHORING_MODEL_ID),
     maxTokens: 16000,
     schema: BUILD_TO_ORDER_SCHEMA,
-    system: TMPNAME_DRILL_DIRECTIVE,
+    system: DRILL_DIRECTIVE,
     messages: [
       {
         role: "user",

@@ -1,4 +1,4 @@
-import { breakIntoManeuvers, openPracticeRun, tmpnameDrillOneManeuver } from "../api";
+import { breakIntoManeuvers, openPracticeRun, drillOneManeuver } from "../api";
 import { h } from "../lib/dom";
 import type { View } from "../types";
 
@@ -19,7 +19,7 @@ const DRILLS_PER_PRESS = 3;
  * it. That is why this takes the long way round rather than trying to be
  * quick: forty seconds in a background tab costs nothing.
  */
-export function renderTmpnameManeuverDrill(
+export function renderManeuverDrill(
   root: HTMLElement,
   maneuverId: number,
   go: (view: View) => void,
@@ -37,7 +37,7 @@ export function renderTmpnameManeuverDrill(
   void (async () => {
     let problemIds: number[];
     try {
-      const drilled = await tmpnameDrillOneManeuver(maneuverId, DRILLS_PER_PRESS);
+      const drilled = await drillOneManeuver(maneuverId, DRILLS_PER_PRESS);
       problemIds = drilled.problem_ids;
       titleEl.textContent = drilled.maneuver_name;
     } catch (err) {

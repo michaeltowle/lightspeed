@@ -82,9 +82,9 @@ export const buildToOrderFromPrompt = (
  * A step carrying no skill of its own comes back as an error rather than as
  * padding -- see the directive behind it.
  */
-export const tmpnameDrillOneManeuver = (maneuverId: number, count: number) =>
+export const drillOneManeuver = (maneuverId: number, count: number) =>
   post<{ problem_ids: number[]; maneuver_name: string }>({
-    action: "tmpname_drill_one_maneuver",
+    action: "drill_one_maneuver",
     maneuver_id: maneuverId,
     requested_drill_count: count,
   });
