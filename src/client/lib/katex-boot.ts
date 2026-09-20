@@ -35,13 +35,64 @@ function scrub(node: Element): void {
   }
 }
 
+// Longest first: "$$" has to be tried before "$" or every display span is read
+// as two empty inline ones.
+const MATH_SPANS = [
+  { open: "$$", close: "$$" },
+  { open: "\\[", close: "\\]" },
+  { open: "\\(", close: "\\)" },
+  { open: "$", close: "$" },
+];
+
+/**
+ * Escape raw angle brackets inside math, before any HTML parser sees them.
+ *
+ * The model is told to emit HTML with LaTeX inside $...$, and inside math a
+ * `<` is simply less-than. To an HTML parser it opens a tag: `$P(|X|<t)=0$`
+ * parses as the text `$P(|X|` followed by a bogus `<t)...>` element, and
+ * everything up to the next `>` is swallowed. Seen live on a conditional
+ * probability -- four of one problem's six result cells lost their contents,
+ * and the one with a `cases` block came back as `P(|X|0\end{cases}` once the
+ * parser had eaten the middle.
+ *
+ * Only raw brackets are touched, and only between delimiters. One the model
+ * already wrote as `&lt;` holds no `<` to find, so both spellings reach KaTeX
+ * as the same character. `&` is deliberately left alone: escaping it would
+ * turn an already-escaped `&lt;` into a visible one.
+ */
+export function escapeAnglesInsideMath(html: string): string {
+  let out = "";
+  let at = 0;
+
+  while (at < html.length) {
+    const span = MATH_SPANS.find((candidate) => html.startsWith(candidate.open, at));
+    const from = span ? at + span.open.length : -1;
+    const closes = span ? html.indexOf(span.close, from) : -1;
+
+    // An unpaired delimiter is not math -- a lone dollar sign is a dollar sign.
+    if (!span || closes === -1) {
+      out += html[at];
+      at += 1;
+      continue;
+    }
+
+    out +=
+      span.open +
+      html.slice(from, closes).replace(/</g, "&lt;").replace(/>/g, "&gt;") +
+      span.close;
+    at = closes + span.close.length;
+  }
+
+  return out;
+}
+
 /**
  * Parse model HTML inertly and strip it down to the allowlist. A <template>'s
  * content is inert, so nothing executes and no image/onerror fires while we work.
  */
 export function sanitizeModelHtml(html: string): DocumentFragment {
   const template = document.createElement("template");
-  template.innerHTML = html;
+  template.innerHTML = escapeAnglesInsideMath(html);
   for (const child of Array.from(template.content.children)) scrub(child);
   return template.content;
 }
