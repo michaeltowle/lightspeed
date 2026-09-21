@@ -73,11 +73,23 @@ export function renderProblem(
 
   // How the working felt, said before moving on. Beside the clock and not
   // instead of it: elapsed_ms knows how long it took, which is a different fact
-  // from whether it felt laboured. Never compulsory -- next is not gated on it,
-  // and saying nothing stays a real answer rather than defaulting to the middle.
-  let workingSpeed: "slow" | "mid" | "fast" | null = null;
+  // from whether it felt laboured.
+  //
+  // Starts on mid, because mid is what most working is and the column was
+  // coming back empty -- an unremarkable problem gives you no reason to reach
+  // for the row, so the honest answer went unsaid. Pre-lighting it makes slow
+  // and fast the only things worth a click, and pressing mid again still takes
+  // the answer back off.
+  let workingSpeed: "slow" | "mid" | "fast" | null = "mid";
   const speedEls = (["slow", "mid", "fast"] as const).map((speed) =>
-    h("button", { type: "button", class: "speed-report-button" }, [speed]),
+    h(
+      "button",
+      {
+        type: "button",
+        class: speed === workingSpeed ? "speed-report-button is-on" : "speed-report-button",
+      },
+      [speed],
+    ),
   );
   speedEls.forEach((el, i) => {
     const speed = (["slow", "mid", "fast"] as const)[i];

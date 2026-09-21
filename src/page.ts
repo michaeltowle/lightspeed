@@ -35,7 +35,7 @@ export function indexPageDocument(env: Env): string {
   main#app {
     position: relative;
     z-index: 1;
-    max-width: 67.6rem;
+    max-width: 87.9rem;
     margin: 0 auto;
     padding: 1rem 1rem 5rem;
   }
@@ -104,15 +104,21 @@ export function indexPageDocument(env: Env): string {
     width: 100%; border-collapse: collapse; margin: 1.25rem 0 0;
     font-size: 0.85rem;
   }
+  /* Heading and value centred together, so every column reads as one stack
+     rather than a label with its figures drifting off under it. Set on the
+     table so a column added later is centred without being told to be. */
   .bank-table th {
-    text-align: left; font-weight: 500; font-size: 0.68rem; opacity: 0.5;
+    text-align: center; font-weight: 500; font-size: 0.68rem; opacity: 0.5;
     padding: 0 0.4rem 0.3rem;
     border-bottom: 1px solid rgba(128,128,128,0.35);
   }
   .bank-table td {
-    padding: 0.3rem 0.4rem; vertical-align: middle;
+    padding: 0.3rem 0.4rem; vertical-align: middle; text-align: center;
     border-bottom: 1px solid rgba(128,128,128,0.18);
   }
+  /* The opened row is a maths statement and a row of buttons. It borrows the
+     table's geometry and nothing else, so the centring stops at its edge. */
+  .detail-row td { text-align: left; }
   /* The whole row is the selection target, so it has to look like one. */
   .bank-row { cursor: pointer; }
   .bank-row:hover { background: rgba(127,127,127,0.07); }
@@ -125,6 +131,18 @@ export function indexPageDocument(env: Env): string {
   /* The narrow reading columns. Tabular figures on the three that are numbers,
      so 3/6 and 12/12 line up down the column instead of wandering. */
   .col-credit, .col-streak { width: 4rem; font-variant-numeric: tabular-nums; }
+  /* A streak is the one column that says how the work is going rather than what
+     it was, so it is the one that carries colour, read off the last attempt.
+     Green and amber rather than green and red: help is how a hard problem gets
+     done, not a failure -- it is simply a different claim from having got it
+     alone. Weight as well as hue, so the two still part on a screen that eats
+     the colour. */
+  .col-streak.is-last-attempt-unaided { color: #2f7d4a; font-weight: 600; }
+  .col-streak.is-last-attempt-helped { color: #9a7113; font-weight: 600; }
+  @media (prefers-color-scheme: dark) {
+    .col-streak.is-last-attempt-unaided { color: #79c893; }
+    .col-streak.is-last-attempt-helped { color: #d9b455; }
+  }
   .col-last { width: 6rem; font-variant-numeric: tabular-nums; opacity: 0.8; }
   .col-speed { width: 4rem; opacity: 0.8; }
   .col-flags { width: 6rem; }
@@ -154,7 +172,7 @@ export function indexPageDocument(env: Env): string {
     .bank-table th, .bank-table td {
       padding-left: 0.2rem; padding-right: 0.2rem;
     }
-    .col-field-assignment, .col-comment, .col-speed, .col-flags, .col-why {
+    .col-field-assignment, .col-speed, .col-flags, .col-why {
       display: none;
     }
     td.problem-name { min-width: 0; }
@@ -220,26 +238,10 @@ export function indexPageDocument(env: Env): string {
   /* One practice button for the bank, acting on every ticked row. */
   .practice-launch-control { margin-top: 0.85rem; }
 
-  /* Wide enough to read a line of it, and it wraps rather than stretching the
-     row: a comment is prose and will run as long as Mike wants. No placeholder
-     glyph when empty -- the whole cell is the target, so there is nothing to
-     aim at. */
-  .col-comment { min-width: 13rem; cursor: text; }
-  .problem-comment { opacity: 0.75; font-size: 0.8rem; }
-  /* Square and full-bleed, so opening the editor does not shrink the cell it
-     replaces. Its own class rather than the name's: that one sits in a
-     narrower cell and is bold, which a comment is not. */
-  .problem-comment-input {
-    display: block; box-sizing: border-box; width: 100%; min-height: 2.4rem;
-    padding: 0.35rem 0.45rem; font: inherit; font-size: 0.8rem;
-    color: inherit; border: 1px solid rgba(128,128,128,0.6); border-radius: 0;
-    background: rgba(127,127,127,0.04);
-  }
-
   /* The same chip reads a row and, as a button, filters the table. */
   .study-context-tag-cell { cursor: text; min-width: 5rem; }
   .study-context-tag-chip {
-    display: inline-block; padding: 0.05rem 0.45rem; margin: 0.1rem 0.2rem 0.1rem 0;
+    display: inline-block; padding: 0.05rem 0.45rem; margin: 0.1rem;
     border: 1px solid rgba(128,128,128,0.4); border-radius: 999px;
     font-size: 0.7rem; white-space: nowrap;
   }

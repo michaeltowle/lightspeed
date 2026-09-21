@@ -3,7 +3,6 @@ import {
   openPracticeRun,
   renameProblem,
   retagProblem,
-  setProblemComment,
   trophyWall,
 } from "../api";
 import { h } from "../lib/dom";
@@ -26,10 +25,10 @@ const ROLLING_WEEK_DAYS = 7;
 const GONE_COLD_AFTER_DAYS = 7;
 const GOING_COLD_AFTER_DAYS = 2;
 
-// select, label, problem, the tag fields, comment, credit, last, streak, speed,
-// flags, why, menu. Derived so a field added or dropped cannot leave the detail
-// row spanning the wrong width.
-const TABLE_COLUMN_COUNT = 11 + STUDY_CONTEXT_TAG_FIELDS.length;
+// select, label, problem, the tag fields, credit, last, streak, speed, flags,
+// why, menu. Derived so a field added or dropped cannot leave the detail row
+// spanning the wrong width.
+const TABLE_COLUMN_COUNT = 10 + STUDY_CONTEXT_TAG_FIELDS.length;
 
 
 const WEEKDAY_NAMES = [
@@ -307,7 +306,6 @@ function buildBankTable(body: HTMLElement): HTMLElement {
         ...STUDY_CONTEXT_TAG_FIELDS.map((field) =>
           h("th", { class: `col-field-${field}` }, [field]),
         ),
-        h("th", { class: "col-comment" }, ["comment"]),
         h("th", { class: "col-credit" }, ["credit"]),
         h("th", { class: "col-last" }, ["last"]),
         h("th", { class: "col-streak" }, ["streak"]),
@@ -466,10 +464,22 @@ export async function renderBank(
       .sort((a, b) => a.name.localeCompare(b.name));
   }
 
+  // Colour tells one class from another at a glance, and there are three of
+  // them. Assignments run to a term's worth, so the palette wraps round twice
+  // and the colour stops meaning anything -- worse, it reads as a grouping that
+  // is not there. The numbers already sort themselves, so the chips go plain
+  // and the colour stays a fact about the class column.
   const chipOf = (tag: StudyContextTag, extra = "") =>
-    h("span", { class: `study-context-tag-chip chip-color-${tag.chip_color_ordinal}${extra}` }, [
-      tag.name,
-    ]);
+    h(
+      "span",
+      {
+        class:
+          `study-context-tag-chip${
+            tag.field === "assignment" ? "" : ` chip-color-${tag.chip_color_ordinal}`
+          }${extra}`,
+      },
+      [tag.name],
+    );
 
   function paintTagCatalogue(): void {
     for (const field of STUDY_CONTEXT_TAG_FIELDS) {
@@ -854,79 +864,31 @@ export async function renderBank(
       openMenu();
     });
 
-    // ---- the comment -------------------------------------------------------
-    //
-    // Click to write, Enter or blur to keep, Escape to drop it. The same
-    // bargain the name makes, and for the same reason: a cell that turns into
-    // its own editor beats a dialogue for something typed in passing.
-    const commentCell = h("td", { class: "col-comment" });
-
-    function paintComment(): void {
-      commentCell.replaceChildren(
-        ...(problem.comment
-          ? [h("span", { class: "problem-comment" }, [problem.comment])]
-          : []),
-      );
-    }
-
-    commentCell.addEventListener("click", (event) => {
-      event.stopPropagation();
-      if (commentCell.querySelector("input")) return;
-
-      const input = h("input", {
-        class: "problem-comment-input",
-        value: problem.comment,
-      });
-      commentCell.replaceChildren(input);
-      input.focus();
-
-      let settled = false;
-      const finish = async (save: boolean): Promise<void> => {
-        if (settled) return;
-        settled = true;
-        const next = input.value.replace(/\s+/g, " ").trim().slice(0, 280);
-        if (!save || next === problem.comment) {
-          paintComment();
-          return;
-        }
-        const previous = problem.comment;
-        problem.comment = next;
-        paintComment();
-        try {
-          await setProblemComment(problem.id, next);
-        } catch {
-          problem.comment = previous;
-          paintComment();
-        }
-      };
-
-      input.addEventListener("click", (event) => event.stopPropagation());
-      input.addEventListener("keydown", (event) => {
-        const key = (event as KeyboardEvent).key;
-        if (key === "Enter") {
-          event.preventDefault();
-          void finish(true);
-        } else if (key === "Escape") {
-          event.preventDefault();
-          void finish(false);
-        }
-      });
-      input.addEventListener("blur", () => void finish(true));
-    });
-
-    paintComment();
-
     row.append(
       h("td", { class: "col-select" }, [boxEl]),
       h("td", { class: "col-label" }, [problem.textbook_problem_number_label ?? ""]),
       nameCell,
       ...STUDY_CONTEXT_TAG_FIELDS.map(fieldCell),
-      commentCell,
       h("td", { class: "col-credit" }, [creditText(standing.latest)]),
       h("td", { class: "col-last" }, [formatLastWorked(standing.lastWorkedAt)]),
       // Nothing rather than "+0": a row with no streak should read as quiet,
-      // not as a score of zero.
-      h("td", { class: "col-streak" }, [standing.streak ? `+${standing.streak}` : ""]),
+      // not as a score of zero. Coloured off the last attempt alone -- green if
+      // that one was got unaided, amber if it wanted help. The count says how
+      // long the run is; the colour says how the most recent leg of it went,
+      // which is the one that tells you what to expect next time.
+      h(
+        "td",
+        {
+          class: standing.streak
+            ? `col-streak ${
+                standing.latest?.needed_help_during_attempt === 1
+                  ? "is-last-attempt-helped"
+                  : "is-last-attempt-unaided"
+              }`
+            : "col-streak",
+        },
+        [standing.streak ? `+${standing.streak}` : ""],
+      ),
       h("td", { class: "col-speed" }, [standing.latest?.self_reported_working_speed ?? ""]),
       h("td", { class: "col-flags" }, flagChipsFor(standing.latest)),
       h("td", { class: "col-why" }, [standing.latest?.why_this_one_went_wrong ?? ""]),

@@ -23,9 +23,6 @@ export interface MathPracticeProblem {
   parent_problem_varied_from: number | null;
   the_maneuver_it_was_isolated_from: number | null;
   text_that_minted_this_problem: string;
-  // Mike's own note on this problem. Free text, his alone -- nothing generates
-  // or reads it but him.
-  comment: string;
   default_service_style: DefaultServiceStyle;
   // Null until the maneuver table lands. A problem is servable before then;
   // it simply has no answer to reveal yet.

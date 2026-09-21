@@ -21,7 +21,6 @@ export type { Env };
 
 const MAX_NAME_LENGTH = 64;
 const MAX_LABEL_LENGTH = 24;
-const MAX_COMMENT_LENGTH = 280;
 
 interface UnsavedScreenshot {
   base64: string;
@@ -150,7 +149,6 @@ export default {
       action?: string;
       id?: number;
       name?: string;
-      comment?: string;
       note?: string;
       prompt?: string;
       requested_count?: number;
@@ -186,7 +184,7 @@ export default {
               `SELECT id, name, textbook_problem_number_label, statement_html,
                       how_this_problem_came_to_be, parent_problem_varied_from,
                       the_maneuver_it_was_isolated_from, text_that_minted_this_problem,
-                      comment, default_service_style, broken_into_maneuvers_at,
+                      default_service_style, broken_into_maneuvers_at,
                       created_at, archived_at
                  FROM math_practice_problem
                 ORDER BY id DESC`,
@@ -537,16 +535,6 @@ export default {
           return json({ ok: true, name });
         }
 
-        case "set_problem_comment": {
-          // Cleared by saving an empty one, so there is no separate verb for
-          // taking a comment off.
-          await db
-            .prepare(`UPDATE math_practice_problem SET comment = ? WHERE id = ?`)
-            .bind(tidy(body.comment, MAX_COMMENT_LENGTH), body.id)
-            .run();
-          return json({ ok: true });
-        }
-
         case "set_default_service_style": {
           if (!["exact", "variant"].includes(String(body.default_service_style))) {
             return json({ error: `bad service style: ${body.default_service_style}` }, 400);
@@ -767,9 +755,9 @@ export default {
         }
 
         // Written at the answers page, once the maneuver marks have shown where
-        // it went wrong. Its own action for the same reason set_problem_comment
-        // is: prose is typed and saved on a rhythm of its own, not folded into
-        // whatever else the page happened to be sending.
+        // it went wrong. Its own action rather than a field folded into whatever
+        // else the page happened to be sending: prose is typed and saved on a
+        // rhythm of its own.
         case "set_why_this_one_went_wrong": {
           await db
             .prepare(`UPDATE problem_attempt SET why_this_one_went_wrong = ? WHERE id = ?`)
