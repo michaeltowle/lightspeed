@@ -301,17 +301,21 @@ export async function renderBank(
   // checkboxes and the button beneath acts on every one that is ticked.
   const ticked = new Set<number>();
 
-  // A tag retired since the last visit cannot go on being the filter: it would
-  // empty the table with no lit chip to explain why.
-  const remembered = readStandingStudyContextTagFilter();
-  let filterTagId: number | null =
-    remembered !== null && tagCatalogue.some((t) => t.id === remembered) ? remembered : null;
-  if (filterTagId !== remembered) writeStandingStudyContextTagFilter(filterTagId);
+  const classTags = () => tagCatalogue.filter((tag) => tag.field === "class");
 
-  const setFilterTagId = (id: number | null): void => {
-    filterTagId = id;
-    writeStandingStudyContextTagFilter(id);
-  };
+  // The open tab is the class filter: every problem 6801 has, or all of them,
+  // or the ones built from a prompt rather than filed off a page. A class
+  // retired since the last visit opens on all rather than on a tab whose name
+  // has gone.
+  const remembered = readStandingStudyContextTagFilter();
+  let openTab: number | "all" | "generated" =
+    remembered !== null && classTags().some((tag) => tag.id === remembered) ? remembered : "all";
+  if (typeof openTab !== "number") writeStandingStudyContextTagFilter(null);
+
+  // Assignment narrows within the open tab, and is deliberately not remembered:
+  // which class is being worked is a week's habit, which homework is an
+  // afternoon's, and coming back to a stale one looks like an empty bank.
+  let assignmentTagId: number | null = null;
 
   const rowsById = new Map<number, { row: HTMLElement; box: HTMLInputElement }>();
 
@@ -422,43 +426,65 @@ export async function renderBank(
         );
     }
 
-    // Grouped by field, so a filter row of two dozen chips still says what each
-    // of them is filtering on.
-    const groups: (Node | string)[] = [];
-    for (const field of STUDY_CONTEXT_TAG_FIELDS) {
-      const inField = tagCatalogue.filter((tag) => tag.field === field);
-      if (!inField.length) continue;
-      groups.push(h("span", { class: "field-label" }, [field]));
-      for (const tag of inField) {
-        groups.push(
-          h(
-            "button",
-            {
-              type: "button",
-              class: `study-context-tag-chip chip-color-${tag.chip_color_ordinal}${
-                tag.id === filterTagId ? " is-on" : ""
-              }`,
-              onclick: () => {
-                // A second click on the lit chip clears the filter -- there is
-                // no "all" chip to hunt for.
-                setFilterTagId(filterTagId === tag.id ? null : tag.id);
-                paintTagCatalogue();
-                paintAll();
-              },
-            },
-            [tag.name],
-          ),
-        );
-      }
+    // Assignment is a dropdown rather than a row of chips. The chips outgrew the
+    // page width one homework at a time, and the class that used to sit beside
+    // them is the tab now.
+    const here = inOpenTab(problems);
+
+    /** Only assignments something here actually carries: the list cannot point
+     * at an empty table. */
+    const assignmentsOf = (list: MathPracticeProblem[]): StudyContextTag[] => {
+      const carried = new Set<number>();
+      for (const problem of list) for (const id of problem.study_context_tag_ids) carried.add(id);
+      return tagCatalogue.filter((tag) => tag.field === "assignment" && carried.has(tag.id));
+    };
+    const optionFor = (tag: StudyContextTag) =>
+      h("option", { value: String(tag.id) }, [tag.name]);
+
+    // Flat, in every tab. A tag is unique on (field, name), so the Homework 1
+    // that 6111, 6801 and 6950 all show is one row all three point at -- there
+    // are not three of them to tell apart. Grouping this list under class
+    // headings would draw a distinction the data does not make.
+    //
+    // What makes the name unambiguous is the tab: inside 6801, class and
+    // assignment must both match, so Homework 1 means 6801's. In all, it
+    // honestly means every class's first homework.
+    const options: (Node | string)[] = [
+      h("option", { value: "" }, ["every assignment"]),
+      ...assignmentsOf(here).map(optionFor),
+    ];
+
+    const pickerEl = h("select", { class: "assignment-dropdown" }, options);
+    // An assignment picked in one tab is gone in the next, so the value is
+    // asserted after the options are in rather than assumed to have survived.
+    pickerEl.value = assignmentTagId === null ? "" : String(assignmentTagId);
+    if (pickerEl.value === "" && assignmentTagId !== null) assignmentTagId = null;
+    pickerEl.addEventListener("change", () => {
+      assignmentTagId = pickerEl.value === "" ? null : Number(pickerEl.value);
+      paintAll();
+    });
+
+    filterEl.replaceChildren(h("span", { class: "field-label" }, ["assignment"]), pickerEl);
+    // One option is "every assignment", so anything less than two is no choice.
+    filterEl.hidden = options.length < 2;
+  }
+
+  /** The open tab's problems, before the assignment dropdown narrows them. */
+  function inOpenTab(list: MathPracticeProblem[]): MathPracticeProblem[] {
+    if (openTab === "all") return list;
+    // Free generate mints from a prompt, so its problems are already marked as
+    // such on the way in -- the tab needs no flag of its own.
+    if (openTab === "generated") {
+      return list.filter((p) => p.how_this_problem_came_to_be === "built_to_order_from_a_prompt");
     }
-    filterEl.replaceChildren(...groups);
-    filterEl.hidden = !groups.length;
+    return list.filter((p) => p.study_context_tag_ids.includes(openTab as number));
   }
 
   function shownIn(list: MathPracticeProblem[]): MathPracticeProblem[] {
-    return filterTagId === null
-      ? list
-      : list.filter((p) => p.study_context_tag_ids.includes(filterTagId!));
+    const inTab = inOpenTab(list);
+    return assignmentTagId === null
+      ? inTab
+      : inTab.filter((p) => p.study_context_tag_ids.includes(assignmentTagId!));
   }
 
   /**
@@ -507,7 +533,7 @@ export async function renderBank(
     bodyEl.replaceChildren(...active.map(bankRow));
 
     tableEl.hidden = !active.length;
-    emptyEl.hidden = Boolean(active.length) || filterTagId === null;
+    emptyEl.hidden = Boolean(active.length) || (openTab === "all" && assignmentTagId === null);
 
     // Recoloured with the table, since a retag can move a problem between classes.
     const nextLedgerEl = renderRollingWeekPracticeLedger(trophies, problems, tagCatalogue);
@@ -863,44 +889,99 @@ export async function renderBank(
   ]);
   const bankPane = h("div", {}, [filterEl, tableEl, emptyEl, practiceLaunchEl, practiceStatusEl]);
 
-  // The ticks are dropped on the way back in, or the practice button would act
-  // on a selection made before something was added or retagged.
-  const showList = () => {
-    ticked.clear();
-    paintTickState();
-  };
+  const freeGeneratePane = h("div", {}, [
+    h("div", { class: "bank-note" }, [
+      "free generate has not been built yet. This is where it will live, and what "
+        + "it mints will show up under the generated tab.",
+    ]),
+  ]);
 
-  const tabs: { label: string; pane: HTMLElement; onShow?: () => void }[] = [
-    { label: "bank", pane: bankPane, onShow: showList },
-    // Classes created in the bank while this form sat hidden.
-    {
-      label: "add assignment",
-      pane: addAssignmentPane,
-      onShow: addAssignment.refreshTagChips,
-    },
-  ];
-  const tabEls = tabs.map(({ label }) => h("button", { type: "button", class: "tab" }, [label]));
-
-  function showTab(index: number): void {
-    tabs.forEach(({ pane }, i) => {
-      pane.hidden = i !== index;
-      tabEls[i].classList.toggle("is-on", i === index);
-    });
-    tabs[index].onShow?.();
+  // ---- panes ---------------------------------------------------------------
+  // The tab strip stays up on every pane, so a tab is always the way back to
+  // the bank and the menu is never the only door.
+  const panes = [bankPane, addAssignmentPane, freeGeneratePane];
+  function showPane(which: HTMLElement): void {
+    for (const pane of panes) pane.hidden = pane !== which;
   }
-  tabEls.forEach((el, i) => el.addEventListener("click", () => showTab(i)));
 
-  paintTagCatalogue();
-  paintAll();
-  // The bank opens: most visits are to pick something to practise, not to put
-  // something new in.
-  showTab(0);
+  // ---- tabs: all, one per class, then generated -----------------------------
+  const tabKeys: (number | "all" | "generated")[] = [
+    "all",
+    ...classTags().map((tag) => tag.id),
+    "generated",
+  ];
+  const labelOf = (key: number | "all" | "generated"): string =>
+    typeof key === "number" ? (classTags().find((tag) => tag.id === key)?.name ?? "?") : key;
+  const tabEls = tabKeys.map((key) => h("button", { type: "button", class: "tab" }, [labelOf(key)]));
+  const tabStripEl = h("div", { class: "tab-strip" }, tabEls);
+
+  function openTabAt(key: number | "all" | "generated"): void {
+    openTab = key;
+    writeStandingStudyContextTagFilter(typeof key === "number" ? key : null);
+    // A tab change drops the assignment. Homework 1 in 6801 is a different tag
+    // from Homework 1 in 6950, so carrying the id across would filter this tab
+    // by a tag belonging to another class -- an empty table with a lit filter.
+    assignmentTagId = null;
+    tabEls.forEach((el, i) => el.classList.toggle("is-on", tabKeys[i] === key));
+    // The ticks are dropped on the way in, or practice would act on a selection
+    // made against a table that is no longer the one on screen.
+    ticked.clear();
+    paintTagCatalogue();
+    paintAll();
+    showPane(bankPane);
+  }
+  tabEls.forEach((el, i) => el.addEventListener("click", () => openTabAt(tabKeys[i])));
+
+  // ---- the corner menu ------------------------------------------------------
+  // Authoring, both of them: done rarely, never mid-practice. Out of the way of
+  // the tabs, which are for picking something to work.
+  const menuEl = h("div", { class: "corner-menu-items" }, [
+    h(
+      "button",
+      {
+        type: "button",
+        // Classes created in the bank while this form sat hidden.
+        onclick: () => {
+          addAssignment.refreshTagChips();
+          showPane(addAssignmentPane);
+        },
+      },
+      ["add assignment"],
+    ),
+    h("button", { type: "button", onclick: () => showPane(freeGeneratePane) }, ["free generate"]),
+  ]);
+  menuEl.hidden = true;
+
+  const menuButtonEl = h(
+    "button",
+    { type: "button", class: "corner-menu-button", title: "menu" },
+    ["\u2630"],
+  );
+  menuButtonEl.addEventListener("click", (event) => {
+    // The document listener closes whatever is open; without this the menu
+    // would close itself on the very click that opened it.
+    event.stopPropagation();
+    const wasOpen = !menuEl.hidden;
+    closeOpenMenu?.();
+    if (wasOpen) return;
+    menuEl.hidden = false;
+    closeOpenMenu = () => {
+      menuEl.hidden = true;
+      closeOpenMenu = null;
+    };
+  });
+
+  // The bank opens on the class last worked: most visits are to pick something
+  // to practise, not to put something new in.
+  openTabAt(openTab);
 
   root.replaceChildren(
+    h("div", { class: "corner-menu" }, [menuButtonEl, menuEl]),
     ledgerEl,
-    h("div", { class: "tab-strip" }, tabEls),
+    tabStripEl,
     bankPane,
     addAssignmentPane,
+    freeGeneratePane,
     ...catalogueEls.values(),
     h("div", { class: "lightspeed-motto-line" }, ["limitations are in the mind"]),
   );

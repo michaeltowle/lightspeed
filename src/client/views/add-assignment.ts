@@ -153,7 +153,7 @@ export function renderAddAssignment(
     );
   }
 
-  const assignmentEl = h("input", { type: "text", placeholder: "homework 4" });
+  const assignmentEl = h("input", { type: "text" });
 
   const tagsToApply = (): Partial<Record<StudyContextTagField, string[]>> => {
     const out: Partial<Record<StudyContextTagField, string[]>> = {};
@@ -319,12 +319,11 @@ export function renderAddAssignment(
 
   const el = h("div", {}, [
     h("div", { class: "compose-fields" }, [
+      // No label over the chips: 6801 names its own field, and the word only
+      // repeated what the chips already said.
+      h("div", { class: "compose-field" }, [classChipsEl]),
       h("div", { class: "compose-field" }, [
-        h("span", { class: "compose-field-name" }, ["class"]),
-        classChipsEl,
-      ]),
-      h("div", { class: "compose-field" }, [
-        h("span", { class: "compose-field-name" }, ["assignment"]),
+        h("span", { class: "compose-field-name" }, ["assignment name"]),
         assignmentEl,
       ]),
     ]),

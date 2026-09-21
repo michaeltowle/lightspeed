@@ -247,6 +247,36 @@ ${chipColorPaletteCss}
     font-size: 0.65rem; opacity: 0.4; margin-left: 0.6rem;
   }
   .study-context-tag-filter .field-label:first-child { margin-left: 0; }
+  /* Assignment is a dropdown now: one entry per homework outgrew a chip row a
+     term at a time, and the class it used to sit beside is the tab. */
+  .assignment-dropdown {
+    padding: 0.25rem 0.5rem; font: inherit; font-size: 0.8rem; color: inherit;
+    border: 1px solid rgba(128,128,128,0.5); border-radius: 6px;
+    background: rgba(127,127,127,0.04); cursor: pointer; max-width: 16rem;
+  }
+
+  /* Pinned to the corner rather than set in the flow: authoring is rare, and
+     anything in the flow competes with the tabs for the same glance. Above the
+     trophy wall, which sits behind everything. */
+  .corner-menu { position: fixed; top: 0.6rem; right: 0.8rem; z-index: 40; }
+  .corner-menu-button {
+    padding: 0.3rem 0.55rem; font-size: 1rem; line-height: 1; cursor: pointer;
+    color: inherit; border: 1px solid rgba(128,128,128,0.35); border-radius: 6px;
+    background: Canvas; opacity: 0.65;
+  }
+  .corner-menu-button:hover { opacity: 1; }
+  .corner-menu-items {
+    position: absolute; top: calc(100% + 0.3rem); right: 0;
+    display: flex; flex-direction: column; min-width: 11rem;
+    border: 1px solid rgba(128,128,128,0.35); border-radius: 8px;
+    background: Canvas; overflow: hidden;
+    box-shadow: 0 6px 20px rgba(0,0,0,0.18);
+  }
+  .corner-menu-items button {
+    padding: 0.5rem 0.9rem; font: inherit; font-size: 0.8rem; text-align: left;
+    cursor: pointer; color: inherit; border: none; background: none;
+  }
+  .corner-menu-items button:hover { background: rgba(127,127,127,0.12); }
   /* No background or colour of its own: every chip button carries a palette
      class, and an element-plus-class selector here would outrank it. Being
      chosen shows as a ring, since the fill is already saying which tag it is. */
