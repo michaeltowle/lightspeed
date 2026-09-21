@@ -715,7 +715,7 @@ export default {
             )
             .bind(body.attempt_id, body.maneuver_id, body.got_it ? 1 : 0)
             .run();
-          return json({ outcome: await rollUpOutcome(db, Number(body.attempt_id)) });
+          return json(await rollUpOutcome(db, Number(body.attempt_id)));
         }
 
         case "clear_maneuver_credit": {
@@ -726,7 +726,7 @@ export default {
             )
             .bind(body.attempt_id, body.maneuver_id)
             .run();
-          return json({ outcome: await rollUpOutcome(db, Number(body.attempt_id)) });
+          return json(await rollUpOutcome(db, Number(body.attempt_id)));
         }
 
         // A skip is the one outcome that is not a rollup: it records a problem
@@ -786,12 +786,21 @@ export default {
 };
 
 /**
- * Recompute an attempt's outcome from its maneuver marks.
+ * Recompute an attempt's outcome from its maneuver marks, and hand back the
+ * marks it was computed from.
  *
  * An unmarked maneuver counts as not got once anything has been marked, so a
  * half-graded problem reads as partial rather than as right.
+ *
+ * The marks travel with the outcome because the two must never be read from
+ * different moments: one grading click can change rows other than the one
+ * clicked, and a click that fails to save changes none of them. Returning both
+ * together is what lets the page show colours and a readout that agree.
  */
-async function rollUpOutcome(db: D1Database, attemptId: number): Promise<string | null> {
+async function rollUpOutcome(
+  db: D1Database,
+  attemptId: number,
+): Promise<{ outcome: string | null; marks: Record<string, unknown>[] }> {
   const tally = await db
     .prepare(
       `SELECT (SELECT COUNT(*) FROM maneuver m
@@ -812,7 +821,17 @@ async function rollUpOutcome(db: D1Database, attemptId: number): Promise<string 
     .prepare(`UPDATE problem_attempt SET outcome = ? WHERE id = ?`)
     .bind(outcome, attemptId)
     .run();
-  return outcome;
+
+  const { results: marks } = await db
+    .prepare(
+      `SELECT problem_attempt_id, maneuver_id, got_it
+         FROM per_maneuver_credit_mark
+        WHERE problem_attempt_id = ?`,
+    )
+    .bind(attemptId)
+    .all<Record<string, unknown>>();
+
+  return { outcome, marks };
 }
 
 async function insertProblem(

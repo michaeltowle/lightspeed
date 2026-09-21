@@ -163,9 +163,14 @@ export const revealAnswers = (runId: number) =>
     run_id: runId,
   });
 
-/** Grading is per maneuver; the attempt's outcome comes back as a rollup. */
+/**
+ * Grading is per maneuver; the attempt's outcome comes back as a rollup, and
+ * the marks it was rolled up from come back with it. Both are needed because a
+ * mark on one row can move others, so the page repaints from the answer rather
+ * than from what it assumed the click would do.
+ */
 export const markManeuverCredit = (attemptId: number, maneuverId: number, gotIt: boolean) =>
-  post<{ outcome: AttemptOutcome | null }>({
+  post<{ outcome: AttemptOutcome | null; marks: PerManeuverCreditMark[] }>({
     action: "mark_maneuver_credit",
     attempt_id: attemptId,
     maneuver_id: maneuverId,
@@ -173,7 +178,7 @@ export const markManeuverCredit = (attemptId: number, maneuverId: number, gotIt:
   });
 
 export const clearManeuverCredit = (attemptId: number, maneuverId: number) =>
-  post<{ outcome: AttemptOutcome | null }>({
+  post<{ outcome: AttemptOutcome | null; marks: PerManeuverCreditMark[] }>({
     action: "clear_maneuver_credit",
     attempt_id: attemptId,
     maneuver_id: maneuverId,

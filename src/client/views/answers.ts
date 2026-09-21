@@ -36,11 +36,22 @@ function answerRow(
   let outcome: AttemptOutcome | null = row.outcome;
 
   // Credit is held here and pushed to the worker, so a cell repaints on the
-  // click rather than after the round trip.
+  // click rather than after the round trip. The worker's answer then replaces
+  // it wholesale, so the guess never outlives the fact it was standing in for.
   const credit = new Map<number, ManeuverCredit>();
-  for (const mark of marks) {
-    credit.set(mark.maneuver_id, mark.got_it === 1 ? "got" : "missed");
-  }
+  const takeMarks = (saved: PerManeuverCreditMark[]) => {
+    credit.clear();
+    for (const mark of saved) {
+      credit.set(mark.maneuver_id, mark.got_it === 1 ? "got" : "missed");
+    }
+  };
+  takeMarks(marks);
+
+  // Marks go out one at a time. Marking the last row green fans out to every
+  // row, and a second click landing in the middle of that fan-out used to let
+  // an older answer arrive last -- leaving the readout reporting one moment and
+  // the colours another.
+  let settled: Promise<void> = Promise.resolve();
 
   const outcomeEl = h("span", { class: "outcome-readout" });
   const paintOutcome = () => {
@@ -92,8 +103,7 @@ function answerRow(
           window.open(`/?drill=${m.id}`, "_blank", "noopener");
         },
         creditOf: (m) => credit.get(m.id) ?? "unmarked",
-        onCycle: async (m, next) => {
-          const before = new Map(credit);
+        onCycle: (m, next) => {
           // The last maneuver is the final answer, so getting it is getting the
           // whole problem: marking that row green marks every row green rather
           // than asking for the same click eight times over. Only green, and
@@ -101,30 +111,43 @@ function answerRow(
           // which step lost it, which is exactly what the other rows are for.
           const allRight = next === "got" && m.id === finalManeuver?.id;
           const marking = allRight ? maneuvers : [m];
+          const before = new Map(credit);
           for (const each of marking) credit.set(each.id, next);
 
-          try {
-            // The rollup is computed server-side per mark, so the row that
-            // decides the outcome goes last and its answer is the one kept.
-            for (const each of marking.filter((one) => one.id !== m.id)) {
-              await markManeuverCredit(row.attempt_id, each.id, true);
+          settled = settled.then(async () => {
+            try {
+              // The rollup is computed server-side per mark, so the row that
+              // decides the outcome goes last and its answer is the one kept.
+              for (const each of marking.filter((one) => one.id !== m.id)) {
+                await markManeuverCredit(row.attempt_id, each.id, true);
+              }
+              const result =
+                next === "unmarked"
+                  ? await clearManeuverCredit(row.attempt_id, m.id)
+                  : await markManeuverCredit(row.attempt_id, m.id, next === "got");
+              outcome = result.outcome;
+              takeMarks(result.marks);
+              paintOutcome();
+              void refreshTrophyWall();
+              // A missed step is almost always something to practise again, so
+              // it ticks the box for you. Changing the grade afterwards does not
+              // untick it -- dropping a problem from the next set stays a choice
+              // you make, never one made for you.
+              if (next === "missed") void setMarked(true);
+            } catch {
+              // Nothing saved, so nothing should show as saved. The colours go
+              // back to where the click found them -- every row of them, since
+              // the click had run ahead to change more than the one clicked.
+              takeMarks(
+                [...before].map(([maneuver_id, had]) => ({
+                  problem_attempt_id: row.attempt_id,
+                  maneuver_id,
+                  got_it: had === "got" ? 1 : 0,
+                })),
+              );
             }
-            const result =
-              next === "unmarked"
-                ? await clearManeuverCredit(row.attempt_id, m.id)
-                : await markManeuverCredit(row.attempt_id, m.id, next === "got");
-            outcome = result.outcome;
-            paintOutcome();
-            void refreshTrophyWall();
-            // A missed step is almost always something to practise again, so it
-            // ticks the box for you. Changing the grade afterwards does not
-            // untick it -- dropping a problem from the next set stays a choice
-            // you make, never one made for you.
-            if (next === "missed") void setMarked(true);
-          } catch {
-            credit.clear();
-            for (const [id, had] of before) credit.set(id, had);
-          }
+          });
+          return settled;
         },
       })
     : h("div", { class: "bank-note" }, ["no maneuver table for this problem yet"]);

@@ -30,11 +30,19 @@ export function renderManeuverTable(
   options: {
     mode: "grade" | "help";
     creditOf?: (maneuver: Maneuver) => ManeuverCredit;
-    onCycle?: (maneuver: Maneuver, next: ManeuverCredit) => void;
+    onCycle?: (maneuver: Maneuver, next: ManeuverCredit) => void | Promise<void>;
     onDrill?: (maneuver: Maneuver) => void;
   },
 ): HTMLElement {
   const { mode, creditOf, onCycle, onDrill } = options;
+
+  // One click can change the credit on rows nobody clicked -- getting the last
+  // maneuver is getting the whole problem -- and a click that fails to save
+  // changes none of them. So the table repaints whole, never cell by cell.
+  const paints: Array<() => void> = [];
+  const repaint = () => {
+    for (const paint of paints) paint();
+  };
 
   const body = h("tbody", {}, maneuvers.map((maneuver) => {
     const row = h("tr", { class: "maneuver-row" });
@@ -68,6 +76,7 @@ export function renderManeuverTable(
     };
 
     if (mode === "grade") {
+      paints.push(paintResult);
       paintResult();
       resultCell.append(
         valueEl,
@@ -75,8 +84,11 @@ export function renderManeuverTable(
       );
       resultCell.addEventListener("click", () => {
         const next = nextCredit(creditOf?.(maneuver) ?? "unmarked");
-        onCycle?.(maneuver, next);
-        paintResult();
+        // Painted twice: once on the credit the handler sets straight away, so
+        // the click lands under the finger, and again once the worker has had
+        // its say, so what is on screen is what was saved.
+        void Promise.resolve(onCycle?.(maneuver, next)).then(repaint, repaint);
+        repaint();
       });
       resultCell.setAttribute("title", "click to cycle: got it, missed it, unmarked");
     } else {
