@@ -71,6 +71,25 @@ export function renderProblem(
     window.open(`/?drill=${maneuver.id}`, "_blank", "noopener");
   }
 
+  // How the working felt, said before moving on. Beside the clock and not
+  // instead of it: elapsed_ms knows how long it took, which is a different fact
+  // from whether it felt laboured. Never compulsory -- next is not gated on it,
+  // and saying nothing stays a real answer rather than defaulting to the middle.
+  let workingSpeed: "slow" | "mid" | "fast" | null = null;
+  const speedEls = (["slow", "mid", "fast"] as const).map((speed) =>
+    h("button", { type: "button", class: "speed-report-button" }, [speed]),
+  );
+  speedEls.forEach((el, i) => {
+    const speed = (["slow", "mid", "fast"] as const)[i];
+    el.addEventListener("click", () => {
+      // A second press on the lit one takes it back to having said nothing.
+      workingSpeed = workingSpeed === speed ? null : speed;
+      speedEls.forEach((each, j) =>
+        each.classList.toggle("is-on", workingSpeed === (["slow", "mid", "fast"] as const)[j]),
+      );
+    });
+  });
+
   function onward(): void {
     if (isLast) go({ name: "answers", runId });
     else go({ name: "problem", runId, problems, index: index + 1 });
@@ -106,7 +125,7 @@ export function renderProblem(
       // it opened -- so this fills in what the working produced. The outcome
       // stays null until the answers page, which is why nothing appears on the
       // wall yet.
-      await recordProblemWorked(runId, index, Math.round(elapsed), neededHelp);
+      await recordProblemWorked(runId, index, Math.round(elapsed), neededHelp, workingSpeed);
       onward();
     } catch (err) {
       statusEl.textContent = err instanceof Error ? err.message : String(err);
@@ -130,6 +149,12 @@ export function renderProblem(
       `${index + 1} of ${problems.length}`,
     ]),
     bodyEl,
+    // Ahead of next, because it is a judgement about the working just done and
+    // pressing next is what ends it.
+    h("div", { class: "row speed-report-row" }, [
+      h("span", { class: "speed-report-label" }, ["speed"]),
+      ...speedEls,
+    ]),
     h("div", { class: "row" }, [
       h("button", { type: "button", onclick: () => void advance() }, [
         isLast ? "next (finish)" : "next",

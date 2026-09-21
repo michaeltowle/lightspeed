@@ -122,7 +122,13 @@ export function indexPageDocument(env: Env): string {
   .col-select { width: 1.4rem; }
   .col-select input { margin: 0; accent-color: #b06a2c; }
   .col-label { width: 4.5rem; font-variant-numeric: tabular-nums; opacity: 0.75; }
-  .col-strip { width: 8.5rem; }
+  /* The narrow reading columns. Tabular figures on the three that are numbers,
+     so 3/6 and 12/12 line up down the column instead of wandering. */
+  .col-credit, .col-streak { width: 4rem; font-variant-numeric: tabular-nums; }
+  .col-last { width: 6rem; font-variant-numeric: tabular-nums; opacity: 0.8; }
+  .col-speed { width: 4rem; opacity: 0.8; }
+  .col-flags { width: 6rem; }
+  .col-why { min-width: 11rem; opacity: 0.8; }
   .col-menu { width: 1.8rem; position: relative; }
   td.problem-name { min-width: 9rem; overflow-wrap: anywhere; }
 
@@ -148,7 +154,7 @@ export function indexPageDocument(env: Env): string {
     .bank-table th, .bank-table td {
       padding-left: 0.2rem; padding-right: 0.2rem;
     }
-    .col-strip, .col-field-assignment, .col-comment {
+    .col-field-assignment, .col-comment, .col-speed, .col-flags, .col-why {
       display: none;
     }
     td.problem-name { min-width: 0; }
@@ -158,7 +164,15 @@ export function indexPageDocument(env: Env): string {
     color: inherit; border: 1px solid rgba(128,128,128,0.5); border-radius: 6px;
     background: rgba(127,127,127,0.04);
   }
-  .problem-strip { display: inline-flex; flex-wrap: wrap; gap: 3px; }
+  /* The flags cell, built to hold more than the one flag there is. Pale ground
+     and a quiet border, the way a chosen value reads in a multi-select -- and
+     deliberately not the tag palette, which means "this problem is filed here"
+     rather than "this attempt went like that". */
+  .attempt-flag {
+    display: inline-block; margin: 1px 2px 1px 0;
+    padding: 0.1rem 0.45rem; font-size: 0.7rem; border-radius: 999px;
+    background: rgba(127,127,127,0.16); border: 1px solid rgba(128,128,128,0.25);
+  }
   .bank-note {
     font-size: 0.72rem; opacity: 0.6; font-variant-numeric: tabular-nums;
   }
@@ -308,13 +322,17 @@ ${chipColorPaletteCss}
   .row-menu button:disabled { opacity: 0.4; cursor: default; }
   .row-menu button:disabled:hover { background: none; }
 
-  /* What was worked on each of the last seven days. A fixed rail on the Dells,
-     where there is gutter going spare beside a 67.6rem column; above the table
-     on anything narrower, since there is nowhere else for it to be. The
-     breakpoint below tracks that width -- the rail is 10rem in a 1rem margin,
-     so it needs the column plus about 22rem before it can sit beside it. */
+  /* What was worked on each of the last seven days. Floated into the bottom
+     right corner, stacked above the deploy badge, so the bank table has the
+     full width of the page to grow across -- it has columns to spare now and
+     no gutter to give up to a rail.
+
+     The offset clears the badge: two lines at 0.72rem/1.6 plus its padding and
+     border come to about 3.4rem, and 1rem of that is the badge's own bottom
+     margin. Static on a phone, where a floating panel would cover the table it
+     is meant to sit beside. */
   .rolling-week-practice-ledger {
-    position: fixed; left: 1rem; top: 1rem; width: 10rem; z-index: 2;
+    position: fixed; right: 1rem; bottom: 5.1rem; width: 10rem; z-index: 2;
     padding: 0.55rem 0.65rem; font-size: 0.7rem;
     border: 1px solid rgba(128,128,128,0.3); border-radius: 8px;
     background: rgba(127,127,127,0.06);
@@ -381,12 +399,37 @@ ${chipColorPaletteCss}
   .rolling-week-practice-ledger .key-swatch {
     width: 0.55rem; height: 0.55rem; border-radius: 2px;
   }
-  /* 52rem of column plus a 10rem rail and its margins. Below that the gutter is
-     gone and the rail would sit on top of the table. */
-  @media (max-width: 90rem) {
+  /* Phone only. Above this the panel floats clear in the corner; below it there
+     is no corner to spare and it goes back into the flow. */
+  @media (max-width: 50rem) {
     .rolling-week-practice-ledger {
       position: static; width: 100%; max-width: 18rem; margin: 0 0 1.25rem;
     }
+  }
+
+  /* Said before next, so it sits above it. Quiet until one is chosen: this is a
+     judgement offered, never a question the page insists on answering. */
+  .speed-report-row { align-items: center; gap: 0.4rem; }
+  .speed-report-label { font-size: 0.7rem; opacity: 0.45; }
+  .speed-report-button {
+    padding: 0.25rem 0.8rem; font-size: 0.78rem; cursor: pointer; color: inherit;
+    border: 1px solid rgba(128,128,128,0.4); border-radius: 999px;
+    background: rgba(127,127,127,0.05); opacity: 0.65;
+  }
+  .speed-report-button:hover { opacity: 0.95; }
+  .speed-report-button.is-on {
+    opacity: 1; font-weight: 600; border-color: currentColor;
+    background: rgba(127,127,127,0.18);
+  }
+
+  /* One line at rest, growing as it is written into. Full width, because it is
+     a sentence and wrapping it into a column would make it harder to read back
+     than it was to type. */
+  .why-it-went-wrong-box {
+    width: 100%; margin-top: 0.5rem; padding: 0.35rem 0.5rem;
+    font: inherit; font-size: 0.8rem; color: inherit; resize: vertical;
+    border: 1px solid rgba(128,128,128,0.35); border-radius: 6px;
+    background: rgba(127,127,127,0.04);
   }
 
   .lightspeed-motto-line {

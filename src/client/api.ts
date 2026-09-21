@@ -140,11 +140,14 @@ export const recordProblemWorked = (
   ordinal: number,
   elapsedMs: number,
   neededHelp: boolean,
+  // Never compulsory: null is "did not say", not "average".
+  workingSpeed: "slow" | "mid" | "fast" | null,
 ) =>
   post<{ ok: true }>({
     action: "record_problem_worked",
     run_id: runId,
     id: ordinal,
+    self_reported_working_speed: workingSpeed ?? "",
     elapsed_ms: elapsedMs,
     needed_help: neededHelp,
   });
@@ -186,6 +189,14 @@ export const clearManeuverCredit = (attemptId: number, maneuverId: number) =>
 
 export const skipAttempt = (attemptId: number) =>
   post<{ outcome: AttemptOutcome }>({ action: "skip_attempt", attempt_id: attemptId });
+
+/** Prose, typed at the answers page and saved on its own rhythm. */
+export const setWhyThisOneWentWrong = (attemptId: number, why: string) =>
+  post<{ ok: true }>({
+    action: "set_why_this_one_went_wrong",
+    attempt_id: attemptId,
+    why_this_one_went_wrong: why,
+  });
 
 export const markForFurtherPractice = (attemptId: number, marked: boolean) =>
   post<{ ok: true }>({

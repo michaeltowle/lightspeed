@@ -4,6 +4,7 @@ import {
   markForFurtherPractice,
   markManeuverCredit,
   revealAnswers,
+  setWhyThisOneWentWrong,
 } from "../api";
 import { formatElapsed, h } from "../lib/dom";
 import { renderMathHtml } from "../lib/katex-boot";
@@ -18,12 +19,6 @@ import type {
   View,
 } from "../types";
 
-const OUTCOME_WORDS: Record<AttemptOutcome, string> = {
-  right: "right",
-  partial: "partly right",
-  wrong: "wrong",
-  skipped: "skipped",
-};
 
 function answerRow(
   row: AnswerRow,
@@ -55,13 +50,41 @@ function answerRow(
 
   const outcomeEl = h("span", { class: "outcome-readout" });
   const paintOutcome = () => {
+    // A fraction, not a word. "partly right" said the same thing about one of
+    // six as it did about five of six, which is the whole of what there was to
+    // know. Unreduced: 3/6 is three steps of six, and halving it would throw
+    // away the six.
+    const got = [...credit.values()].filter((each) => each === "got").length;
     outcomeEl.replaceChildren(
-      ...(outcome
-        ? ["outcome: ", h("strong", {}, [OUTCOME_WORDS[outcome]])]
-        : [`${maneuvers.length ? "grade the maneuvers above" : ""}`]),
+      ...(outcome === "skipped"
+        ? ["outcome: ", h("strong", {}, ["skipped"])]
+        : outcome
+          ? ["credit: ", h("strong", {}, [`${got}/${maneuvers.length}`])]
+          : [`${maneuvers.length ? "grade the maneuvers above" : ""}`]),
     );
     item.classList.toggle("is-skipped", outcome === "skipped");
   };
+
+  // Why it went wrong, in his own words, written once the marks have shown him
+  // where it went. Saved on blur rather than per keystroke: it is a sentence
+  // being composed, not a filter being dragged.
+  const whyEl = h("textarea", {
+    class: "why-it-went-wrong-box",
+    rows: 1,
+    placeholder: "why did this go wrong?",
+  });
+  whyEl.value = row.why_this_one_went_wrong;
+  let savedWhy = row.why_this_one_went_wrong;
+  whyEl.addEventListener("blur", () => {
+    const next = whyEl.value.trim();
+    if (next === savedWhy) return;
+    savedWhy = next;
+    void setWhyThisOneWentWrong(row.attempt_id, next).catch(() => {
+      // Nothing saved, so the box should not claim otherwise.
+      savedWhy = row.why_this_one_went_wrong;
+      whyEl.value = row.why_this_one_went_wrong;
+    });
+  });
 
   const markBox = h("input", { type: "checkbox" });
   markBox.checked = marked;
@@ -186,6 +209,7 @@ function answerRow(
     problemEl,
     answerEl,
     tableEl,
+    whyEl,
     h("div", { class: "acts" }, [
       ...(maneuvers.length ? [] : [breakEl]),
       outcomeEl,

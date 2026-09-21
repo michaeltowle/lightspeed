@@ -60,6 +60,10 @@ export interface AnswerRow {
   ordinal: number;
   elapsed_ms: number | null;
   outcome: AttemptOutcome | null;
+  // The credit earned, as a fraction in two pieces. Both null until graded.
+  count_of_maneuvers_got: number | null;
+  count_of_maneuvers_faced: number | null;
+  why_this_one_went_wrong: string;
   needed_help_during_attempt: number;
   marked_for_further_practice: number;
   problem_id: number;
@@ -86,6 +90,14 @@ export interface Trophy {
   created_at: string;
   // Never null and never "skipped": the wall is fed answered attempts only.
   outcome: Exclude<AttemptOutcome, "skipped">;
+  // The bank's columns are all read off this one payload bucketed by problem,
+  // which is why an attempt carries rather more than a square needs.
+  count_of_maneuvers_got: number | null;
+  count_of_maneuvers_faced: number | null;
+  needed_help_during_attempt: number;
+  // Said before moving on, and never compulsory, so usually null.
+  self_reported_working_speed: "slow" | "mid" | "fast" | null;
+  why_this_one_went_wrong: string;
   // Which problem earned it. The wall ignores this; the bank buckets on it,
   // which is why no row needs a query of its own.
   math_practice_problem_id: number;

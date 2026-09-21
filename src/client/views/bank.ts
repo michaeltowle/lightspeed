@@ -9,7 +9,6 @@ import {
 import { h } from "../lib/dom";
 import { renderMathHtml } from "../lib/katex-boot";
 import { parseTagNames, renderAddAssignment } from "./add-assignment";
-import { square } from "./trophy-wall";
 import { STUDY_CONTEXT_TAG_FIELDS } from "../types";
 import type {
   MathPracticeProblem,
@@ -19,10 +18,6 @@ import type {
   View,
 } from "../types";
 
-// Enough squares to read a streak off, few enough to sit in one cell beside the
-// field columns.
-const STRIP_LENGTH = 12;
-
 const ROLLING_WEEK_DAYS = 7;
 
 // Both counted in whole days, not elapsed time: something worked on Monday
@@ -31,10 +26,10 @@ const ROLLING_WEEK_DAYS = 7;
 const GONE_COLD_AFTER_DAYS = 7;
 const GOING_COLD_AFTER_DAYS = 2;
 
-// Select, label, name, four fields, strip, menu.
-// select, label, problem, the tag fields, comment, strip, menu. Derived so a
-// field added or dropped cannot leave the detail row spanning the wrong width.
-const TABLE_COLUMN_COUNT = 6 + STUDY_CONTEXT_TAG_FIELDS.length;
+// select, label, problem, the tag fields, comment, credit, last, streak, speed,
+// flags, why, menu. Derived so a field added or dropped cannot leave the detail
+// row spanning the wrong width.
+const TABLE_COLUMN_COUNT = 11 + STUDY_CONTEXT_TAG_FIELDS.length;
 
 
 const WEEKDAY_NAMES = [
@@ -82,16 +77,72 @@ let closeOpenMenu: (() => void) | null = null;
 document.addEventListener("click", () => closeOpenMenu?.());
 
 /** The most recent graded attempt against a problem, and the squares to show. */
+/**
+ * Full marks on one attempt.
+ *
+ * Attempts graded before the fraction existed have no counts, so those fall
+ * back to the outcome they rolled up to at the time. Without that every row's
+ * streak would start from zero the day the columns landed.
+ */
+function wasFullMarks(trophy: Trophy): boolean {
+  const { count_of_maneuvers_got: got, count_of_maneuvers_faced: faced } = trophy;
+  if (got === null || faced === null) return trophy.outcome === "right";
+  return faced > 0 && got >= faced;
+}
+
 function standingOf(trophies: Trophy[] | undefined): {
   lastWorkedAt: string | null;
-  strip: Trophy[];
+  latest: Trophy | null;
+  streak: number;
 } {
   const list = trophies ?? [];
-  return {
-    // The worker sends them oldest first, so the last one is the most recent.
-    lastWorkedAt: list.length ? list[list.length - 1].created_at : null,
-    strip: list.slice(-STRIP_LENGTH),
-  };
+  // The worker sends them oldest first, so the last one is the most recent.
+  const latest = list.length ? list[list.length - 1] : null;
+
+  // Consecutive most-recent attempts at full marks, and nothing else counts.
+  // Skips never reach here -- the payload carries answered attempts only -- so
+  // passing a problem over neither builds a streak nor breaks one.
+  let streak = 0;
+  for (let i = list.length - 1; i >= 0 && wasFullMarks(list[i]); i--) streak++;
+
+  return { lastWorkedAt: latest ? latest.created_at : null, latest, streak };
+}
+
+/** The credit of the most recent graded attempt, unreduced. */
+function creditText(latest: Trophy | null): string {
+  if (!latest || latest.count_of_maneuvers_faced === null) return "";
+  return `${latest.count_of_maneuvers_got}/${latest.count_of_maneuvers_faced}`;
+}
+
+/**
+ * What was true of the last attempt beyond its credit.
+ *
+ * Multi-valued on purpose though only one flag exists to raise so far: this is
+ * the cell anything else about an attempt will be filed in, and a field that
+ * had to be widened from one value to many later would take every row that
+ * read it along. Nothing in the database is multi -- the flags are read off
+ * columns that each know one thing -- and the cell assembles them.
+ */
+function flagChipsFor(latest: Trophy | null): HTMLElement[] {
+  const raised: string[] = [];
+  if (latest?.needed_help_during_attempt === 1) raised.push("help");
+  return raised.map((flag) => h("span", { class: "attempt-flag" }, [flag]));
+}
+
+/** today / yesterday / Sat / 8 days ago. */
+function formatLastWorked(iso: string | null): string {
+  if (!iso) return "";
+  const then = new Date(iso);
+  const days = daysBetween(then, new Date());
+  if (days <= 0) return "today";
+  if (days === 1) return "yesterday";
+  // Inside the week the weekday is the thing that places it; past that the
+  // weekday has come round again and only a count still means anything.
+  if (days < 7) {
+    const name = WEEKDAY_NAMES[then.getDay()];
+    return name.charAt(0).toUpperCase() + name.slice(1, 3);
+  }
+  return `${days} days ago`;
 }
 
 /** Which calendar day a timestamp fell on *here*, which is the only day Mike has. */
@@ -257,7 +308,12 @@ function buildBankTable(body: HTMLElement): HTMLElement {
           h("th", { class: `col-field-${field}` }, [field]),
         ),
         h("th", { class: "col-comment" }, ["comment"]),
-        h("th", { class: "col-strip" }, []),
+        h("th", { class: "col-credit" }, ["credit"]),
+        h("th", { class: "col-last" }, ["last"]),
+        h("th", { class: "col-streak" }, ["streak"]),
+        h("th", { class: "col-speed" }, ["speed"]),
+        h("th", { class: "col-flags" }, ["flags"]),
+        h("th", { class: "col-why" }, ["why"]),
         h("th", { class: "col-menu" }, []),
       ]),
     ]),
@@ -866,9 +922,14 @@ export async function renderBank(
       nameCell,
       ...STUDY_CONTEXT_TAG_FIELDS.map(fieldCell),
       commentCell,
-      h("td", { class: "col-strip" }, [
-        h("span", { class: "problem-strip" }, standing.strip.map(square)),
-      ]),
+      h("td", { class: "col-credit" }, [creditText(standing.latest)]),
+      h("td", { class: "col-last" }, [formatLastWorked(standing.lastWorkedAt)]),
+      // Nothing rather than "+0": a row with no streak should read as quiet,
+      // not as a score of zero.
+      h("td", { class: "col-streak" }, [standing.streak ? `+${standing.streak}` : ""]),
+      h("td", { class: "col-speed" }, [standing.latest?.self_reported_working_speed ?? ""]),
+      h("td", { class: "col-flags" }, flagChipsFor(standing.latest)),
+      h("td", { class: "col-why" }, [standing.latest?.why_this_one_went_wrong ?? ""]),
       menuCell,
     );
     return row;

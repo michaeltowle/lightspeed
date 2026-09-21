@@ -169,6 +169,8 @@ export default {
       needed_help?: boolean;
       marked?: boolean;
       default_service_style?: string;
+      self_reported_working_speed?: string;
+      why_this_one_went_wrong?: string;
     }>();
 
     try {
@@ -631,15 +633,22 @@ export default {
         }
 
         case "record_problem_worked": {
+          // Never compulsory, so anything that is not one of the three words is
+          // no answer rather than a bad one.
+          const speed = ["slow", "mid", "fast"].includes(String(body.self_reported_working_speed))
+            ? String(body.self_reported_working_speed)
+            : null;
           await db
             .prepare(
               `UPDATE problem_attempt
-                  SET elapsed_ms = ?, needed_help_during_attempt = ?
+                  SET elapsed_ms = ?, needed_help_during_attempt = ?,
+                      self_reported_working_speed = ?
                 WHERE practice_run_id = ? AND ordinal = ?`,
             )
             .bind(
               Math.max(0, Math.round(Number(body.elapsed_ms) || 0)),
               body.needed_help ? 1 : 0,
+              speed,
               body.run_id,
               body.id,
             )
@@ -663,6 +672,8 @@ export default {
             .prepare(
               `SELECT a.id AS attempt_id, a.ordinal, a.elapsed_ms, a.outcome,
                       a.needed_help_during_attempt, a.marked_for_further_practice,
+                      a.count_of_maneuvers_got, a.count_of_maneuvers_faced,
+                      a.why_this_one_went_wrong,
                       p.id AS problem_id, p.name, p.textbook_problem_number_label,
                       p.statement_html, p.broken_into_maneuvers_at
                  FROM problem_attempt a
@@ -736,11 +747,35 @@ export default {
             .prepare(`DELETE FROM per_maneuver_credit_mark WHERE problem_attempt_id = ?`)
             .bind(body.attempt_id)
             .run();
+          // Passed over, so nothing it might have said about the working
+          // stands: no interval, no speed, no help, no credit, no post-mortem.
+          // A skip is the absence of an attempt, not a bad one.
           await db
-            .prepare(`UPDATE problem_attempt SET outcome = 'skipped' WHERE id = ?`)
+            .prepare(
+              `UPDATE problem_attempt
+                  SET outcome = 'skipped', elapsed_ms = NULL,
+                      needed_help_during_attempt = 0,
+                      self_reported_working_speed = NULL,
+                      why_this_one_went_wrong = '',
+                      count_of_maneuvers_got = NULL,
+                      count_of_maneuvers_faced = NULL
+                WHERE id = ?`,
+            )
             .bind(body.attempt_id)
             .run();
           return json({ outcome: "skipped" });
+        }
+
+        // Written at the answers page, once the maneuver marks have shown where
+        // it went wrong. Its own action for the same reason set_problem_comment
+        // is: prose is typed and saved on a rhythm of its own, not folded into
+        // whatever else the page happened to be sending.
+        case "set_why_this_one_went_wrong": {
+          await db
+            .prepare(`UPDATE problem_attempt SET why_this_one_went_wrong = ? WHERE id = ?`)
+            .bind(tidy(String(body.why_this_one_went_wrong ?? ""), 400), body.attempt_id)
+            .run();
+          return json({ ok: true });
         }
 
         case "mark_for_further_practice": {
@@ -765,7 +800,10 @@ export default {
           // problem, which is why no row needs a query of its own.
           const { results } = await db
             .prepare(
-              `SELECT id, created_at, outcome, math_practice_problem_id
+              `SELECT id, created_at, outcome, math_practice_problem_id,
+                      count_of_maneuvers_got, count_of_maneuvers_faced,
+                      needed_help_during_attempt, self_reported_working_speed,
+                      why_this_one_went_wrong
                  FROM problem_attempt
                 WHERE outcome IS NOT NULL AND outcome <> 'skipped'
                 ORDER BY created_at, id`,
@@ -817,9 +855,17 @@ async function rollUpOutcome(
   const { total, marked, got } = tally!;
   const outcome = marked === 0 ? null : got === 0 ? "wrong" : got >= total ? "right" : "partial";
 
+  // The fraction is written here because here is where it is already counted.
+  // Stored rather than recomputed later: re-breaking a problem replaces its
+  // maneuver table, and a denominator read off the new one would restate work
+  // already graded against the old.
   await db
-    .prepare(`UPDATE problem_attempt SET outcome = ? WHERE id = ?`)
-    .bind(outcome, attemptId)
+    .prepare(
+      `UPDATE problem_attempt
+          SET outcome = ?, count_of_maneuvers_got = ?, count_of_maneuvers_faced = ?
+        WHERE id = ?`,
+    )
+    .bind(outcome, outcome === null ? null : got, outcome === null ? null : total, attemptId)
     .run();
 
   const { results: marks } = await db
