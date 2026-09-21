@@ -876,18 +876,26 @@ export async function renderBank(
       // that one was got unaided, amber if it wanted help. The count says how
       // long the run is; the colour says how the most recent leg of it went,
       // which is the one that tells you what to expect next time.
+      //
+      // The colour rides a span rather than the cell, so the ground it sits on
+      // is a badge round the figure instead of a stripe the height of the row.
       h(
         "td",
-        {
-          class: standing.streak
-            ? `col-streak ${
-                standing.latest?.needed_help_during_attempt === 1
-                  ? "is-last-attempt-helped"
-                  : "is-last-attempt-unaided"
-              }`
-            : "col-streak",
-        },
-        [standing.streak ? `+${standing.streak}` : ""],
+        { class: "col-streak" },
+        standing.streak
+          ? [
+              h(
+                "span",
+                {
+                  class:
+                    standing.latest?.needed_help_during_attempt === 1
+                      ? "is-last-attempt-helped"
+                      : "is-last-attempt-unaided",
+                },
+                [`+${standing.streak}`],
+              ),
+            ]
+          : [],
       ),
       h("td", { class: "col-speed" }, [standing.latest?.self_reported_working_speed ?? ""]),
       h("td", { class: "col-flags" }, flagChipsFor(standing.latest)),

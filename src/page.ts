@@ -136,12 +136,30 @@ export function indexPageDocument(env: Env): string {
      Green and amber rather than green and red: help is how a hard problem gets
      done, not a failure -- it is simply a different claim from having got it
      alone. Weight as well as hue, so the two still part on a screen that eats
-     the colour. */
-  .col-streak.is-last-attempt-unaided { color: #2f7d4a; font-weight: 600; }
-  .col-streak.is-last-attempt-helped { color: #9a7113; font-weight: 600; }
+     the colour.
+
+     A badge round the figure rather than bare text, and the same pill the tag
+     chips are, so the table has one shape for "this is a marked value". The
+     ground is the text's own colour thinned down -- the same hue rather than a
+     second one chosen to go with it, which is what keeps a pale tint from
+     reading as its own category. */
+  .col-streak span {
+    display: inline-block; padding: 0.05rem 0.45rem; border-radius: 999px;
+    font-weight: 600;
+  }
+  .col-streak .is-last-attempt-unaided {
+    color: #2f7d4a; background: rgba(47,125,74,0.13);
+  }
+  .col-streak .is-last-attempt-helped {
+    color: #9a7113; background: rgba(154,113,19,0.15);
+  }
   @media (prefers-color-scheme: dark) {
-    .col-streak.is-last-attempt-unaided { color: #79c893; }
-    .col-streak.is-last-attempt-helped { color: #d9b455; }
+    .col-streak .is-last-attempt-unaided {
+      color: #79c893; background: rgba(121,200,147,0.15);
+    }
+    .col-streak .is-last-attempt-helped {
+      color: #d9b455; background: rgba(217,180,85,0.15);
+    }
   }
   .col-last { width: 6rem; font-variant-numeric: tabular-nums; opacity: 0.8; }
   .col-speed { width: 4rem; opacity: 0.8; }
@@ -237,6 +255,18 @@ export function indexPageDocument(env: Env): string {
 
   /* One practice button for the bank, acting on every ticked row. */
   .practice-launch-control { margin-top: 0.85rem; }
+
+  /* Assignment reads as plain text. It was already off the palette, and a
+     bordered pill with no colour in it is a chip that has stopped doing a
+     chip's job -- the outline was the only thing left, drawing a box round a
+     name for no reason. Sized with the rest of the table's values, not with
+     the class chip beside it, since that is what it is now: a value in a
+     column. Kept as the same element so clicking the cell still edits it, and
+     kept with a margin so two assignments do not run together. */
+  .col-field-assignment .study-context-tag-chip {
+    padding: 0; border: none; background: none; border-radius: 0;
+    font-size: inherit; margin: 0 0.25rem;
+  }
 
   /* The same chip reads a row and, as a button, filters the table. */
   .study-context-tag-cell { cursor: text; min-width: 5rem; }
