@@ -243,13 +243,13 @@ ${chipColorPaletteCss}
     display: flex; flex-wrap: wrap; gap: 0.3rem; align-items: center;
     margin-top: 0.25rem;
   }
-  .study-context-tag-filter .field-label {
-    font-size: 0.65rem; opacity: 0.4; margin-left: 0.6rem;
-  }
-  .study-context-tag-filter .field-label:first-child { margin-left: 0; }
   /* Assignment is a dropdown now: one entry per homework outgrew a chip row a
      term at a time, and the class it used to sit beside is the tab. */
+  /* Pushed to the far right, away from the tabs: the tab is the choice being
+     made, and this only narrows what the tab already picked. Auto margin rather
+     than justify-content, so it stays right if anything joins it on the left. */
   .assignment-dropdown {
+    margin-left: auto;
     padding: 0.25rem 0.5rem; font: inherit; font-size: 0.8rem; color: inherit;
     border: 1px solid rgba(128,128,128,0.5); border-radius: 6px;
     background: rgba(127,127,127,0.04); cursor: pointer; max-width: 16rem;

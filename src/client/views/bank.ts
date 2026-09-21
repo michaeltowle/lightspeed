@@ -450,22 +450,22 @@ export async function renderBank(
     // assignment must both match, so Homework 1 means 6801's. In all, it
     // honestly means every class's first homework.
     const options: (Node | string)[] = [
-      h("option", { value: "" }, ["every assignment"]),
+      h("option", { value: "" }, ["filter by assignment"]),
       ...assignmentsOf(here).map(optionFor),
     ];
 
-    const pickerEl = h("select", { class: "assignment-dropdown" }, options);
+    const dropdownEl = h("select", { class: "assignment-dropdown" }, options);
     // An assignment picked in one tab is gone in the next, so the value is
     // asserted after the options are in rather than assumed to have survived.
-    pickerEl.value = assignmentTagId === null ? "" : String(assignmentTagId);
-    if (pickerEl.value === "" && assignmentTagId !== null) assignmentTagId = null;
-    pickerEl.addEventListener("change", () => {
-      assignmentTagId = pickerEl.value === "" ? null : Number(pickerEl.value);
+    dropdownEl.value = assignmentTagId === null ? "" : String(assignmentTagId);
+    if (dropdownEl.value === "" && assignmentTagId !== null) assignmentTagId = null;
+    dropdownEl.addEventListener("change", () => {
+      assignmentTagId = dropdownEl.value === "" ? null : Number(dropdownEl.value);
       paintAll();
     });
 
-    filterEl.replaceChildren(h("span", { class: "field-label" }, ["assignment"]), pickerEl);
-    // One option is "every assignment", so anything less than two is no choice.
+    filterEl.replaceChildren(dropdownEl);
+    // The resting option is the label, so anything less than two is no choice.
     filterEl.hidden = options.length < 2;
   }
 
