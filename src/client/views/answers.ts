@@ -175,10 +175,23 @@ function answerRow(
       })
     : h("div", { class: "bank-note" }, ["no maneuver table for this problem yet"]);
 
-  // A problem served before its table landed has nothing to grade. Breaking it
-  // here beats sending Mike back to the bank to do it.
-  const breakEl = h("button", { type: "button", class: "grade" }, ["break it into maneuvers"]);
+  // Two jobs, one button. A problem served before its table landed has nothing
+  // to grade, and breaking it here beats sending Mike back to the bank. A
+  // problem that already has a table sometimes has a bad one -- the route the
+  // model took is roundabout, or it worked something it should have left set up
+  // -- and this is the page where that becomes obvious, with the solution in
+  // front of you. Sending him elsewhere to fix what he is looking at is the
+  // same mistake twice.
+  const alreadyBroken = maneuvers.length > 0;
+  const breakLabel = alreadyBroken ? "break it again" : "break it into maneuvers";
+  const breakEl = h("button", { type: "button", class: "grade" }, [breakLabel]);
   breakEl.addEventListener("click", async () => {
+    // Re-breaking replaces the table, and the marks hang off the rows it
+    // replaces -- so the grading on screen goes with it. Worth a question when
+    // there is grading to lose, and worth none when there is not.
+    if (credit.size && !confirm("Re-breaking replaces the table. The marks on this attempt go with it. Carry on?")) {
+      return;
+    }
     breakEl.disabled = true;
     breakEl.textContent = "breaking...";
     try {
@@ -211,7 +224,7 @@ function answerRow(
     tableEl,
     whyEl,
     h("div", { class: "acts" }, [
-      ...(maneuvers.length ? [] : [breakEl]),
+      breakEl,
       outcomeEl,
       h("label", { class: "mark" }, [markBox, "marked for further practice"]),
     ]),

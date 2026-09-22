@@ -153,12 +153,22 @@ export function indexPageDocument(env: Env): string {
   .col-streak .is-last-attempt-helped {
     color: #9a7113; background: rgba(154,113,19,0.15);
   }
+  /* The third ground, and the only one that is not a streak in the good sense:
+     a run of attempts short of full credit. Red on red, the reds the tag
+     palette already uses, so it is the same language as everything else that
+     is coloured on this page. */
+  .col-streak .is-last-attempt-missed {
+    color: #b3303f; background: rgba(179,48,63,0.13);
+  }
   @media (prefers-color-scheme: dark) {
     .col-streak .is-last-attempt-unaided {
       color: #79c893; background: rgba(121,200,147,0.15);
     }
     .col-streak .is-last-attempt-helped {
       color: #d9b455; background: rgba(217,180,85,0.15);
+    }
+    .col-streak .is-last-attempt-missed {
+      color: #f0a099; background: rgba(240,160,153,0.15);
     }
   }
   .col-last { width: 6rem; font-variant-numeric: tabular-nums; opacity: 0.8; }

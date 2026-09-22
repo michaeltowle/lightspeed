@@ -1,4 +1,5 @@
 import {
+  breakIntoManeuvers,
   listTheBank,
   openPracticeRun,
   renameProblem,
@@ -98,13 +99,36 @@ function standingOf(trophies: Trophy[] | undefined): {
   // The worker sends them oldest first, so the last one is the most recent.
   const latest = list.length ? list[list.length - 1] : null;
 
-  // Consecutive most-recent attempts at full marks, and nothing else counts.
+  // A run either way, counted the same and signed. The latest attempt sets
+  // which run it is -- full marks or short of them -- and the count is how far
+  // back that verdict holds unbroken. Signed rather than split in two, because
+  // +3 and -3 are the same measurement of the same thing and a row can only be
+  // in one of them.
+  //
   // Skips never reach here -- the payload carries answered attempts only -- so
-  // passing a problem over neither builds a streak nor breaks one.
+  // passing a problem over neither builds a run nor breaks one.
+  const latestWasFullMarks = latest ? wasFullMarks(latest) : false;
   let streak = 0;
-  for (let i = list.length - 1; i >= 0 && wasFullMarks(list[i]); i--) streak++;
+  for (let i = list.length - 1; i >= 0 && wasFullMarks(list[i]) === latestWasFullMarks; i--) {
+    streak++;
+  }
+  if (!latestWasFullMarks) streak = -streak;
 
   return { lastWorkedAt: latest ? latest.created_at : null, latest, streak };
+}
+
+/**
+ * Which of the three grounds the run's badge wears.
+ *
+ * Its own function because the cell that used to decide this inline now has
+ * three answers to choose between, and a nested ternary in the middle of a row
+ * of table cells is where a fourth would go wrong.
+ */
+function streakBadgeClassFor(standing: { streak: number; latest: Trophy | null }): string {
+  if (standing.streak < 0) return "is-last-attempt-missed";
+  return standing.latest?.needed_help_during_attempt === 1
+    ? "is-last-attempt-helped"
+    : "is-last-attempt-unaided";
 }
 
 /** The credit of the most recent graded attempt, unreduced. */
@@ -819,6 +843,21 @@ export async function renderBank(
       row.after(detailRow);
     }
 
+    // ---- re-break ----------------------------------------------------------
+    //
+    // The whole row reports, since a break is a model call and runs long enough
+    // that a silent menu item would read as a dead one.
+    async function beginRebreak(): Promise<void> {
+      closeOpenMenu?.();
+      setPracticeStatus(`breaking ${problem.name}...`);
+      try {
+        const { maneuver_count } = await breakIntoManeuvers(problem.id);
+        setPracticeStatus(`${problem.name}: ${maneuver_count} maneuvers`);
+      } catch (err) {
+        setPracticeStatus(err instanceof Error ? err.message : String(err), true);
+      }
+    }
+
     // ---- menu --------------------------------------------------------------
     function openMenu(): void {
       closeOpenMenu?.();
@@ -831,6 +870,12 @@ export async function renderBank(
         // nothing to show it against.
         item("view screenshot", () => openDetail("screenshot"), hasScreenshot()),
         item("rename", beginRename),
+        // The bank's copy of a re-break. The answers page has the other, where a
+        // bad table is usually noticed; this one is for the maintenance pass --
+        // a convention has changed and the tables written before it need
+        // bringing up to it, which is a job done down a list rather than one
+        // problem at a time.
+        item("break into maneuvers again", beginRebreak),
       ]);
       menuCell.append(menu);
       closeOpenMenu = () => {
@@ -871,11 +916,17 @@ export async function renderBank(
       ...STUDY_CONTEXT_TAG_FIELDS.map(fieldCell),
       h("td", { class: "col-credit" }, [creditText(standing.latest)]),
       h("td", { class: "col-last" }, [formatLastWorked(standing.lastWorkedAt)]),
-      // Nothing rather than "+0": a row with no streak should read as quiet,
-      // not as a score of zero. Coloured off the last attempt alone -- green if
-      // that one was got unaided, amber if it wanted help. The count says how
-      // long the run is; the colour says how the most recent leg of it went,
-      // which is the one that tells you what to expect next time.
+      // Nothing rather than "+0": a row never worked should read as quiet, not
+      // as a score of zero. Everything else is signed, and the sign is the
+      // whole reading -- +3 is three clean in a row, -3 is three short of full
+      // credit in a row, and the eye wants to find those two apart without
+      // reading either.
+      //
+      // Three grounds, not two. Green for a run got alone, amber for one that
+      // wanted help, red for a run that is not getting there at all -- so help
+      // stays a different claim from full marks, while falling short stays a
+      // different thing from both. Short of full credit is red whether or not
+      // help was taken: help did not rescue it, which is the point.
       //
       // The colour rides a span rather than the cell, so the ground it sits on
       // is a badge round the figure instead of a stripe the height of the row.
@@ -886,13 +937,8 @@ export async function renderBank(
           ? [
               h(
                 "span",
-                {
-                  class:
-                    standing.latest?.needed_help_during_attempt === 1
-                      ? "is-last-attempt-helped"
-                      : "is-last-attempt-unaided",
-                },
-                [`+${standing.streak}`],
+                { class: streakBadgeClassFor(standing) },
+                [standing.streak > 0 ? `+${standing.streak}` : String(standing.streak)],
               ),
             ]
           : [],
