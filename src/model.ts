@@ -497,13 +497,23 @@ export async function breakIntoManeuvers(
   statementHtml: string,
   mandates: string[],
 ): Promise<BrokenManeuver[]> {
+  // Two kinds of convention arrive here and they want opposite handling. One
+  // adds a move to the working -- "evaluate at capital M, then take the limit"
+  // -- and has to surface as its own row or it cannot be marked missed. The
+  // other only says how a result is written, or declines a step altogether, and
+  // giving that one a row of its own produces exactly the narration the
+  // directive above forbids: a maneuver named "leave the probability
+  // unevaluated", with nothing in `result_html` to put under it.
   const house = mandates.length
     ? [
         "",
         "",
         "Standing conventions for this problem. Follow them even where another",
-        "route would be shorter, and let each one show as the maneuver it is",
-        "rather than folding it into a neighbouring step:",
+        "route would be shorter. Where a convention adds a move to the working,",
+        "let it show as the maneuver it is rather than folding it into a",
+        "neighbouring step. Where it only governs how a result is written, or",
+        "says a step need not be carried out, apply it in silence -- it is not a",
+        "maneuver and gets no row of its own:",
         "",
         ...mandates.map((rule, idx) => `${idx + 1}. ${rule}`),
       ].join("\n")
