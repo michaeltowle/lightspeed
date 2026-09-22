@@ -2,7 +2,6 @@ import { h } from "./lib/dom";
 import { renderAnswers } from "./views/answers";
 import { renderBank } from "./views/bank";
 import { renderProblem } from "./views/problem";
-import { renderManeuverDrill } from "./views/maneuver-drill";
 import { mountTrophyWall, refreshTrophyWall, setTrophyWallVisible } from "./views/trophy-wall";
 import type { View } from "./types";
 
@@ -25,10 +24,6 @@ function go(view: View): void {
       setTrophyWallVisible(true);
       void renderAnswers(root, view.runId, go);
       break;
-    case "maneuver_drill":
-      setTrophyWallVisible(false);
-      renderManeuverDrill(root, view.maneuverId, go);
-      break;
   }
 }
 
@@ -40,13 +35,7 @@ function boot(): void {
   if (!document.getElementById("app")) {
     document.body.append(h("main", { id: "app" }));
   }
-  // A drill arrives as a tab of its own, so the run it was launched from is
-  // untouched behind it. CLAUDE.md keeps / the only route, which is why this
-  // is a query param rather than a path.
-  const drilling = Number(
-    new URL(window.location.href).searchParams.get("drill"),
-  );
-  go(drilling ? { name: "maneuver_drill", maneuverId: drilling } : { name: "bank" });
+  go({ name: "bank" });
 }
 
 if (document.readyState === "loading") {

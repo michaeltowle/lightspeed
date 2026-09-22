@@ -1,14 +1,19 @@
 import {
-  breakIntoManeuvers,
+  solveStepByStep,
   listTheBank,
   openPracticeRun,
+  peekAtManeuvers,
   renameProblem,
   retagProblem,
   trophyWall,
 } from "../api";
 import { h } from "../lib/dom";
 import { renderMathHtml } from "../lib/katex-boot";
+import { renderManeuverTable } from "../lib/maneuver-table";
+import { renderReSolveControls } from "../lib/re-solve";
 import { parseTagNames, renderAddAssignment } from "./add-assignment";
+import { renderFreeGenerate } from "./free-generate";
+import { renderEditablePerJobInstructionsToLlm } from "./editable-per-job-instructions-to-llm";
 import { STUDY_CONTEXT_TAG_FIELDS } from "../types";
 import type {
   MathPracticeProblem,
@@ -343,9 +348,15 @@ function buildBankTable(body: HTMLElement): HTMLElement {
   ]);
 }
 
+/** A class by id, every problem, or the ones free generate made. */
+type BankTabKey = number | "all" | "generated";
+
 export async function renderBank(
   root: HTMLElement,
   go: (view: View) => void,
+  // Set when the bank is rebuilt from inside itself, so a rebuild lands on the
+  // tab that was asked for rather than the one remembered from last visit.
+  startOn?: BankTabKey,
 ): Promise<void> {
   root.replaceChildren(h("div", { id: "out" }, ["loading..."]));
 
@@ -386,9 +397,15 @@ export async function renderBank(
   // retired since the last visit opens on all rather than on a tab whose name
   // has gone.
   const remembered = readStandingStudyContextTagFilter();
-  let openTab: number | "all" | "generated" =
-    remembered !== null && classTags().some((tag) => tag.id === remembered) ? remembered : "all";
+  let openTab: BankTabKey =
+    startOn ??
+    (remembered !== null && classTags().some((tag) => tag.id === remembered) ? remembered : "all");
   if (typeof openTab !== "number") writeStandingStudyContextTagFilter(null);
+
+  // Problems added from a pane on this page, which the table has not seen.
+  // The pane that added them stays put -- its "work it now" is the point of it
+  // -- and the next tab pressed rebuilds the bank instead of repainting it.
+  let bankIsStale = false;
 
   // Assignment narrows within the open tab, and is deliberately not remembered:
   // which class is being worked is a week's habit, which homework is an
@@ -586,10 +603,7 @@ export async function renderBank(
     return sortForBank(
       shownIn(
         problems.filter(
-          (p) =>
-            !p.archived_at &&
-            p.parent_problem_varied_from === null &&
-            p.the_maneuver_it_was_isolated_from === null,
+          (p) => !p.archived_at && p.parent_problem_varied_from === null,
         ),
       ),
     );
@@ -664,9 +678,9 @@ export async function renderBank(
       problem.name,
       // A problem with no table has nothing to reveal at the end of a run, so
       // the bank says so rather than letting it surprise you there.
-      ...(problem.broken_into_maneuvers_at
+      ...(problem.last_solved_by_llm_at
         ? []
-        : [h("span", { class: "awaiting-break" }, ["  · no table yet"])]),
+        : [h("span", { class: "awaiting-solve" }, ["  · no table yet"])]),
     ]);
     const menuCell = h("td", { class: "col-menu" });
 
@@ -795,12 +809,47 @@ export async function renderBank(
      * place to scroll, so asking for one replaces the other rather than
      * stacking underneath it.
      */
-    function openDetail(showing: "text" | "screenshot"): void {
+    function openDetail(showing: "text" | "screenshot" | "solution"): void {
       const open = row.nextElementSibling as HTMLElement | null;
       if (open?.classList.contains("detail-row")) open.remove();
 
       const shown: (Node | string)[] = [];
-      if (showing === "text") {
+      const acts: HTMLElement[] = [];
+      if (showing === "solution") {
+        // The table as it stands, with the means to redo it right under it:
+        // this is where a solution gone the long way round gets noticed
+        // without having to be worked first.
+        const statementEl = h("div", { class: "problem-body" });
+        renderMathHtml(statementEl, problem.statement_html);
+        const tableEl = h("div", { class: "bank-note" }, ["loading solution..."]);
+        void peekAtManeuvers(problem.id).then(
+          ({ maneuvers }) =>
+            tableEl.replaceWith(
+              maneuvers.length
+                ? renderManeuverTable(maneuvers, { mode: "grade" })
+                : h("div", { class: "bank-note" }, ["not solved yet"]),
+            ),
+          (err) => {
+            tableEl.textContent = err instanceof Error ? err.message : String(err);
+            tableEl.classList.add("err");
+          },
+        );
+        const { howEl, solveEl } = renderReSolveControls({
+          problemId: problem.id,
+          editablePerProblemInstructionsToLlm: problem.editable_per_problem_instructions_to_llm,
+          alreadySolved: problem.last_solved_by_llm_at !== null,
+          onHowSaved: (text) => {
+            problem.editable_per_problem_instructions_to_llm = text;
+          },
+          onReSolved: () => {
+            problem.last_solved_by_llm_at ??= new Date().toISOString();
+            bankIsStale = true;
+            openDetail("solution");
+          },
+        });
+        shown.push(statementEl, tableEl, howEl);
+        acts.push(solveEl);
+      } else if (showing === "text") {
         const statementEl = h("div", { class: "problem-body" });
         renderMathHtml(statementEl, problem.statement_html);
         shown.push(statementEl);
@@ -831,6 +880,7 @@ export async function renderBank(
         h("td", { colspan: TABLE_COLUMN_COUNT }, [
           ...shown,
           h("div", { class: "acts" }, [
+            ...acts,
             h(
               "button",
               { type: "button", class: "grade", onclick: () => detailRow.remove() },
@@ -843,15 +893,16 @@ export async function renderBank(
       row.after(detailRow);
     }
 
-    // ---- re-break ----------------------------------------------------------
+    // ---- re-solve ----------------------------------------------------------
     //
-    // The whole row reports, since a break is a model call and runs long enough
+    // The whole row reports, since a solve is a model call and runs long enough
     // that a silent menu item would read as a dead one.
-    async function beginRebreak(): Promise<void> {
+    async function beginReSolve(): Promise<void> {
       closeOpenMenu?.();
-      setPracticeStatus(`breaking ${problem.name}...`);
+      setPracticeStatus(`solving ${problem.name}...`);
       try {
-        const { maneuver_count } = await breakIntoManeuvers(problem.id);
+        const { maneuver_count } = await solveStepByStep(problem.id);
+        bankIsStale = true;
         setPracticeStatus(`${problem.name}: ${maneuver_count} maneuvers`);
       } catch (err) {
         setPracticeStatus(err instanceof Error ? err.message : String(err), true);
@@ -866,16 +917,16 @@ export async function renderBank(
 
       const menu = h("div", { class: "row-menu" }, [
         item("view problem text", () => openDetail("text")),
+        item("view solution", () => openDetail("solution")),
         // A problem written to order was never read off anything, so there is
         // nothing to show it against.
         item("view screenshot", () => openDetail("screenshot"), hasScreenshot()),
         item("rename", beginRename),
-        // The bank's copy of a re-break. The answers page has the other, where a
-        // bad table is usually noticed; this one is for the maintenance pass --
-        // a convention has changed and the tables written before it need
-        // bringing up to it, which is a job done down a list rather than one
-        // problem at a time.
-        item("break into maneuvers again", beginRebreak),
+        // Straight through, with no table shown and nothing asked. "view
+        // solution" is for a table that is wrong; this is for the maintenance
+        // pass -- the instructions have changed and the tables written before
+        // them need bringing up to them, a job done down a list.
+        item("re-solve", beginReSolve),
       ]);
       menuCell.append(menu);
       closeOpenMenu = () => {
@@ -953,8 +1004,9 @@ export async function renderBank(
 
   // ---- tabs ----------------------------------------------------------------
   const addAssignment = renderAddAssignment(
-    // New problems land in the bank, so the page is rebuilt rather than patched.
-    () => void renderBank(root, go),
+    () => {
+      bankIsStale = true;
+    },
     () => tagCatalogue,
     go,
   );
@@ -967,32 +1019,44 @@ export async function renderBank(
   const bankPane = h("div", {}, [filterEl, tableEl, emptyEl, practiceLaunchEl, practiceStatusEl]);
 
   const freeGeneratePane = h("div", {}, [
-    h("div", { class: "bank-note" }, [
-      "free generate has not been built yet. This is where it will live, and what "
-        + "it mints will show up under the generated tab.",
-    ]),
+    renderFreeGenerate(() => {
+      bankIsStale = true;
+    }, go),
   ]);
+
+  const instructions = renderEditablePerJobInstructionsToLlm();
+  const instructionsPane = h("div", {}, [instructions.el]);
 
   // ---- panes ---------------------------------------------------------------
   // The tab strip stays up on every pane, so a tab is always the way back to
   // the bank and the menu is never the only door.
-  const panes = [bankPane, addAssignmentPane, freeGeneratePane];
+  const panes = [bankPane, addAssignmentPane, freeGeneratePane, instructionsPane];
   function showPane(which: HTMLElement): void {
     for (const pane of panes) pane.hidden = pane !== which;
+    // The ledger and the lit tab both describe the bank. Over any other pane
+    // the one covers the editing and the other claims a tab is open that is
+    // not; a tab pressed to come back lights itself again.
+    const onBank = which === bankPane;
+    ledgerEl.hidden = !onBank;
+    if (!onBank) for (const el of tabEls) el.classList.remove("is-on");
   }
 
   // ---- tabs: all, one per class, then generated -----------------------------
-  const tabKeys: (number | "all" | "generated")[] = [
+  const tabKeys: BankTabKey[] = [
     "all",
     ...classTags().map((tag) => tag.id),
     "generated",
   ];
-  const labelOf = (key: number | "all" | "generated"): string =>
+  const labelOf = (key: BankTabKey): string =>
     typeof key === "number" ? (classTags().find((tag) => tag.id === key)?.name ?? "?") : key;
   const tabEls = tabKeys.map((key) => h("button", { type: "button", class: "tab" }, [labelOf(key)]));
   const tabStripEl = h("div", { class: "tab-strip" }, tabEls);
 
-  function openTabAt(key: number | "all" | "generated"): void {
+  function openTabAt(key: BankTabKey): void {
+    if (bankIsStale) {
+      void renderBank(root, go, key);
+      return;
+    }
     openTab = key;
     writeStandingStudyContextTagFilter(typeof key === "number" ? key : null);
     // A tab change drops the assignment. Homework 1 in 6801 is a different tag
@@ -1026,6 +1090,17 @@ export async function renderBank(
       ["add assignment"],
     ),
     h("button", { type: "button", onclick: () => showPane(freeGeneratePane) }, ["free generate"]),
+    h(
+      "button",
+      {
+        type: "button",
+        onclick: () => {
+          void instructions.load();
+          showPane(instructionsPane);
+        },
+      },
+      ["edit job-level instructions"],
+    ),
   ]);
   menuEl.hidden = true;
 
@@ -1059,6 +1134,7 @@ export async function renderBank(
     bankPane,
     addAssignmentPane,
     freeGeneratePane,
+    instructionsPane,
     ...catalogueEls.values(),
     h("div", { class: "lightspeed-motto-line" }, ["limitations are in the mind"]),
   );

@@ -1,20 +1,25 @@
 import { FAVICON_BASE64, KATEX_FONTS_BASE64 } from "./generated/bundle";
 import { indexPageDocument } from "./page";
 import {
-  breakIntoManeuvers,
+  solveStepByStep,
   buildToOrderFromPrompt,
-  drillOneManeuver,
   transcribeFromScreenshot,
 } from "./model";
 import {
   inheritTags,
   isStudyContextTagField,
-  mandatesFor,
   normalizeTagNames,
   setAllTagFields,
   setTagsForField,
   tagCatalogue,
+  tagsWornBy,
 } from "./tags";
+import {
+  isLlmJob,
+  systemPromptTextFor,
+  editablePerJobInstructionsToLlmInForce,
+  saveEditablePerJobInstructionsToLlm,
+} from "./editable-per-job-instructions-to-llm";
 import type { Env } from "./env";
 
 export type { Env };
@@ -151,7 +156,6 @@ export default {
       name?: string;
       note?: string;
       prompt?: string;
-      requested_count?: number;
       unsaved_screenshots?: UnsavedScreenshot[];
       problem_ids?: number[];
       field?: unknown;
@@ -161,7 +165,6 @@ export default {
       run_id?: number;
       attempt_id?: number;
       maneuver_id?: number;
-      requested_drill_count?: number;
       got_it?: boolean;
       elapsed_ms?: number;
       needed_help?: boolean;
@@ -169,6 +172,9 @@ export default {
       default_service_style?: string;
       self_reported_working_speed?: string;
       why_this_one_went_wrong?: string;
+      llm_job?: unknown;
+      system_prompt_text?: string;
+      editable_per_problem_instructions_to_llm?: string;
     }>();
 
     try {
@@ -183,8 +189,8 @@ export default {
             .prepare(
               `SELECT id, name, textbook_problem_number_label, statement_html,
                       how_this_problem_came_to_be, parent_problem_varied_from,
-                      the_maneuver_it_was_isolated_from, text_that_minted_this_problem,
-                      default_service_style, broken_into_maneuvers_at,
+                      text_that_minted_this_problem, editable_per_problem_instructions_to_llm,
+                      default_service_style, last_solved_by_llm_at,
                       created_at, archived_at
                  FROM math_practice_problem
                 ORDER BY id DESC`,
@@ -266,17 +272,23 @@ export default {
           // with every lettered part of every question -- which is where the
           // model consolidated: 2.1(a), (b), (c) came back as a single problem
           // rather than three. A call that sees one question enumerates its
-          // parts. It is the same lesson break_into_maneuvers learned when a
+          // parts. It is the same lesson solve_step_by_step learned when a
           // whole set shared one cap.
           //
           // It also settles what a problem is attached to. Every problem used
           // to link to every screenshot in the paste; now it links to the one
           // it was actually read off.
+          const instructions = await systemPromptTextFor(db, "transcribe_from_screenshot");
           const reads = await Promise.all(
             screenshotIds.map(async (shotId) => {
               try {
                 const shots = await screenshotsForModel(db, [shotId]);
-                const problems = await transcribeFromScreenshot(env, shots, body.note ?? "");
+                const problems = await transcribeFromScreenshot(
+                  env,
+                  instructions,
+                  shots,
+                  body.note ?? "",
+                );
                 return { shotId, problems };
               } catch {
                 return { shotId, problems: [] };
@@ -326,10 +338,11 @@ export default {
           });
         }
 
+        // Free generate. The request says how many; the cap is only there so
+        // a slip of the keyboard cannot mint a thousand.
         case "build_to_order_from_prompt": {
           const promptText = (body.prompt ?? "").trim();
           if (!promptText) return json({ error: "a prompt is needed" }, 400);
-          const requested = Math.max(1, Math.min(40, Number(body.requested_count) || 2));
 
           // What this prompt has already produced, so a second ask does not
           // hand back the first ask's problems.
@@ -344,14 +357,15 @@ export default {
 
           const built = await buildToOrderFromPrompt(
             env,
+            await systemPromptTextFor(db, "build_to_order_from_prompt"),
             promptText,
-            requested,
+            await bankForReference(db),
             already.map((row) => row.statement_html),
           );
           if (!built.length) return json({ error: "model returned no problems" }, 502);
 
           const minted: number[] = [];
-          for (const problem of built) {
+          for (const problem of built.slice(0, 40)) {
             const id = await insertProblem(db, {
               name: tidy(problem.name, MAX_NAME_LENGTH) || "untitled problem",
               label: "",
@@ -368,96 +382,38 @@ export default {
         // One problem at a time, fired in parallel by the client. That is what
         // lets an intake hand back statements immediately and fill in the
         // tables behind it.
-        // Problems that isolate one step, minted like any other -- the problem
-        // stays the atom, and where it came from is a column. The bank already
-        // hides anything isolated from a maneuver, so drills never crowd it.
-        case "drill_one_maneuver": {
-          const maneuver = await db
-            .prepare(
-              `SELECT m.id, m.name, m.method_text, m.result_html,
-                      m.math_practice_problem_id AS parent_id,
-                      p.statement_html AS parent_statement_html
-                 FROM maneuver m
-                 JOIN math_practice_problem p
-                   ON p.id = m.math_practice_problem_id
-                WHERE m.id = ?`,
-            )
-            .bind(body.maneuver_id)
-            .first<{
-              id: number;
-              name: string;
-              method_text: string;
-              result_html: string;
-              parent_id: number;
-              parent_statement_html: string;
-            }>();
-          if (!maneuver) return json({ error: "no such maneuver" }, 404);
-
-          const wanted = Math.max(1, Math.min(10, Number(body.requested_drill_count) || 3));
-
-          // What this step has already been drilled with, so a second press
-          // does not hand back the first press's problems.
-          const { results: already } = await db
-            .prepare(
-              `SELECT statement_html FROM math_practice_problem
-                WHERE the_maneuver_it_was_isolated_from = ?
-                ORDER BY id DESC LIMIT 20`,
-            )
-            .bind(maneuver.id)
-            .all<{ statement_html: string }>();
-
-          const written = await drillOneManeuver(
-            env,
-            maneuver,
-            maneuver.parent_statement_html,
-            wanted,
-            already.map((row) => row.statement_html),
-          );
-          // Empty is a verdict, not a failure: the directive lets the model
-          // refuse a step that carries no skill.
-          if (!written.length) {
-            return json({ error: "this step cannot be drilled on its own" }, 422);
-          }
-
-          const minted: number[] = [];
-          for (const problem of written) {
-            const id = await insertProblem(db, {
-              name: tidy(problem.name, MAX_NAME_LENGTH) || "untitled drill",
-              label: "",
-              statementHtml: problem.statement_html,
-              origin: "isolated_from_one_maneuver",
-              mintedWith: maneuver.name,
-              isolatedFrom: maneuver.id,
-            });
-            // The class and the assignment come down from the problem the step
-            // was taken from, so a drill still counts where its parent counts.
-            await inheritTags(db, maneuver.parent_id, id);
-            minted.push(id);
-          }
-          return json({
-            problem_ids: minted,
-            maneuver_name: maneuver.name,
-          });
-        }
-
-        case "break_into_maneuvers": {
+        case "solve_step_by_step": {
           const problem = await db
             .prepare(
-              `SELECT id, statement_html FROM math_practice_problem WHERE id = ?`,
+              `SELECT id, statement_html, editable_per_problem_instructions_to_llm
+                 FROM math_practice_problem WHERE id = ?`,
             )
             .bind(body.id)
-            .first<{ id: number; statement_html: string }>();
+            .first<{ id: number; statement_html: string; editable_per_problem_instructions_to_llm: string }>();
           if (!problem) return json({ error: "no such problem" }, 404);
 
-          const maneuvers = await breakIntoManeuvers(
+          const { results: previousManeuvers } = await db
+            .prepare(
+              `SELECT name, method_text, result_html FROM maneuver
+                WHERE math_practice_problem_id = ? ORDER BY ordinal`,
+            )
+            .bind(problem.id)
+            .all<{ name: string; method_text: string; result_html: string }>();
+
+          const maneuvers = await solveStepByStep(
             env,
-            problem.statement_html,
-            await mandatesFor(db, problem.id),
+            await systemPromptTextFor(db, "solve_step_by_step"),
+            {
+              statementHtml: problem.statement_html,
+              filedUnder: await tagsWornBy(db, problem.id),
+              editablePerProblemInstructionsToLlm: problem.editable_per_problem_instructions_to_llm,
+              previousManeuvers,
+            },
           );
           if (!maneuvers.length) return json({ error: "model returned no maneuvers" }, 502);
 
-          // Re-breaking replaces the table rather than appending to it, so the
-          // action is safe to repeat after a mandate is added.
+          // Re-solving replaces the table rather than appending to it, so the
+          // action is safe to repeat after the instructions change.
           await db
             .prepare(`DELETE FROM maneuver WHERE math_practice_problem_id = ?`)
             .bind(problem.id)
@@ -476,7 +432,7 @@ export default {
           await db
             .prepare(
               `UPDATE math_practice_problem
-                  SET broken_into_maneuvers_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+                  SET last_solved_by_llm_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
                 WHERE id = ?`,
             )
             .bind(problem.id)
@@ -498,6 +454,38 @@ export default {
             .bind(body.id)
             .all();
           return json({ maneuvers: results });
+        }
+
+        // ---- the instructions ----------------------------------------------
+        case "list_editable_per_job_instructions_to_llm": {
+          return json({ instructions: await editablePerJobInstructionsToLlmInForce(db) });
+        }
+
+        case "save_editable_per_job_instructions_to_llm": {
+          if (!isLlmJob(body.llm_job)) {
+            return json({ error: `no such job: ${String(body.llm_job)}` }, 400);
+          }
+          const text = String(body.system_prompt_text ?? "");
+          // Empty would send the model out with nothing to go on, and nothing
+          // about that is ever what was meant.
+          if (!text.trim()) return json({ error: "instructions cannot be empty" }, 400);
+          return json({
+            saved: await saveEditablePerJobInstructionsToLlm(db, body.llm_job, text),
+          });
+        }
+
+        // Written at the answers page, where the route the model took is in
+        // front of you. Saved on its own, like the why-it-went-wrong line: the
+        // solve reads it back from the row, so a re-solve from anywhere later
+        // still goes the way it says.
+        case "set_editable_per_problem_instructions_to_llm": {
+          await db
+            .prepare(
+              `UPDATE math_practice_problem SET editable_per_problem_instructions_to_llm = ? WHERE id = ?`,
+            )
+            .bind(String(body.editable_per_problem_instructions_to_llm ?? "").trim().slice(0, 4000), body.id)
+            .run();
+          return json({ ok: true });
         }
 
         // ---- filing --------------------------------------------------------
@@ -570,7 +558,7 @@ export default {
           const { results: found } = await db
             .prepare(
               `SELECT id, name, textbook_problem_number_label, statement_html,
-                      broken_into_maneuvers_at
+                      last_solved_by_llm_at
                  FROM math_practice_problem WHERE id IN (${placeholders})`,
             )
             .bind(...ids)
@@ -663,7 +651,8 @@ export default {
                       a.count_of_maneuvers_got, a.count_of_maneuvers_faced,
                       a.why_this_one_went_wrong,
                       p.id AS problem_id, p.name, p.textbook_problem_number_label,
-                      p.statement_html, p.broken_into_maneuvers_at
+                      p.statement_html, p.last_solved_by_llm_at,
+                      p.editable_per_problem_instructions_to_llm
                  FROM problem_attempt a
                  JOIN math_practice_problem p ON p.id = a.math_practice_problem_id
                 WHERE a.practice_run_id = ?
@@ -675,8 +664,8 @@ export default {
           const { results: maneuvers } = await db
             .prepare(
               // Matched with IN rather than a join: the same problem can be
-              // worked twice in one run -- deliberately, to drill it -- and a
-              // join would hand back its table once per attempt.
+              // worked twice in one run, and a join would hand back its table
+              // once per attempt.
               `SELECT m.id, m.math_practice_problem_id, m.ordinal, m.name,
                       m.method_text, m.result_html
                  FROM maneuver m
@@ -844,7 +833,7 @@ async function rollUpOutcome(
   const outcome = marked === 0 ? null : got === 0 ? "wrong" : got >= total ? "right" : "partial";
 
   // The fraction is written here because here is where it is already counted.
-  // Stored rather than recomputed later: re-breaking a problem replaces its
+  // Stored rather than recomputed later: re-solving a problem replaces its
   // maneuver table, and a denominator read off the new one would restate work
   // already graded against the old.
   await db
@@ -877,7 +866,6 @@ async function insertProblem(
     origin: string;
     mintedWith: string;
     variedFrom?: number | null;
-    isolatedFrom?: number | null;
   },
 ): Promise<number> {
   const inserted = await db
@@ -885,8 +873,8 @@ async function insertProblem(
       `INSERT INTO math_practice_problem
          (name, textbook_problem_number_label, statement_html,
           how_this_problem_came_to_be, text_that_minted_this_problem,
-          parent_problem_varied_from, the_maneuver_it_was_isolated_from)
-       VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING id`,
+          parent_problem_varied_from)
+       VALUES (?, ?, ?, ?, ?, ?) RETURNING id`,
     )
     .bind(
       problem.name,
@@ -895,7 +883,6 @@ async function insertProblem(
       problem.origin,
       problem.mintedWith,
       problem.variedFrom ?? null,
-      problem.isolatedFrom ?? null,
     )
     .first<{ id: number }>();
 
@@ -904,6 +891,56 @@ async function insertProblem(
   // homework problem is still findable under 6801.
   if (problem.variedFrom) await inheritTags(db, problem.variedFrom, id);
   return id;
+}
+
+/**
+ * Every problem still in play, with what it is filed under, as reference for
+ * free generate. Archived ones stay out: archiving is saying a problem is done
+ * with, and a request should not be steered by it.
+ */
+async function bankForReference(db: D1Database): Promise<
+  {
+    name: string;
+    label: string | null;
+    filedUnder: { field: string; name: string }[];
+    statementHtml: string;
+  }[]
+> {
+  const { results: problems } = await db
+    .prepare(
+      `SELECT id, name, textbook_problem_number_label, statement_html
+         FROM math_practice_problem
+        WHERE archived_at IS NULL
+        ORDER BY id`,
+    )
+    .all<{
+      id: number;
+      name: string;
+      textbook_problem_number_label: string | null;
+      statement_html: string;
+    }>();
+  const { results: tags } = await db
+    .prepare(
+      `SELECT m.math_practice_problem_id AS problem_id, t.field, t.name
+         FROM study_context_tag_membership m
+         JOIN study_context_tag t ON t.id = m.study_context_tag_id
+        ORDER BY t.field, t.name`,
+    )
+    .all<{ problem_id: number; field: string; name: string }>();
+
+  const tagsByProblem = new Map<number, { field: string; name: string }[]>();
+  for (const tag of tags) {
+    const list = tagsByProblem.get(tag.problem_id) ?? [];
+    list.push({ field: tag.field, name: tag.name });
+    tagsByProblem.set(tag.problem_id, list);
+  }
+
+  return problems.map((p) => ({
+    name: p.name,
+    label: p.textbook_problem_number_label,
+    filedUnder: tagsByProblem.get(p.id) ?? [],
+    statementHtml: p.statement_html,
+  }));
 }
 
 async function saveScreenshots(

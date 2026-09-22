@@ -17,218 +17,46 @@ export const CURRENT_AUTHORING_MODEL_ID = "claude-opus-5";
 // being wrong about the maths.
 const MODEL_REASONING_EFFORT = "high";
 
-// Shared by everything that emits a problem statement or a result cell.
-const MARKUP_RULES = [
-  "Emit HTML. Keep the markup minimal: p, br, ul, ol, li, sup, sub, em, strong.",
-  "Do not emit script, style, iframe, form, or any attributes.",
-  "",
-  "Write all mathematics as LaTeX inside $...$ for inline and $$...$$ for",
-  "display. Do not use Unicode math symbols or plain-text notation like x^2.",
-].join("\n");
-
-const NAME_RULE = [
-  "Give each problem a short name: two to six words naming what it asks,",
-  'lowercase, no trailing punctuation. "find the pdf of Y = X cubed", never',
-  '"problem 2.1(a)" and never a restatement of the whole question.',
-].join("\n");
-
-/**
- * Reading problems off a screenshot.
- *
- * The splitting rule is the load-bearing part. A lettered question is several
- * problems, and each has to survive being served on its own weeks later with
- * the rest of the page nowhere in sight -- so the shared stem is folded in
- * rather than referred back to.
- */
-const TRANSCRIPTION_DIRECTIVE = [
-  "You read math problems off a screenshot.",
-  "",
-  "Split what you see into atomic problems. The unit is the lettered part:",
-  "a question with parts (a), (b), (c) is three problems, not one and not four.",
-  "",
-  "A stem with lettered parts is never itself a problem. Return the parts and",
-  "only the parts -- never the stem as a problem of its own alongside them.",
-  "A question with no lettered parts is one problem.",
-  "",
-  "Before you write anything, find every lettered part on the screenshot and",
-  "count them. That count is how many problems you return. Do not merge two",
-  "parts because they are short, related, or share a method, and do not split",
-  "a single part into several because it asks for more than one quantity.",
-  "",
-  "Every problem you return must be workable with nothing else in view. Where",
-  "the page states something once and the parts rely on it -- a shared setup, a",
-  "shared instruction, a distribution given at the top -- fold it into each part",
-  'that needs it, in full. Never write "as in part (a)" or "from the stem above"',
-  "or anything else that points outside the problem you are writing.",
-  "",
-  "Give each problem the number the page gives it, exactly as printed, down to",
-  'the letter: "2.1(a)", never the bare "2.1" when the page letters it. Where',
-  'the page numbers a question and nothing else -- "2.4", "1.55" -- use that.',
-  "If nothing on the page numbers it, leave it empty.",
-  "",
-  NAME_RULE,
-  "",
-  "Transcribe faithfully. Do not correct, simplify, restate or improve the",
-  "mathematics, and do not solve anything. Statements only.",
-  "",
-  MARKUP_RULES,
-].join("\n");
-
-/** Writing fresh problems to a typed prompt, with no screenshot to work from. */
-const BUILD_TO_ORDER_DIRECTIVE = [
-  "You write math practice problems.",
-  "",
-  "Return exactly the requested number of problems. Each is a self-contained",
-  "statement that can be worked with nothing else in view.",
-  "",
-  NAME_RULE,
-  "",
-  "Vary them: change the numbers, the setup and the wording, and vary the",
-  "structure wherever the skill allows it. Do not return one problem several",
-  "times over with the numbers changed unless the skill genuinely admits",
-  "nothing else.",
-  "",
-  "Do not solve anything. Statements only.",
-  "",
-  MARKUP_RULES,
-].join("\n");
-
-/**
- * Writing problems that drill one maneuver on its own.
- *
- * The hard part, and the reason this is its own directive: a maneuver is not a
- * problem. "Convert the limits" means nothing without a substitution to convert
- * them in, and "add the two halves" is arithmetic. So the instruction cannot be
- * "write problems that do this step" -- it has to be "build the smallest
- * problem in which this step is the whole task", inventing just enough setup to
- * make it bite.
- *
- * It is also allowed to return nothing. Some steps -- restating an answer,
- * adding two numbers already found -- carry no skill, and three weak problems
- * would be worse than saying so.
- */
-const DRILL_DIRECTIVE = [
-  "You write practice problems that drill one step of a method, on its own.",
-  "",
-  "You are given one step from a worked problem: what it is called, how it is",
-  "carried out in words, and what it produced. You are also given the problem",
-  "it came from, for calibration only -- do not reproduce it, and do not stay",
-  "on its numbers or its setting.",
-  "",
-  "Write problems whose whole task is that step. Build the smallest problem in",
-  "which the step is the entire job: invent just enough setup for the step to",
-  "be asked, and stop there. The reader should be able to finish in one move,",
-  "or two where the step genuinely takes two.",
-  "",
-  "Do not require the steps that came before it, beyond what the statement",
-  "itself supplies -- hand the reader the state the step begins from. Do not",
-  "ask for the steps that come after it.",
-  "",
-  "Drill the skill, not the instance. Change the setting, the function, the",
-  "distribution and the structure between problems; changing only the numbers",
-  "is not variation. Each problem must be workable with nothing else in view.",
-  "",
-  NAME_RULE,
-  "",
-  "Some steps cannot be drilled on their own. A step that only restates a",
-  "result, adds two quantities already found, or names an answer carries no",
-  "skill to practise. If this is such a step, return no problems at all.",
-  "Returning nothing is the right answer there; padding it is not.",
-  "",
-  "Do not solve anything. Statements only.",
-  "",
-  MARKUP_RULES,
-].join("\n");
-
-/**
- * Breaking a problem into the table Mike grades himself against.
- *
- * Two constraints carry the whole idea. A maneuver must produce something, or
- * the table stops being a ladder of results and becomes prose with cells drawn
- * round it -- the database enforces this too. And the method column must be
- * free of mathematics, because that column is what the problem page can show as
- * help without handing over the answer.
- */
-const BREAK_INTO_MANEUVERS_DIRECTIVE = [
-  "You break a worked math problem into maneuvers.",
-  "",
-  "A maneuver is one step that produces something. Return them in the order",
-  "they are carried out. The last maneuver is the final answer.",
-  "",
-  "Each maneuver has three parts. These are the field names to return them",
-  "under, spelled exactly as written here:",
-  "",
-  '  name         what the step is, as an imperative: "find the support",',
-  '               "calculate the rejection region". Two to six words.',
-  "  method_text  how to arrive at it, in plain English. No mathematics, no",
-  "               symbols, no formulae, no variable names -- describe the move",
-  "               in words a reader could follow before picking up a pen.",
-  "  result_html  the value or expression the step produces.",
-  "",
-  "A step with nothing to put in `result_html` is not a maneuver. Do not return",
-  'narration, orientation, or "now we consider the other case" -- if it does not',
-  "produce a value or an expression, fold it into the `method_text` of the step",
-  "it belongs to.",
-  "",
-  "Work the problem and check it before you write any of this down. For an",
-  "indefinite integral, differentiate your antiderivative and confirm it returns",
-  "the integrand. For a definite integral, confirm the antiderivative the same",
-  "way, then re-evaluate it at both bounds and recheck the subtraction. Verify a",
-  "substitution by back-substituting to the original variable, and confirm the",
-  "transformed limits wherever the bounds changed. For an equation, substitute",
-  "the solution back into the original and confirm it holds. For a density,",
-  "confirm it is nonnegative and integrates to one over its support.",
-  "",
-  "Sanity-check the result against the problem: the sign, the magnitude, the",
-  "domain (nothing divided by zero, no logarithm of a nonpositive quantity, no",
-  "root of a negative where the problem is real-valued), and the constant of",
-  "integration wherever one belongs. If a check fails, redo the work -- do not",
-  "emit an answer you have already found to be wrong.",
-  "",
-  "That checking is yours to do before you answer. It does not become maneuvers",
-  "of its own unless the problem actually asks for the check, in which case it",
-  "is part of the method like any other step.",
-  "",
-  "`name` and `method_text` are plain text, not HTML, and carry no mathematics.",
-  "`result_html` is HTML: minimal markup (sup, sub, em, strong) with all",
-  "mathematics as LaTeX inside $...$. No Unicode math symbols, no plain-text",
-  "notation.",
-].join("\n");
+// The words each call is given live in the database, where Mike edits them --
+// see editable-per-job-instructions-to-llm.ts. What stays here is the shape of what comes back,
+// which the page is built on and structured output enforces: field names,
+// types, and the few facts the code itself leans on. A description that says
+// how something should be written, rather than what it is, belongs in the
+// instructions, where it can be changed without a deploy.
 
 const STATEMENT_ITEM_SCHEMA = z.object({
-  name: z.string().describe("Two to six lowercase words naming what the problem asks."),
+  name: z.string().describe("A short name for the problem."),
   statement_html: z
     .string()
-    .describe("The problem statement, as HTML with $...$ math. Self-contained."),
+    .describe("The problem statement, as HTML with mathematics as LaTeX in $...$."),
 });
 
 const TRANSCRIBED_ITEM_SCHEMA = STATEMENT_ITEM_SCHEMA.extend({
   textbook_problem_number_label: z
     .string()
-    .describe('The number the page gives it, e.g. "2.1(a)". Empty if unnumbered.'),
+    .describe("The number the page gives it. Empty if unnumbered."),
 });
 
 const TRANSCRIPTION_SCHEMA = z.object({
-  problems: z
-    .array(TRANSCRIBED_ITEM_SCHEMA)
-    .describe("One entry per atomic problem, in the order they appear on the page."),
+  problems: z.array(TRANSCRIBED_ITEM_SCHEMA).describe("In the order they appear on the page."),
 });
 
 const BUILD_TO_ORDER_SCHEMA = z.object({
-  problems: z.array(STATEMENT_ITEM_SCHEMA).describe("The problems, in the order to work them."),
+  problems: z.array(STATEMENT_ITEM_SCHEMA).describe("In the order to work them."),
 });
 
+// "The last one is the final answer" stays here because the code depends on
+// it: the answers page shows the last result as the answer, and getting the
+// last row is getting the whole problem.
 const MANEUVER_SCHEMA = z.object({
   maneuvers: z
     .array(
       z.object({
-        name: z.string().describe("Imperative, two to six words. Plain text."),
-        method_text: z
-          .string()
-          .describe("Plain English, no mathematics or symbols whatsoever."),
+        name: z.string().describe("What the step is."),
+        method_text: z.string().describe("How to arrive at it."),
         result_html: z
           .string()
-          .describe("The value or expression produced, as HTML with $...$ math. Never empty."),
+          .describe("What the step produces, as HTML with mathematics as LaTeX in $...$."),
       }),
     )
     .describe("In order. The last one is the final answer."),
@@ -245,7 +73,7 @@ export interface BuiltProblem {
   statement_html: string;
 }
 
-export interface BrokenManeuver {
+export interface SolvedManeuver {
   name: string;
   method_text: string;
   result_html: string;
@@ -274,7 +102,7 @@ const anthropicFor = (env: Env, effort: string | null = MODEL_REASONING_EFFORT) 
         //
         // `generateObject` asks for the object as a forced tool call, and a
         // forced tool call turns thinking off on Opus 5 -- measured, not
-        // assumed: the same break returns `thinking_tokens: 0` as a tool call
+        // assumed: the same solve returns `thinking_tokens: 0` as a tool call
         // and ~350 as structured output. Tables written with no reasoning are
         // exactly the failure described above the effort constant. Asking the
         // provider for json mode is not an option; it throws
@@ -352,34 +180,25 @@ const anthropicFor = (env: Env, effort: string | null = MODEL_REASONING_EFFORT) 
  * One screenshot per call: the route fans a paste out rather than handing the
  * whole page over at once, because a call that sees one question is the one
  * that reliably enumerates its lettered parts.
- *
- * Statements only, so this stays a vision-and-transcription job rather than a
- * solving one -- which is what lets a pasted screenshot become practisable in
- * one wait instead of one wait per problem.
  */
 export async function transcribeFromScreenshot(
   env: Env,
+  instructions: string,
   shots: { base64: string; mimeType: string }[],
   note: string,
 ): Promise<TranscribedProblem[]> {
   const { object } = await generateObject({
     model: anthropicFor(env)(CURRENT_AUTHORING_MODEL_ID),
     // Statements are cheap next to worked solutions, but a dense page of parts
-    // still runs long, and reasoning comes out of this same cap -- which it now
-    // genuinely does, so the cap was doubled when thinking was turned back on.
+    // still runs long, and reasoning comes out of this same cap.
     maxTokens: 16000,
     schema: TRANSCRIPTION_SCHEMA,
-    system: TRANSCRIPTION_DIRECTIVE,
+    system: instructions,
     messages: [
       {
         role: "user",
         content: [
-          {
-            type: "text" as const,
-            text: note.trim()
-              ? `${note.trim()}\n\nRead every problem off the attached screenshot.`
-              : "Read every problem off the attached screenshot.",
-          },
+          ...(note.trim() ? [{ type: "text" as const, text: note.trim() }] : []),
           ...shots.map((shot) => ({
             type: "image" as const,
             image: shot.base64,
@@ -392,27 +211,56 @@ export async function transcribeFromScreenshot(
   return object.problems;
 }
 
-/** Write fresh problems to a typed prompt. */
+/**
+ * Find or invent problems to a typed request. How many is the request's to
+ * say, or the instructions' where it does not.
+ *
+ * The bank goes with it, so a request can lean on what is already there --
+ * "like 2.3(a) but discrete" has to be able to find 2.3(a). Reference material
+ * first and the request last, which is the order a long prompt is read best in.
+ */
 export async function buildToOrderFromPrompt(
   env: Env,
+  instructions: string,
   promptText: string,
-  requestedCount: number,
+  bank: {
+    name: string;
+    label: string | null;
+    filedUnder: { field: string; name: string }[];
+    statementHtml: string;
+  }[],
   problemsNotToRepeatHtml: string[] = [],
 ): Promise<BuiltProblem[]> {
-  // What this prompt has already handed out. A record of what has been
-  // practised, not samples to steer by -- without it the model drifts back to
-  // the same few problems every time it is asked.
+  const attr = (value: string) => value.replace(/"/g, "&quot;");
+  const bankBlock = bank.length
+    ? [
+        "The problem bank, for reference:",
+        "",
+        "<bank>",
+        ...bank.map((p) => {
+          const attrs = [
+            `name="${attr(p.name)}"`,
+            ...(p.label ? [`number="${attr(p.label)}"`] : []),
+            ...p.filedUnder.map((t) => `${t.field}="${attr(t.name)}"`),
+          ].join(" ");
+          return `<problem ${attrs}>\n${p.statementHtml}\n</problem>`;
+        }),
+        "</bank>",
+        "",
+        "",
+      ].join("\n")
+    : "";
+
+  // What this same request has already handed out. Without it the model
+  // drifts back to the same few problems every time it is asked. What to do
+  // with them is the instructions' business; this only labels them.
   const history = problemsNotToRepeatHtml.length
     ? [
-        "",
-        "",
-        "These problems have already been given for this prompt. They say what",
-        "not to repeat; the prompt above alone sets the subject and difficulty.",
+        "Already written for this request:",
         "",
         ...problemsNotToRepeatHtml.map((html, idx) => `${idx + 1}. ${html}`),
         "",
-        "Do not restate any of them verbatim. If the skill admits so few forms",
-        "that only the numbers can change, change the numbers.",
+        "",
       ].join("\n")
     : "";
 
@@ -420,116 +268,69 @@ export async function buildToOrderFromPrompt(
     model: anthropicFor(env)(CURRENT_AUTHORING_MODEL_ID),
     maxTokens: 16000,
     schema: BUILD_TO_ORDER_SCHEMA,
-    system: BUILD_TO_ORDER_DIRECTIVE,
+    system: instructions,
     messages: [
-      {
-        role: "user",
-        content: `${promptText.trim() || "(no prompt)"}${history}\n\nWrite exactly ${requestedCount} problems.`,
-      },
+      { role: "user", content: `${bankBlock}${history}The request:\n\n${promptText.trim()}` },
     ],
   });
   return object.problems;
 }
 
 /**
- * Problems that isolate one maneuver.
- *
- * May come back empty on purpose -- see the directive. The caller turns that
- * into a plain "nothing to drill here" rather than an error.
- */
-export async function drillOneManeuver(
-  env: Env,
-  maneuver: { name: string; method_text: string; result_html: string },
-  parentStatementHtml: string,
-  requestedCount: number,
-  problemsNotToRepeatHtml: string[] = [],
-): Promise<BuiltProblem[]> {
-  const history = problemsNotToRepeatHtml.length
-    ? [
-        "",
-        "",
-        "These drills have already been given for this step. They say what not",
-        "to repeat; the step above alone sets the skill.",
-        "",
-        ...problemsNotToRepeatHtml.map((html, idx) => `${idx + 1}. ${html}`),
-      ].join("\n")
-    : "";
+ * Solve one problem and lay the solution out as its maneuver table.
 
-  const { object } = await generateObject({
-    model: anthropicFor(env)(CURRENT_AUTHORING_MODEL_ID),
-    maxTokens: 16000,
-    schema: BUILD_TO_ORDER_SCHEMA,
-    system: DRILL_DIRECTIVE,
-    messages: [
-      {
-        role: "user",
-        content: [
-          `The step to drill.`,
-          ``,
-          `  name    ${maneuver.name}`,
-          `  method  ${maneuver.method_text}`,
-          `  result  ${maneuver.result_html}`,
-          ``,
-          `The problem it came from, for calibration only:`,
-          ``,
-          parentStatementHtml,
-          history,
-          ``,
-          `Write ${requestedCount} problems that drill this step, or none if it`,
-          `cannot be drilled on its own.`,
-        ].join("\n"),
-      },
-    ],
-  });
-  return object.problems;
-}
-
-/**
- * Break one problem into its maneuver table.
  *
  * One problem per call, which is what removes the old token-budget guesswork:
- * a whole set used to share a single 16k cap and truncate mid-solution, needing
- * a hand-written salvage scanner to keep the problems that had finished. One
+ * a whole set used to share a single 16k cap and truncate mid-solution. One
  * problem never comes close.
+ *
+ * The problem goes out with what it is filed under and whatever was written
+ * for it alone, labelled and nothing more. A convention scoped to a class is a
+ * sentence in the instructions ("for 6801, ..."), and this is what lets that
+ * sentence find the problems it means.
  */
-export async function breakIntoManeuvers(
+export async function solveStepByStep(
   env: Env,
-  statementHtml: string,
-  mandates: string[],
-): Promise<BrokenManeuver[]> {
-  // Two kinds of convention arrive here and they want opposite handling. One
-  // adds a move to the working -- "evaluate at capital M, then take the limit"
-  // -- and has to surface as its own row or it cannot be marked missed. The
-  // other only says how a result is written, or declines a step altogether, and
-  // giving that one a row of its own produces exactly the narration the
-  // directive above forbids: a maneuver named "leave the probability
-  // unevaluated", with nothing in `result_html` to put under it.
-  const house = mandates.length
-    ? [
-        "",
-        "",
-        "Standing conventions for this problem. Follow them even where another",
-        "route would be shorter. Where a convention adds a move to the working,",
-        "let it show as the maneuver it is rather than folding it into a",
-        "neighbouring step. Where it only governs how a result is written, or",
-        "says a step need not be carried out, apply it in silence -- it is not a",
-        "maneuver and gets no row of its own:",
-        "",
-        ...mandates.map((rule, idx) => `${idx + 1}. ${rule}`),
-      ].join("\n")
+  instructions: string,
+  problem: {
+    statementHtml: string;
+    filedUnder: { field: string; name: string }[];
+    editablePerProblemInstructionsToLlm: string;
+    // The table being replaced. Sent only alongside words written for this
+    // problem, since that is when there is something to say about it -- "step
+    // 3 is wrong" needs a step 3 -- and otherwise it would only pull the new
+    // solution back toward the old one.
+    previousManeuvers: SolvedManeuver[];
+  },
+): Promise<SolvedManeuver[]> {
+  const filed = problem.filedUnder.length
+    ? `\n\nFiled under: ${problem.filedUnder.map((t) => `${t.field} ${t.name}`).join(", ")}.`
     : "";
+  const ownWords = problem.editablePerProblemInstructionsToLlm.trim();
+  const previous =
+    ownWords && problem.previousManeuvers.length
+      ? [
+          "",
+          "",
+          "The solution this problem had before, which is being redone:",
+          "",
+          ...problem.previousManeuvers.map((m, idx) =>
+            [
+              `${idx + 1}. ${m.name}`,
+              `   method: ${m.method_text}`,
+              `   result: ${m.result_html}`,
+            ].join("\n"),
+          ),
+        ].join("\n")
+      : "";
+  const own = ownWords ? `\n\nInstructions for this problem:\n\n${ownWords}` : "";
 
   const { object } = await generateObject({
     model: anthropicFor(env)(CURRENT_AUTHORING_MODEL_ID),
     maxTokens: 16000,
     schema: MANEUVER_SCHEMA,
-    system: BREAK_INTO_MANEUVERS_DIRECTIVE,
-    messages: [
-      {
-        role: "user",
-        content: `${statementHtml}${house}\n\nBreak this into maneuvers.`,
-      },
-    ],
+    system: instructions,
+    messages: [{ role: "user", content: `${problem.statementHtml}${filed}${previous}${own}` }],
   });
 
   // The database rejects an empty result outright, so a stray narration row

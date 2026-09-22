@@ -1,4 +1,4 @@
-import { breakIntoManeuvers, openPracticeRun, transcribeFromScreenshot } from "../api";
+import { solveEachStepByStep, openPracticeRun, transcribeFromScreenshot } from "../api";
 import { clear, h } from "../lib/dom";
 import type {
   StudyContextTag,
@@ -238,32 +238,18 @@ export function renderAddAssignment(
 
   // ---- reading the assignment off the page ----------------------------------
   //
-  // Breaking is fired per problem and in parallel: the statements are already
+  // Solving is fired per problem and in parallel: the statements are already
   // saved, so a failure here costs a table and not the assignment -- it can be
-  // broken later from the bank.
-  async function breakThemDown(problemIds: number[]): Promise<void> {
-    let done = 0;
-    let failed = 0;
-    const tick = () =>
+  // solved later from the bank.
+  async function solveThem(problemIds: number[]): Promise<void> {
+    const n = problemIds.length;
+    const plural = n === 1 ? "" : "s";
+    const { failed } = await solveEachStepByStep(problemIds, (done, failedSoFar) =>
       setStatus(
-        `${problemIds.length} problem${problemIds.length === 1 ? "" : "s"} in. ` +
-          `breaking them down (${done}/${problemIds.length})` +
-          (failed ? ` — ${failed} could not be broken` : "") +
+        `${n} problem${plural} in. solving them (${done}/${n})` +
+          (failedSoFar ? ` — ${failedSoFar} could not be solved` : "") +
           "...",
-      );
-    tick();
-
-    await Promise.all(
-      problemIds.map(async (id) => {
-        try {
-          await breakIntoManeuvers(id);
-        } catch {
-          failed += 1;
-        } finally {
-          done += 1;
-          tick();
-        }
-      }),
+      ),
     );
 
     justAdded = problemIds;
@@ -271,8 +257,8 @@ export function renderAddAssignment(
     workEl.disabled = false;
 
     setStatus(
-      `${problemIds.length} problem${problemIds.length === 1 ? "" : "s"} in the bank` +
-        (failed ? `, ${failed} still needing a table` : ", all broken into maneuvers") +
+      `${n} problem${plural} in the bank` +
+        (failed ? `, ${failed} still unsolved` : ", all solved") +
         (unreadableScreenshotCount
           ? ` — ${unreadableScreenshotCount} screenshot` +
             `${unreadableScreenshotCount === 1 ? "" : "s"} unreadable, paste again`
@@ -307,7 +293,7 @@ export function renderAddAssignment(
       screenshots.length = 0;
       renderThumbs();
       unreadableScreenshotCount = read.unreadable_screenshot_count;
-      await breakThemDown(read.problem_ids);
+      await solveThem(read.problem_ids);
     } catch (err) {
       setStatus(err instanceof Error ? err.message : String(err), true);
     } finally {

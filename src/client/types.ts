@@ -2,8 +2,7 @@
 export type HowThisProblemCameToBe =
   | "transcribed_from_a_screenshot_of_record"
   | "built_to_order_from_a_prompt"
-  | "modelled_on_another_problem"
-  | "isolated_from_one_maneuver";
+  | "modelled_on_another_problem";
 
 /** How a problem is served when nothing at launch says otherwise. */
 export type DefaultServiceStyle = "exact" | "variant";
@@ -21,12 +20,14 @@ export interface MathPracticeProblem {
   statement_html: string;
   how_this_problem_came_to_be: HowThisProblemCameToBe;
   parent_problem_varied_from: number | null;
-  the_maneuver_it_was_isolated_from: number | null;
   text_that_minted_this_problem: string;
+  // How this one problem should be solved, in Mike's words. Goes out with it
+  // every time it is solved. Empty when nothing has been said.
+  editable_per_problem_instructions_to_llm: string;
   default_service_style: DefaultServiceStyle;
   // Null until the maneuver table lands. A problem is servable before then;
   // it simply has no answer to reveal yet.
-  broken_into_maneuvers_at: string | null;
+  last_solved_by_llm_at: string | null;
   created_at: string;
   archived_at: string | null;
   study_context_tag_ids: number[];
@@ -40,7 +41,8 @@ export interface Maneuver {
   math_practice_problem_id: number;
   ordinal: number;
   name: string;
-  // Plain English, no mathematics -- which is what lets it be shown as help.
+  // Shown as help with the results covered, so the instructions keep it from
+  // giving the answer away. Rendered like a result, in case they allow maths.
   method_text: string;
   result_html: string;
 }
@@ -67,7 +69,8 @@ export interface AnswerRow {
   name: string;
   textbook_problem_number_label: string | null;
   statement_html: string;
-  broken_into_maneuvers_at: string | null;
+  last_solved_by_llm_at: string | null;
+  editable_per_problem_instructions_to_llm: string;
 }
 
 /** What a run serves: statements only, with no table attached. */
@@ -79,7 +82,7 @@ export interface ServedProblem {
   name: string;
   textbook_problem_number_label: string | null;
   statement_html: string;
-  broken_into_maneuvers_at: string | null;
+  last_solved_by_llm_at: string | null;
 }
 
 export interface Trophy {
@@ -130,9 +133,6 @@ export interface UnsavedScreenshot {
 
 export type View =
   | { name: "bank" }
-  // Opened in a tab of its own from a maneuver's drill button, so the run it
-  // interrupts is still sitting in the tab behind it.
-  | { name: "maneuver_drill"; maneuverId: number }
   | {
       name: "problem";
       runId: number;
@@ -140,3 +140,16 @@ export type View =
       index: number;
     }
   | { name: "answers"; runId: number };
+
+/** The model calls whose words Mike edits. Named after the actions that make them. */
+export type LlmJob =
+  | "transcribe_from_screenshot"
+  | "build_to_order_from_prompt"
+  | "solve_step_by_step";
+
+/** The revision in force for one call. */
+export interface EditablePerJobInstructionsToLlm {
+  llm_job: LlmJob;
+  system_prompt_text: string;
+  created_at: string;
+}

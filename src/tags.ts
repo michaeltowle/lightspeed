@@ -173,22 +173,20 @@ export async function inheritTags(
     .run();
 }
 
-/**
- * The mandates that apply to a problem: those scoped to a tag it wears, plus
- * every unscoped one.
- */
-export async function mandatesFor(db: D1Database, problemId: number): Promise<string[]> {
+/** What one problem is filed under, field and name, for the solve call to read. */
+export async function tagsWornBy(
+  db: D1Database,
+  problemId: number,
+): Promise<{ field: string; name: string }[]> {
   const { results } = await db
     .prepare(
-      `SELECT rule_text FROM professorial_style_mandate m
-        WHERE m.archived_at IS NULL
-          AND (m.study_context_tag_id IS NULL
-               OR m.study_context_tag_id IN
-                  (SELECT study_context_tag_id FROM study_context_tag_membership
-                    WHERE math_practice_problem_id = ?))
-        ORDER BY m.id`,
+      `SELECT t.field, t.name
+         FROM study_context_tag_membership m
+         JOIN study_context_tag t ON t.id = m.study_context_tag_id
+        WHERE m.math_practice_problem_id = ?
+        ORDER BY t.field, t.name`,
     )
     .bind(problemId)
-    .all<{ rule_text: string }>();
-  return results.map((row) => row.rule_text);
+    .all<{ field: string; name: string }>();
+  return results;
 }

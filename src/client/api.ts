@@ -8,6 +8,8 @@ import type {
   ServedProblem,
   StudyContextTag,
   StudyContextTagField,
+  LlmJob,
+  EditablePerJobInstructionsToLlm,
   Trophy,
   UnsavedScreenshot,
 } from "./types";
@@ -63,35 +65,64 @@ export const transcribeFromScreenshot = (
     unsaved_screenshots: wireScreenshots(shots),
   });
 
-export const buildToOrderFromPrompt = (
-  prompt: string,
-  requestedCount: number,
-  tagsByField: Partial<Record<StudyContextTagField, string[]>>,
-) =>
-  post<{ problem_ids: number[] }>({
-    action: "build_to_order_from_prompt",
-    prompt,
-    requested_count: requestedCount,
-    study_context_tags_by_field: tagsByField,
-  });
-
 /**
- * Problems that drill one maneuver on its own, minted and filed under the
- * class and assignment of the problem the step was taken from.
- *
- * A step carrying no skill of its own comes back as an error rather than as
- * padding -- see the directive behind it.
+ * Free generate: find or invent problems to a typed request. The request says
+ * how many, and the bank goes along as reference so it can point at what is
+ * already there.
  */
-export const drillOneManeuver = (maneuverId: number, count: number) =>
-  post<{ problem_ids: number[]; maneuver_name: string }>({
-    action: "drill_one_maneuver",
-    maneuver_id: maneuverId,
-    requested_drill_count: count,
-  });
+export const buildToOrderFromPrompt = (prompt: string) =>
+  post<{ problem_ids: number[] }>({ action: "build_to_order_from_prompt", prompt });
 
 /** One problem's table. Fired per problem so an intake need not wait on them. */
-export const breakIntoManeuvers = (problemId: number) =>
-  post<{ maneuver_count: number }>({ action: "break_into_maneuvers", id: problemId });
+export const solveStepByStep = (problemId: number) =>
+  post<{ maneuver_count: number }>({ action: "solve_step_by_step", id: problemId });
+
+/**
+ * Every problem's table at once, reported as each lands. A failure costs that
+ * problem its table rather than the lot -- the statements are already saved,
+ * and it can be solved again from the bank or the answers page.
+ */
+export async function solveEachStepByStep(
+  problemIds: number[],
+  onProgress: (done: number, failed: number) => void,
+): Promise<{ failed: number }> {
+  let done = 0;
+  let failed = 0;
+  onProgress(done, failed);
+  await Promise.all(
+    problemIds.map(async (id) => {
+      try {
+        await solveStepByStep(id);
+      } catch {
+        failed += 1;
+      } finally {
+        done += 1;
+        onProgress(done, failed);
+      }
+    }),
+  );
+  return { failed };
+}
+
+// ---- the instructions -------------------------------------------------------
+
+export const listEditablePerJobInstructionsToLlm = () =>
+  post<{ instructions: EditablePerJobInstructionsToLlm[] }>({ action: "list_editable_per_job_instructions_to_llm" });
+
+export const saveEditablePerJobInstructionsToLlm = (call: LlmJob, text: string) =>
+  post<{ saved: EditablePerJobInstructionsToLlm }>({
+    action: "save_editable_per_job_instructions_to_llm",
+    llm_job: call,
+    system_prompt_text: text,
+  });
+
+/** Read back by every later solve of this problem, from wherever it is fired. */
+export const setEditablePerProblemInstructionsToLlm = (problemId: number, text: string) =>
+  post<{ ok: true }>({
+    action: "set_editable_per_problem_instructions_to_llm",
+    id: problemId,
+    editable_per_problem_instructions_to_llm: text,
+  });
 
 // ---- filing -----------------------------------------------------------------
 

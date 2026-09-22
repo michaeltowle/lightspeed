@@ -180,7 +180,7 @@ export function indexPageDocument(env: Env): string {
 
   /* A problem with no maneuver table yet is servable but has no answer to
      reveal, so the bank says so rather than letting it surprise you at the end. */
-  .awaiting-break { opacity: 0.5; font-size: 0.7rem; }
+  .awaiting-solve { opacity: 0.5; font-size: 0.7rem; }
 
   /* Time away from a problem is the thing worth noticing on this page, so it is
      marked on the row itself rather than left to be worked out from a date.
@@ -467,11 +467,39 @@ ${chipColorPaletteCss}
   /* One line at rest, growing as it is written into. Full width, because it is
      a sentence and wrapping it into a column would make it harder to read back
      than it was to type. */
-  .why-it-went-wrong-box {
+  .why-it-went-wrong-box, .editable-per-problem-instructions-to-llm-box {
     width: 100%; margin-top: 0.5rem; padding: 0.35rem 0.5rem;
     font: inherit; font-size: 0.8rem; color: inherit; resize: vertical;
     border: 1px solid rgba(128,128,128,0.35); border-radius: 6px;
     background: rgba(127,127,127,0.04);
+  }
+  /* Instructions to the model, so it wears a dashed edge -- a different kind
+     of writing from the why box above it. */
+  .editable-per-problem-instructions-to-llm-box { border-style: dashed; }
+
+  /* Free generate is one box, so it can afford to be a generous one. */
+  .free-generate-prompt { margin: 1rem 0 0.5rem; font-size: 0.95rem; }
+
+  /* The instructions, one box per call. Monospace and unwrapped by the page's
+     own width, because these are edited a phrase at a time and the eye needs
+     to find its place again after every change. */
+  .editable-per-job-instructions-to-llm-section { margin: 1.5rem 0 2rem; }
+  .editable-per-job-instructions-to-llm-section h2 { font-size: 1rem; margin: 0 0 0.25rem; }
+  .editable-per-job-instructions-to-llm-box {
+    min-height: 22rem; margin: 0.5rem 0;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 0.8rem; line-height: 1.5;
+  }
+  .editable-per-job-instructions-to-llm-state { font-size: 0.75rem; opacity: 0.6; }
+  .editable-per-job-instructions-to-llm-state.is-dirty { opacity: 1; color: #b06a2c; }
+  .editable-per-job-instructions-to-llm-narrow-note { display: none; }
+
+  /* Writing instructions to the model is authoring, and authoring is not done
+     on the phone: a cramped editor is worse than none. Below this width the
+     boxes go and the page says why. */
+  @media (max-width: 46rem) {
+    .editable-per-job-instructions-to-llm-editor, .editable-per-problem-instructions-to-llm-box { display: none; }
+    .editable-per-job-instructions-to-llm-narrow-note { display: block; }
   }
 
   .lightspeed-motto-line {
@@ -539,8 +567,10 @@ ${chipColorPaletteCss}
   }
   /* Grading is what the cells are for on the answers page; on the problem page
      they are only there to be revealed, so the affordance is withdrawn. */
-  .maneuver-table.is-help .maneuver-result { cursor: default; }
-  .maneuver-table.is-help .maneuver-result:hover { background: none; }
+  .maneuver-table.is-help .maneuver-result,
+  .maneuver-table.is-view .maneuver-result { cursor: default; }
+  .maneuver-table.is-help .maneuver-result:hover,
+  .maneuver-table.is-view .maneuver-result:hover { background: none; }
 
   /* Help on the problem page: the method is readable, every result is not,
      and each can be uncovered on its own so one step can be checked without
@@ -566,8 +596,6 @@ ${chipColorPaletteCss}
     opacity: 1; background: rgba(127,127,127,0.16);
     border-color: rgba(128,128,128,0.75);
   }
-  /* Drill leaves the page, so it reads as the quieter of the two. */
-  .maneuver-drill { border-style: dashed; }
 
   #out {
     margin-top: 1rem; padding: 0.75rem; border-radius: 6px; min-height: 1rem;

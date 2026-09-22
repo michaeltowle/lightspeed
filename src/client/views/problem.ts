@@ -39,12 +39,12 @@ export function renderProblem(
     "button",
     {
       type: "button",
-      disabled: !problem.broken_into_maneuvers_at,
-      title: problem.broken_into_maneuvers_at
+      disabled: !problem.last_solved_by_llm_at,
+      title: problem.last_solved_by_llm_at
         ? "show the method, with every result covered"
-        : "this problem has not been broken into maneuvers yet",
+        : "this problem has not been solved yet",
     },
-    [problem.broken_into_maneuvers_at ? "help" : "no table yet"],
+    [problem.last_solved_by_llm_at ? "help" : "no table yet"],
   );
 
   helpEl.addEventListener("click", async () => {
@@ -53,7 +53,7 @@ export function renderProblem(
     try {
       const { maneuvers } = await peekAtManeuvers(problem.id);
       helpPanelEl.replaceChildren(
-        renderManeuverTable(maneuvers, { mode: "help", onDrill: openDrillTab }),
+        renderManeuverTable(maneuvers, { mode: "help" }),
       );
     } catch (err) {
       statusEl.textContent = err instanceof Error ? err.message : String(err);
@@ -61,15 +61,6 @@ export function renderProblem(
       helpEl.disabled = false;
     }
   });
-
-  /**
-   * The step, drilled in a tab of its own. A new tab rather than a navigation
-   * on purpose: the run stays exactly where it is, so dropping down to
-   * practise a move costs nothing but the tab switch back.
-   */
-  function openDrillTab(maneuver: { id: number }): void {
-    window.open(`/?drill=${maneuver.id}`, "_blank", "noopener");
-  }
 
   // How the working felt, said before moving on. Beside the clock and not
   // instead of it: elapsed_ms knows how long it took, which is a different fact

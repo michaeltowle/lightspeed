@@ -31,10 +31,9 @@ export function renderManeuverTable(
     mode: "grade" | "help";
     creditOf?: (maneuver: Maneuver) => ManeuverCredit;
     onCycle?: (maneuver: Maneuver, next: ManeuverCredit) => void | Promise<void>;
-    onDrill?: (maneuver: Maneuver) => void;
   },
 ): HTMLElement {
-  const { mode, creditOf, onCycle, onDrill } = options;
+  const { mode, creditOf, onCycle } = options;
 
   // One click can change the credit on rows nobody clicked -- getting the last
   // maneuver is getting the whole problem -- and a click that fails to save
@@ -49,26 +48,8 @@ export function renderManeuverTable(
 
     const resultCell = h("td", { class: "maneuver-result" });
     // The result lives in a span of its own so that repainting it -- or
-    // uncovering it -- cannot take the buttons beside it with it.
+    // uncovering it -- cannot take the button beside it with it.
     const valueEl = h("span", { class: "maneuver-result-value" });
-
-    // Both live beside the result rather than out by the name: seeing the
-    // answer and going to practise it are the two things this cell offers.
-    const drillEl = onDrill
-      ? h(
-          "button",
-          {
-            type: "button",
-            class: "maneuver-drill",
-            title: "drill this maneuver in a new tab",
-            onclick: (event: Event) => {
-              event.stopPropagation();
-              onDrill(maneuver);
-            },
-          },
-          ["drill"],
-        )
-      : null;
 
     const paintResult = () => {
       resultCell.className = creditClass(creditOf?.(maneuver) ?? "unmarked");
@@ -78,24 +59,24 @@ export function renderManeuverTable(
     if (mode === "grade") {
       paints.push(paintResult);
       paintResult();
-      resultCell.append(
-        valueEl,
-        ...(drillEl ? [h("span", { class: "maneuver-result-controls" }, [drillEl])] : []),
-      );
-      resultCell.addEventListener("click", () => {
-        const next = nextCredit(creditOf?.(maneuver) ?? "unmarked");
-        // Painted twice: once on the credit the handler sets straight away, so
-        // the click lands under the finger, and again once the worker has had
-        // its say, so what is on screen is what was saved.
-        void Promise.resolve(onCycle?.(maneuver, next)).then(repaint, repaint);
-        repaint();
-      });
-      resultCell.setAttribute("title", "click to cycle: got it, missed it, unmarked");
+      resultCell.append(valueEl);
+      // Without a handler the table is only being looked at -- the bank shows
+      // a solution this way -- so a click has nothing to cycle.
+      if (onCycle) {
+        resultCell.addEventListener("click", () => {
+          const next = nextCredit(creditOf?.(maneuver) ?? "unmarked");
+          // Painted twice: once on the credit the handler sets straight away,
+          // so the click lands under the finger, and again once the worker has
+          // had its say, so what is on screen is what was saved.
+          void Promise.resolve(onCycle(maneuver, next)).then(repaint, repaint);
+          repaint();
+        });
+        resultCell.setAttribute("title", "click to cycle: got it, missed it, unmarked");
+      }
     } else {
       // Covered until asked for. The result is already on the page, so
       // uncovering is instant -- but nothing was fetched until help was pressed.
-      // Revealing retires its own button and leaves drill standing: having seen
-      // the step is usually the moment you decide you want practice at it.
+      // Revealing retires its own button.
       const reveal = h("button", { type: "button" }, ["reveal"]);
       reveal.addEventListener("click", (event) => {
         event.stopPropagation();
@@ -104,22 +85,23 @@ export function renderManeuverTable(
       });
       resultCell.append(
         valueEl,
-        h("span", { class: "maneuver-result-controls" }, [
-          reveal,
-          ...(drillEl ? [drillEl] : []),
-        ]),
+        h("span", { class: "maneuver-result-controls" }, [reveal]),
       );
     }
 
-    row.append(
-      h("td", { class: "maneuver-name" }, [maneuver.name]),
-      h("td", { class: "maneuver-method" }, [maneuver.method_text]),
-      resultCell,
-    );
+    // The method goes through the same renderer as the result. Whether it may
+    // carry mathematics is the instructions' call, not the table's: plain
+    // prose comes through unchanged, and maths renders if they allow it.
+    const methodCell = h("td", { class: "maneuver-method" });
+    renderMathHtml(methodCell, maneuver.method_text);
+
+    row.append(h("td", { class: "maneuver-name" }, [maneuver.name]), methodCell, resultCell);
     return row;
   }));
 
-  return h("table", { class: mode === "help" ? "maneuver-table is-help" : "maneuver-table" }, [
+  const tableClass =
+    mode === "help" ? "maneuver-table is-help" : onCycle ? "maneuver-table" : "maneuver-table is-view";
+  return h("table", { class: tableClass }, [
     h("thead", {}, [
       h("tr", {}, [
         h("th", {}, ["maneuver"]),
