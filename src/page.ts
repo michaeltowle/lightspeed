@@ -20,7 +20,14 @@ export function indexPageDocument(env: Env): string {
 <link rel="apple-touch-icon" sizes="180x180" href="/?asset=favicon180" />
 <style>${KATEX_CSS}</style>
 <style>
-  :root { color-scheme: light dark; }
+  :root {
+    color-scheme: light dark;
+    /* The two panels that float in the bottom-right corner, stacked one above
+       the other. They are read as one thing, so they are sized as one thing --
+       separate widths, one fixed and one shrink-wrapped to its longest branch
+       name, drifted apart by whatever the text happened to be. */
+    --corner-panel-width: 11.5rem;
+  }
   * { box-sizing: border-box; }
   /* Every display rule below is a class selector, which ties with the browser's
      own [hidden] rule and then wins on order -- so without this, setting .hidden
@@ -374,7 +381,8 @@ ${chipColorPaletteCss}
      margin. Static on a phone, where a floating panel would cover the table it
      is meant to sit beside. */
   .rolling-week-practice-ledger {
-    position: fixed; right: 1rem; bottom: 5.1rem; width: 10rem; z-index: 2;
+    position: fixed; right: 1rem; bottom: 5.1rem; z-index: 2;
+    width: var(--corner-panel-width);
     padding: 0.55rem 0.65rem; font-size: 0.7rem;
     border: 1px solid rgba(128,128,128,0.3); border-radius: 8px;
     background: rgba(127,127,127,0.06);
@@ -634,6 +642,7 @@ ${chipColorPaletteCss}
 
   #deploy-badge {
     position: fixed; right: 1rem; bottom: 1rem; z-index: 2;
+    width: var(--corner-panel-width);
     padding: 0.5rem 0.75rem; border-radius: 8px;
     border: 1px solid rgba(128,128,128,0.3);
     background: rgba(127,127,127,0.10);
@@ -646,7 +655,12 @@ ${chipColorPaletteCss}
     #deploy-badge .val { color: #d99a5b; }
   }
   @media (max-width: 30rem) {
-    #deploy-badge { position: static; margin: 2rem 1rem 1rem; display: inline-block; }
+    /* Off the corner and back into the flow, where it sizes to its own text
+       and has nothing to line up with. */
+    #deploy-badge {
+      position: static; margin: 2rem 1rem 1rem; display: inline-block;
+      width: auto;
+    }
   }
 </style>
 </head>

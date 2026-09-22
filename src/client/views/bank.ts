@@ -349,7 +349,7 @@ function buildBankTable(body: HTMLElement): HTMLElement {
 }
 
 /** A class by id, every problem, or the ones free generate made. */
-type BankTabKey = number | "all" | "generated";
+type BankTabKey = number | "generated";
 
 export async function renderBank(
   root: HTMLElement,
@@ -392,14 +392,18 @@ export async function renderBank(
 
   const classTags = () => tagCatalogue.filter((tag) => tag.field === "class");
 
-  // The open tab is the class filter: every problem 6801 has, or all of them,
-  // or the ones built from a prompt rather than filed off a page. A class
-  // retired since the last visit opens on all rather than on a tab whose name
-  // has gone.
+  // The open tab is the class filter: every problem 6801 has, or the ones
+  // written to a prompt rather than filed off a page. There is no tab for all
+  // of them -- a bank of every class at once is a list to scroll, not one to
+  // pick from, and picking is what this page is for. A class retired since the
+  // last visit falls to the first class still standing.
   const remembered = readStandingStudyContextTagFilter();
+  const firstTab = (): BankTabKey => classTags()[0]?.id ?? "generated";
   let openTab: BankTabKey =
     startOn ??
-    (remembered !== null && classTags().some((tag) => tag.id === remembered) ? remembered : "all");
+    (remembered !== null && classTags().some((tag) => tag.id === remembered)
+      ? remembered
+      : firstTab());
   if (typeof openTab !== "number") writeStandingStudyContextTagFilter(null);
 
   // Problems added from a pane on this page, which the table has not seen.
@@ -578,7 +582,6 @@ export async function renderBank(
 
   /** The open tab's problems, before the assignment dropdown narrows them. */
   function inOpenTab(list: MathPracticeProblem[]): MathPracticeProblem[] {
-    if (openTab === "all") return list;
     // Free generate mints from a prompt, so its problems are already marked as
     // such on the way in -- the tab needs no flag of its own.
     if (openTab === "generated") {
@@ -637,7 +640,7 @@ export async function renderBank(
     bodyEl.replaceChildren(...active.map(bankRow));
 
     tableEl.hidden = !active.length;
-    emptyEl.hidden = Boolean(active.length) || (openTab === "all" && assignmentTagId === null);
+    emptyEl.hidden = Boolean(active.length);
 
     // Recoloured with the table, since a retag can move a problem between classes.
     const nextLedgerEl = renderRollingWeekPracticeLedger(trophies, problems, tagCatalogue);
@@ -1041,12 +1044,8 @@ export async function renderBank(
     if (!onBank) for (const el of tabEls) el.classList.remove("is-on");
   }
 
-  // ---- tabs: all, one per class, then generated -----------------------------
-  const tabKeys: BankTabKey[] = [
-    "all",
-    ...classTags().map((tag) => tag.id),
-    "generated",
-  ];
+  // ---- tabs: one per class, then generated ----------------------------------
+  const tabKeys: BankTabKey[] = [...classTags().map((tag) => tag.id), "generated"];
   const labelOf = (key: BankTabKey): string =>
     typeof key === "number" ? (classTags().find((tag) => tag.id === key)?.name ?? "?") : key;
   const tabEls = tabKeys.map((key) => h("button", { type: "button", class: "tab" }, [labelOf(key)]));
