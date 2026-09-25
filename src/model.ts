@@ -218,11 +218,13 @@ export async function transcribeFromScreenshot(
  * The bank goes with it, so a request can lean on what is already there --
  * "like 2.3(a) but discrete" has to be able to find 2.3(a). Reference material
  * first and the request last, which is the order a long prompt is read best in.
+ * Screenshots pasted with the request follow it, labelled and nothing more.
  */
 export async function buildToOrderFromPrompt(
   env: Env,
   instructions: string,
   promptText: string,
+  shots: { base64: string; mimeType: string }[],
   bank: {
     name: string;
     label: string | null;
@@ -270,7 +272,22 @@ export async function buildToOrderFromPrompt(
     schema: BUILD_TO_ORDER_SCHEMA,
     system: instructions,
     messages: [
-      { role: "user", content: `${bankBlock}${history}The request:\n\n${promptText.trim()}` },
+      {
+        role: "user",
+        content: [
+          {
+            type: "text" as const,
+            text:
+              `${bankBlock}${history}The request:\n\n${promptText.trim()}` +
+              (shots.length ? "\n\nScreenshots pasted with the request:" : ""),
+          },
+          ...shots.map((shot) => ({
+            type: "image" as const,
+            image: shot.base64,
+            mimeType: shot.mimeType,
+          })),
+        ],
+      },
     ],
   });
   return object.problems;

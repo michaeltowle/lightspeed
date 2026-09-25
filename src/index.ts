@@ -342,7 +342,16 @@ export default {
         // a slip of the keyboard cannot mint a thousand.
         case "build_to_order_from_prompt": {
           const promptText = (body.prompt ?? "").trim();
-          if (!promptText) return json({ error: "a prompt is needed" }, 400);
+          // Screenshots pasted with the request are reference, not a source:
+          // no problem is read off them, so nothing would ever attach to them
+          // and they go to the model without being kept.
+          const shots = (body.unsaved_screenshots ?? []).map((shot) => ({
+            base64: shot.base64,
+            mimeType: shot.mimeType,
+          }));
+          if (!promptText && !shots.length) {
+            return json({ error: "a prompt is needed" }, 400);
+          }
 
           // What this prompt has already produced, so a second ask does not
           // hand back the first ask's problems.
@@ -359,6 +368,7 @@ export default {
             env,
             await systemPromptTextFor(db, "build_to_order_from_prompt"),
             promptText,
+            shots,
             await bankForReference(db),
             already.map((row) => row.statement_html),
           );

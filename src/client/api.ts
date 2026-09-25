@@ -68,10 +68,15 @@ export const transcribeFromScreenshot = (
 /**
  * Free generate: find or invent problems to a typed request. The request says
  * how many, and the bank goes along as reference so it can point at what is
- * already there.
+ * already there. Screenshots pasted with the request go to the model with it
+ * and are not kept.
  */
-export const buildToOrderFromPrompt = (prompt: string) =>
-  post<{ problem_ids: number[] }>({ action: "build_to_order_from_prompt", prompt });
+export const buildToOrderFromPrompt = (prompt: string, shots: UnsavedScreenshot[]) =>
+  post<{ problem_ids: number[] }>({
+    action: "build_to_order_from_prompt",
+    prompt,
+    unsaved_screenshots: wireScreenshots(shots),
+  });
 
 /** One problem's table. Fired per problem so an intake need not wait on them. */
 export const solveStepByStep = (problemId: number) =>
