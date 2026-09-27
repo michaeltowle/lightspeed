@@ -127,8 +127,16 @@ function answerRow(
           // than asking for the same click eight times over. Only green, and
           // only from the last row -- missing the answer says nothing about
           // which step lost it, which is exactly what the other rows are for.
+          // The green only fills rows still unmarked: a step already marked
+          // missed stays missed. In a proof the last row is the statement being
+          // proved, so reaching it says nothing about the justifications above.
           const allRight = next === "got" && m.id === finalManeuver?.id;
-          const marking = allRight ? maneuvers : [m];
+          const marking = allRight
+            ? maneuvers.filter(
+                (each) =>
+                  each.id === m.id || (credit.get(each.id) ?? "unmarked") === "unmarked",
+              )
+            : [m];
           const before = new Map(credit);
           for (const each of marking) credit.set(each.id, next);
 
