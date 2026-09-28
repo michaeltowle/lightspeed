@@ -1,4 +1,5 @@
 import {
+  deleteProblem,
   solveStepByStep,
   listTheBank,
   openPracticeRun,
@@ -1034,6 +1035,28 @@ export async function renderBank(
       }
     }
 
+    // ---- delete ------------------------------------------------------------
+    //
+    // For good: its attempts go with it, so the ledger and the wall lose them
+    // too. Asked once, since nothing brings it back.
+    async function beginDelete(): Promise<void> {
+      closeOpenMenu?.();
+      if (!confirm(`delete "${problem.name}" and every attempt at it? this cannot be undone.`)) {
+        return;
+      }
+      try {
+        await deleteProblem(problem.id);
+        problems = problems.filter((p) => p.id !== problem.id);
+        trophies = trophies.filter((t) => t.math_practice_problem_id !== problem.id);
+        byProblem.delete(problem.id);
+        ticked.delete(problem.id);
+        paintAll();
+        setPracticeStatus(`deleted ${problem.name}`);
+      } catch (err) {
+        setPracticeStatus(err instanceof Error ? err.message : String(err), true);
+      }
+    }
+
     // ---- menu --------------------------------------------------------------
     function openMenu(): void {
       closeOpenMenu?.();
@@ -1057,6 +1080,7 @@ export async function renderBank(
         // pass -- the instructions have changed and the tables written before
         // them need bringing up to them, a job done down a list.
         item("re-solve", beginReSolve),
+        item("delete", () => void beginDelete()),
       ]);
       menuCell.append(menu);
       closeOpenMenu = () => {

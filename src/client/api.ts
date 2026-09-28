@@ -154,6 +154,10 @@ export const renameProblem = (id: number, name: string) =>
 export const setDefaultServiceStyle = (id: number, style: DefaultServiceStyle) =>
   post<{ ok: true }>({ action: "set_default_service_style", id, default_service_style: style });
 
+/** For good, with its table, attempts, tags and any screenshot nothing else uses. */
+export const deleteProblem = (id: number) =>
+  post<{ ok: true }>({ action: "delete_problem", id });
+
 /** Both directions, the way a mark is set and cleared. */
 export const archiveProblem = (id: number, archived: boolean) =>
   post<{ ok: true }>({ action: "archive_problem", id, archived });

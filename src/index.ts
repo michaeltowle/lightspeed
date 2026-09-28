@@ -558,6 +558,64 @@ export default {
           return json({ ok: true });
         }
 
+        case "delete_problem": {
+          // Gone for good, with everything hung off it: its table, its attempts
+          // and their marks, its tags, and any screenshot no other problem was
+          // read off. Children are named one by one rather than left to the
+          // cascades, and in one batch so a failure part way leaves nothing
+          // half-deleted. A page shared with the other parts of a multi-part
+          // problem stays, since they still stand on it.
+          const id = Number(body.id);
+          if (!Number.isInteger(id)) return json({ error: "which problem?" }, 400);
+          const orphanedScreenshots = `
+            SELECT screenshot_of_record_id FROM screenshot_of_record_attachment
+             WHERE math_practice_problem_id = ?1
+               AND screenshot_of_record_id NOT IN
+                   (SELECT screenshot_of_record_id FROM screenshot_of_record_attachment
+                     WHERE math_practice_problem_id <> ?1)`;
+          await db.batch([
+            db
+              .prepare(
+                `DELETE FROM per_maneuver_credit_mark
+                  WHERE problem_attempt_id IN
+                        (SELECT id FROM problem_attempt WHERE math_practice_problem_id = ?1)
+                     OR maneuver_id IN
+                        (SELECT id FROM maneuver WHERE math_practice_problem_id = ?1)`,
+              )
+              .bind(id),
+            db.prepare(`DELETE FROM problem_attempt WHERE math_practice_problem_id = ?1`).bind(id),
+            // Lineage pointing in from elsewhere is let go rather than blocking
+            // the delete: a variant outlives what it was varied from.
+            db
+              .prepare(
+                `UPDATE math_practice_problem SET parent_problem_varied_from = NULL
+                  WHERE parent_problem_varied_from = ?1`,
+              )
+              .bind(id),
+            db
+              .prepare(
+                `UPDATE math_practice_problem SET the_maneuver_it_was_isolated_from = NULL
+                  WHERE the_maneuver_it_was_isolated_from IN
+                        (SELECT id FROM maneuver WHERE math_practice_problem_id = ?1)`,
+              )
+              .bind(id),
+            db.prepare(`DELETE FROM maneuver WHERE math_practice_problem_id = ?1`).bind(id),
+            db
+              .prepare(
+                `DELETE FROM study_context_tag_membership WHERE math_practice_problem_id = ?1`,
+              )
+              .bind(id),
+            db.prepare(`DELETE FROM screenshot_of_record WHERE id IN (${orphanedScreenshots})`).bind(id),
+            db
+              .prepare(
+                `DELETE FROM screenshot_of_record_attachment WHERE math_practice_problem_id = ?1`,
+              )
+              .bind(id),
+            db.prepare(`DELETE FROM math_practice_problem WHERE id = ?1`).bind(id),
+          ]);
+          return json({ ok: true });
+        }
+
         // ---- practising ----------------------------------------------------
         case "open_practice_run": {
           const ids = (body.problem_ids ?? []).map(Number).filter(Boolean);
