@@ -1225,7 +1225,12 @@ export async function renderBank(
             ]
           : [],
       ),
-      h("td", { class: "col-speed" }, [standing.latest?.self_reported_working_speed ?? ""]),
+      // Mid is the default and says nothing, so only slow and fast are shown.
+      h("td", { class: "col-speed" }, [
+        standing.latest?.self_reported_working_speed === "mid"
+          ? ""
+          : (standing.latest?.self_reported_working_speed ?? ""),
+      ]),
       h("td", { class: "col-flags" }, flagChipsFor(standing.latest)),
       h("td", { class: "col-why" }, [standing.latest?.why_this_one_went_wrong ?? ""]),
       menuCell,

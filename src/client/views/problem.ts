@@ -66,13 +66,12 @@ export function renderProblem(
   // instead of it: elapsed_ms knows how long it took, which is a different fact
   // from whether it felt laboured.
   //
-  // Starts on mid, because mid is what most working is and the column was
-  // coming back empty -- an unremarkable problem gives you no reason to reach
-  // for the row, so the honest answer went unsaid. Pre-lighting it makes slow
-  // and fast the only things worth a click, and pressing mid again still takes
-  // the answer back off.
-  let workingSpeed: "slow" | "mid" | "fast" | null = "mid";
-  const speedEls = (["slow", "mid", "fast"] as const).map((speed) =>
+  // Only slow and fast are buttons, and neither starts lit. Saying nothing is
+  // saying mid -- what most working is -- and it is saved as mid, so the column
+  // still fills without a click on an unremarkable problem. A second press on a
+  // lit one takes it back to mid.
+  let workingSpeed: "slow" | "fast" | null = null;
+  const speedEls = (["slow", "fast"] as const).map((speed) =>
     h(
       "button",
       {
@@ -83,12 +82,11 @@ export function renderProblem(
     ),
   );
   speedEls.forEach((el, i) => {
-    const speed = (["slow", "mid", "fast"] as const)[i];
+    const speed = (["slow", "fast"] as const)[i];
     el.addEventListener("click", () => {
-      // A second press on the lit one takes it back to having said nothing.
       workingSpeed = workingSpeed === speed ? null : speed;
       speedEls.forEach((each, j) =>
-        each.classList.toggle("is-on", workingSpeed === (["slow", "mid", "fast"] as const)[j]),
+        each.classList.toggle("is-on", workingSpeed === (["slow", "fast"] as const)[j]),
       );
     });
   });
@@ -128,7 +126,13 @@ export function renderProblem(
       // it opened -- so this fills in what the working produced. The outcome
       // stays null until the answers page, which is why nothing appears on the
       // wall yet.
-      await recordProblemWorked(runId, index, Math.round(elapsed), neededHelp, workingSpeed);
+      await recordProblemWorked(
+        runId,
+        index,
+        Math.round(elapsed),
+        neededHelp,
+        workingSpeed ?? "mid",
+      );
       onward();
     } catch (err) {
       statusEl.textContent = err instanceof Error ? err.message : String(err);
