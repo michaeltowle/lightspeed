@@ -6,11 +6,12 @@ import type { View } from "../types";
 /**
  * Free generate: a prompt window, and screenshots pasted under it.
  *
- * Say what to practice, in whatever words -- how many, how hard, which bank
- * problem to work from -- and the model finds problems that fit or invents
- * them. A pasted screenshot goes along with the words -- "like this one" can
- * point at a page rather than describe it. There is no count field and no filing: the request carries the count,
- * and what it mints is found under the generated tab by how it came to be.
+ * Say what to practice, in whatever words -- how many, how hard -- and the
+ * model finds problems that fit or invents them. The bank does not go with it,
+ * so a pasted screenshot is how a request points at a problem: "like this one"
+ * points at a page rather than describing it. There is no count field and no
+ * filing: the request carries the count, and each request is filed as a
+ * generated set of its own.
  *
  * The problems are solved as they land, so they are gradeable by the time they
  * are offered, and the press ends by offering them straight back as a run.

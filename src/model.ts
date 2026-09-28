@@ -5,17 +5,24 @@ import type { Env } from "./env";
 
 export const CURRENT_AUTHORING_MODEL_ID = "claude-opus-5";
 
-// How hard the model thinks before it answers. "high" is the API default, so
-// this pins the setting rather than raising it -- but it only bites at all
+// How hard the model thinks before it answers, set per job: reasoning is billed
+// as output, and it is most of what a call costs. These only bite at all
 // because the forced tool call is swapped out below. While the object was
 // being asked for as a tool call, every table came back with
-// `thinking_tokens: 0` and this constant did nothing.
+// `thinking_tokens: 0` and effort did nothing.
 //
-// Lower it only with evidence. The maneuver tables are the answer key Mike
-// grades himself against, so a cheaper answer that reads right but is wrong is
-// the worst failure this app has: it does not look like a bug, it looks like
-// being wrong about the maths.
-const MODEL_REASONING_EFFORT = "high";
+// Solving stays at "high", the API default. Lower it only with evidence. The
+// maneuver tables are the answer key Mike grades himself against, so a cheaper
+// answer that reads right but is wrong is the worst failure this app has: it
+// does not look like a bug, it looks like being wrong about the maths.
+//
+// Transcribing is reading and copying, which reasoning barely helps; a part
+// missed off the page shows up as a count that is short. Building to order is
+// writing statements, not solving them, and nothing downstream is graded
+// against it.
+const SOLVE_REASONING_EFFORT = "high";
+const TRANSCRIBE_REASONING_EFFORT = "low";
+const BUILD_TO_ORDER_REASONING_EFFORT = "medium";
 
 // The words each call is given live in the database, where Mike edits them --
 // see editable-per-job-instructions-to-llm.ts. What stays here is the shape of what comes back,
@@ -82,7 +89,7 @@ export interface SolvedManeuver {
 // ai@4 always sends `temperature` (it defaults to 0 rather than being omitted).
 // Anthropic removed the sampling params on Opus 4.7 and later, so they must be
 // stripped from the wire or the request 400s.
-const anthropicFor = (env: Env, effort: string | null = MODEL_REASONING_EFFORT) =>
+const anthropicFor = (env: Env, effort: string | null) =>
   createAnthropic({
     apiKey: env.ANTHROPIC_API_KEY,
     fetch: async (input, init) => {
@@ -188,7 +195,7 @@ export async function transcribeFromScreenshot(
   note: string,
 ): Promise<TranscribedProblem[]> {
   const { object } = await generateObject({
-    model: anthropicFor(env)(CURRENT_AUTHORING_MODEL_ID),
+    model: anthropicFor(env, TRANSCRIBE_REASONING_EFFORT)(CURRENT_AUTHORING_MODEL_ID),
     // Statements are cheap next to worked solutions, but a dense page of parts
     // still runs long, and reasoning comes out of this same cap.
     maxTokens: 16000,
@@ -215,43 +222,18 @@ export async function transcribeFromScreenshot(
  * Find or invent problems to a typed request. How many is the request's to
  * say, or the instructions' where it does not.
  *
- * The bank goes with it, so a request can lean on what is already there --
- * "like 2.3(a) but discrete" has to be able to find 2.3(a). Reference material
- * first and the request last, which is the order a long prompt is read best in.
- * Screenshots pasted with the request follow it, labelled and nothing more.
+ * The bank does not go with it: sent whole, it was every statement there is on
+ * every request, and it grew with the bank. A request that means to lean on a
+ * problem brings a screenshot of it. Screenshots follow the request, labelled
+ * and nothing more.
  */
 export async function buildToOrderFromPrompt(
   env: Env,
   instructions: string,
   promptText: string,
   shots: { base64: string; mimeType: string }[],
-  bank: {
-    name: string;
-    label: string | null;
-    filedUnder: { field: string; name: string }[];
-    statementHtml: string;
-  }[],
   problemsNotToRepeatHtml: string[] = [],
 ): Promise<BuiltProblem[]> {
-  const attr = (value: string) => value.replace(/"/g, "&quot;");
-  const bankBlock = bank.length
-    ? [
-        "The problem bank, for reference:",
-        "",
-        "<bank>",
-        ...bank.map((p) => {
-          const attrs = [
-            `name="${attr(p.name)}"`,
-            ...(p.label ? [`number="${attr(p.label)}"`] : []),
-            ...p.filedUnder.map((t) => `${t.field}="${attr(t.name)}"`),
-          ].join(" ");
-          return `<problem ${attrs}>\n${p.statementHtml}\n</problem>`;
-        }),
-        "</bank>",
-        "",
-        "",
-      ].join("\n")
-    : "";
 
   // What this same request has already handed out. Without it the model
   // drifts back to the same few problems every time it is asked. What to do
@@ -267,7 +249,7 @@ export async function buildToOrderFromPrompt(
     : "";
 
   const { object } = await generateObject({
-    model: anthropicFor(env)(CURRENT_AUTHORING_MODEL_ID),
+    model: anthropicFor(env, BUILD_TO_ORDER_REASONING_EFFORT)(CURRENT_AUTHORING_MODEL_ID),
     maxTokens: 16000,
     schema: BUILD_TO_ORDER_SCHEMA,
     system: instructions,
@@ -278,7 +260,7 @@ export async function buildToOrderFromPrompt(
           {
             type: "text" as const,
             text:
-              `${bankBlock}${history}The request:\n\n${promptText.trim()}` +
+              `${history}The request:\n\n${promptText.trim()}` +
               (shots.length ? "\n\nScreenshots pasted with the request:" : ""),
           },
           ...shots.map((shot) => ({
@@ -343,7 +325,7 @@ export async function solveStepByStep(
   const own = ownWords ? `\n\nInstructions for this problem:\n\n${ownWords}` : "";
 
   const { object } = await generateObject({
-    model: anthropicFor(env)(CURRENT_AUTHORING_MODEL_ID),
+    model: anthropicFor(env, SOLVE_REASONING_EFFORT)(CURRENT_AUTHORING_MODEL_ID),
     maxTokens: 16000,
     schema: MANEUVER_SCHEMA,
     system: instructions,

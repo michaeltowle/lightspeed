@@ -369,7 +369,6 @@ export default {
             await systemPromptTextFor(db, "build_to_order_from_prompt"),
             promptText,
             shots,
-            await bankForReference(db),
             already.map((row) => row.statement_html),
           );
           if (!built.length) return json({ error: "model returned no problems" }, 502);
@@ -998,56 +997,6 @@ async function insertProblem(
   // homework problem is still findable under 6801.
   if (problem.variedFrom) await inheritTags(db, problem.variedFrom, id);
   return id;
-}
-
-/**
- * Every problem still in play, with what it is filed under, as reference for
- * free generate. Archived ones stay out: archiving is saying a problem is done
- * with, and a request should not be steered by it.
- */
-async function bankForReference(db: D1Database): Promise<
-  {
-    name: string;
-    label: string | null;
-    filedUnder: { field: string; name: string }[];
-    statementHtml: string;
-  }[]
-> {
-  const { results: problems } = await db
-    .prepare(
-      `SELECT id, name, textbook_problem_number_label, statement_html
-         FROM math_practice_problem
-        WHERE archived_at IS NULL
-        ORDER BY id`,
-    )
-    .all<{
-      id: number;
-      name: string;
-      textbook_problem_number_label: string | null;
-      statement_html: string;
-    }>();
-  const { results: tags } = await db
-    .prepare(
-      `SELECT m.math_practice_problem_id AS problem_id, t.field, t.name
-         FROM study_context_tag_membership m
-         JOIN study_context_tag t ON t.id = m.study_context_tag_id
-        ORDER BY t.field, t.name`,
-    )
-    .all<{ problem_id: number; field: string; name: string }>();
-
-  const tagsByProblem = new Map<number, { field: string; name: string }[]>();
-  for (const tag of tags) {
-    const list = tagsByProblem.get(tag.problem_id) ?? [];
-    list.push({ field: tag.field, name: tag.name });
-    tagsByProblem.set(tag.problem_id, list);
-  }
-
-  return problems.map((p) => ({
-    name: p.name,
-    label: p.textbook_problem_number_label,
-    filedUnder: tagsByProblem.get(p.id) ?? [],
-    statementHtml: p.statement_html,
-  }));
 }
 
 async function saveScreenshots(
