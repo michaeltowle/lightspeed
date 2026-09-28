@@ -136,6 +136,14 @@ export const setEditablePerProblemInstructionsToLlm = (problemId: number, text: 
  * Names, not ids: one the field has not seen is created on the way through.
  * Returns the catalogue as it then stands.
  */
+/** Renames the tag itself, so everything wearing it follows. */
+export const renameStudyContextTag = (id: number, name: string) =>
+  post<{ study_context_tags: StudyContextTag[] }>({
+    action: "rename_study_context_tag",
+    id,
+    name,
+  });
+
 export const retagProblem = (
   id: number,
   field: StudyContextTagField,

@@ -541,6 +541,27 @@ export default {
           });
         }
 
+        case "rename_study_context_tag": {
+          // The tag row itself, so every problem wearing it follows -- in every
+          // class, since a tag is one row per (field, name) and not one per class.
+          const name = normalizeTagNames([body.name])[0];
+          if (!name) return json({ error: "a name is needed" }, 400);
+          const clash = await db
+            .prepare(
+              `SELECT 1 FROM study_context_tag
+                WHERE field = (SELECT field FROM study_context_tag WHERE id = ?1)
+                  AND name = ?2 AND id <> ?1`,
+            )
+            .bind(body.id, name)
+            .first();
+          if (clash) return json({ error: `there is already one called ${name}` }, 409);
+          await db
+            .prepare(`UPDATE study_context_tag SET name = ? WHERE id = ?`)
+            .bind(name, body.id)
+            .run();
+          return json({ study_context_tags: await tagCatalogue(db) });
+        }
+
         case "rename_problem": {
           const name = tidy(body.name, MAX_NAME_LENGTH);
           if (!name) return json({ error: "a problem needs a name" }, 400);

@@ -3,6 +3,7 @@ import {
   solveStepByStep,
   listTheBank,
   openPracticeRun,
+  renameStudyContextTag,
   peekAtManeuvers,
   renameProblem,
   retagProblem,
@@ -598,8 +599,8 @@ export async function renderBank(
   const isGroupOpen = (group: AssignmentGroup) => !closedGroups.has(group.key);
 
   /**
-   * The open tab cut up by assignment: unvaried originals only, sorted for the
-   * bank within each group. Variants of a problem are reached by expanding it
+   * The open tab cut up by assignment: unvaried originals only, in the order
+   * they came in within each group. Variants of a problem are reached by expanding it
    * rather than listed beside it, so the bank stays as long as what was put in.
    *
    * Groups run in name order, numbers counted as numbers so Homework 10 comes
@@ -608,7 +609,7 @@ export async function renderBank(
    * assignment at a time.
    */
   function assignmentGroups(): AssignmentGroup[] {
-    const inTab = sortForBank(
+    const inTab = inOrderTheyCameIn(
       inOpenTab(problems.filter((p) => !p.archived_at && p.parent_problem_varied_from === null)),
     );
     const byTag = new Map<number | null, AssignmentGroup>();
@@ -650,24 +651,13 @@ export async function renderBank(
     return shown;
   }
 
-  // Never-worked first -- those are the problems in the bank with no practice
-  // against them, which is exactly what this page is for noticing. Everything
-  // else by how recently it was touched.
-  //
-  // Within a group, oldest id first, which is the order they were read off the
-  // page: 2.1(a) before 2.11(b). This is the order the work is done in, and
-  // the table's order is the run's order -- what is ticked is served in the
-  // order it is listed -- so a set started from here opens where the homework
-  // opens rather than at its last question.
-  function sortForBank(list: MathPracticeProblem[]): MathPracticeProblem[] {
-    return [...list].sort((a, b) => {
-      const aAt = standingOf(byProblem.get(a.id)).lastWorkedAt;
-      const bAt = standingOf(byProblem.get(b.id)).lastWorkedAt;
-      if (!aAt && !bAt) return a.id - b.id;
-      if (!aAt) return -1;
-      if (!bAt) return 1;
-      return bAt < aAt ? -1 : bAt > aAt ? 1 : a.id - b.id;
-    });
+  // The order they came in, always: read off the page, or handed back by the
+  // model. A homework then reads down the way it is printed, 2.1(a) before
+  // 2.11(b), and working through a group is going down a list -- nothing
+  // jumps to the top because it was just worked or never was. The run is
+  // served in this order too, so a set opens where the homework opens.
+  function inOrderTheyCameIn(list: MathPracticeProblem[]): MathPracticeProblem[] {
+    return [...list].sort((a, b) => a.id - b.id);
   }
 
   /** Repaint the table from the local list. */
@@ -742,17 +732,105 @@ export async function renderBank(
       }
     });
 
+    const nameEl = h("span", { class: "assignment-group-name" }, [
+      group.tag?.name ?? "no assignment",
+    ]);
+    const menuCell = h("td", { class: "col-menu" });
+
     const row = h("tr", { class: `assignment-group-row${open ? " is-open" : ""}` }, [
       h("td", { class: "col-select" }, [boxEl]),
-      h("td", { colspan: TABLE_COLUMN_COUNT - 1 }, [
+      h("td", { colspan: TABLE_COLUMN_COUNT - 2 }, [
         h("span", { class: "assignment-group-caret" }, [open ? "▾" : "▸"]),
-        h("span", { class: "assignment-group-name" }, [group.tag?.name ?? "no assignment"]),
+        nameEl,
         h("span", { class: "assignment-group-rollup" }, [`${greenCount}/${ids.length}`]),
       ]),
+      menuCell,
     ]);
     row.addEventListener("click", () => {
       setOpen(!open);
       paintAll();
+    });
+
+    // "no assignment" is the absence of a tag, so there is nothing to rename.
+    const tag = group.tag;
+    if (!tag) return row;
+
+    // ---- rename ------------------------------------------------------------
+    // The tag itself, so every problem wearing it follows -- in every class
+    // that shares it, since a tag is one row per (field, name).
+    function beginRename(tag: StudyContextTag): void {
+      closeOpenMenu?.();
+      const input = h("input", { class: "problem-name-input", value: tag.name });
+      nameEl.replaceChildren(input);
+      input.focus();
+      input.select();
+
+      let settled = false;
+      const finish = async (save: boolean): Promise<void> => {
+        if (settled) return;
+        settled = true;
+        const next = parseTagNames(input.value)[0];
+        nameEl.replaceChildren(tag.name);
+        if (!save || !next || next === tag.name) return;
+        try {
+          const result = await renameStudyContextTag(tag.id, next);
+          tagCatalogue = result.study_context_tags;
+          paintTagCatalogue();
+          paintAll();
+        } catch (err) {
+          setPracticeStatus(err instanceof Error ? err.message : String(err), true);
+        }
+      };
+
+      input.addEventListener("click", (event) => event.stopPropagation());
+      input.addEventListener("keydown", (event) => {
+        const key = (event as KeyboardEvent).key;
+        if (key === "Enter") {
+          event.preventDefault();
+          void finish(true);
+        } else if (key === "Escape") {
+          void finish(false);
+        }
+      });
+      input.addEventListener("blur", () => void finish(true));
+    }
+
+    function openMenu(): void {
+      closeOpenMenu?.();
+      const menu = h("div", { class: "row-menu" }, [
+        h("button", { type: "button", onclick: () => beginRename(tag!) }, ["rename"]),
+      ]);
+      menuCell.append(menu);
+      closeOpenMenu = () => {
+        menu.remove();
+        closeOpenMenu = null;
+      };
+    }
+
+    menuCell.append(
+      h(
+        "button",
+        {
+          type: "button",
+          class: "row-menu-open",
+          title: "options",
+          "aria-label": "options",
+          onclick: (event: Event) => {
+            // Not a toggle of the group, and not the document listener that
+            // would shut the menu the instant it opens.
+            event.stopPropagation();
+            openMenu();
+          },
+        },
+        ["⋯"],
+      ),
+    );
+    // Clicks inside the menu are its own, not a toggle of the group.
+    menuCell.addEventListener("click", (event) => event.stopPropagation());
+    row.addEventListener("contextmenu", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      openMenu();
     });
     return row;
   }
