@@ -201,13 +201,13 @@ export function indexPageDocument(env: Env): string {
   /* The phone selects what to practise; it does not tag and it does not read the
      record. Six columns at 390px leave the name -- the one column you actually
      select on -- a few characters a line, so everything but the class goes.
-     Filtering on any field survives as the chips above the table. */
+     The assignment needs no column anywhere: it heads the group. */
   @media (max-width: 40rem) {
     .bank-table { font-size: 0.78rem; }
     .bank-table th, .bank-table td {
       padding-left: 0.2rem; padding-right: 0.2rem;
     }
-    .col-field-assignment, .col-speed, .col-flags, .col-why {
+    .col-speed, .col-flags, .col-why {
       display: none;
     }
     td.problem-name { min-width: 0; }
@@ -273,16 +273,29 @@ export function indexPageDocument(env: Env): string {
   /* One practice button for the bank, acting on every ticked row. */
   .practice-launch-control { margin-top: 0.85rem; }
 
-  /* Assignment reads as plain text. It was already off the palette, and a
-     bordered pill with no colour in it is a chip that has stopped doing a
-     chip's job -- the outline was the only thing left, drawing a box round a
-     name for no reason. Sized with the rest of the table's values, not with
-     the class chip beside it, since that is what it is now: a value in a
-     column. Kept as the same element so clicking the cell still edits it, and
-     kept with a margin so two assignments do not run together. */
-  .col-field-assignment .study-context-tag-chip {
-    padding: 0; border: none; background: none; border-radius: 0;
-    font-size: inherit; margin: 0 0.25rem;
+  /* The heading each assignment's rows sit under, and the switch that shuts
+     them. Left-set, unlike every other cell, since it is a heading and not a
+     value in a column; a touch of ground and weight so it reads as the start of
+     a block rather than one more problem. A shut one keeps the ground but drops
+     the weight, so the eye runs past what was set aside. */
+  .assignment-group-row { cursor: pointer; user-select: none; }
+  .assignment-group-row td {
+    text-align: left; padding-top: 0.55rem; padding-bottom: 0.35rem;
+    background: rgba(127,127,127,0.06);
+    border-bottom: 1px solid rgba(128,128,128,0.3);
+  }
+  .assignment-group-row td.col-select { text-align: center; }
+  .assignment-group-row:hover td { background: rgba(127,127,127,0.12); }
+  .assignment-group-caret {
+    display: inline-block; width: 1rem; opacity: 0.55;
+  }
+  .assignment-group-name { opacity: 0.7; }
+  .assignment-group-row.is-open .assignment-group-name {
+    font-weight: 600; opacity: 1;
+  }
+  .assignment-group-rollup {
+    margin-left: 0.6rem; font-size: 0.72rem; opacity: 0.5;
+    font-variant-numeric: tabular-nums;
   }
 
   /* The same chip reads a row and, as a button, filters the table. */
@@ -302,22 +315,6 @@ ${chipColorPaletteCss}
     color: inherit; border: 1px solid rgba(128,128,128,0.5); border-radius: 6px;
     background: rgba(127,127,127,0.04);
   }
-  .study-context-tag-filter {
-    display: flex; flex-wrap: wrap; gap: 0.3rem; align-items: center;
-    margin-top: 0.25rem;
-  }
-  /* Assignment is a dropdown now: one entry per homework outgrew a chip row a
-     term at a time, and the class it used to sit beside is the tab. */
-  /* Pushed to the far right, away from the tabs: the tab is the choice being
-     made, and this only narrows what the tab already picked. Auto margin rather
-     than justify-content, so it stays right if anything joins it on the left. */
-  .assignment-dropdown {
-    margin-left: auto;
-    padding: 0.25rem 0.5rem; font: inherit; font-size: 0.8rem; color: inherit;
-    border: 1px solid rgba(128,128,128,0.5); border-radius: 6px;
-    background: rgba(127,127,127,0.04); cursor: pointer; max-width: 16rem;
-  }
-
   /* Pinned to the corner rather than set in the flow: authoring is rare, and
      anything in the flow competes with the tabs for the same glance. Above the
      trophy wall, which sits behind everything. */

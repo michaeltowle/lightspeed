@@ -31,10 +31,14 @@ const ROLLING_WEEK_DAYS = 7;
 const GONE_COLD_AFTER_DAYS = 7;
 const GOING_COLD_AFTER_DAYS = 2;
 
+// Every field gets a column but assignment: the rows are grouped under their
+// assignment, so a column of it would only repeat the heading above.
+const TABLE_TAG_FIELDS = STUDY_CONTEXT_TAG_FIELDS.filter((field) => field !== "assignment");
+
 // select, label, problem, the tag fields, credit, last, streak, speed, flags,
 // why, menu. Derived so a field added or dropped cannot leave the detail row
 // spanning the wrong width.
-const TABLE_COLUMN_COUNT = 10 + STUDY_CONTEXT_TAG_FIELDS.length;
+const TABLE_COLUMN_COUNT = 10 + TABLE_TAG_FIELDS.length;
 
 
 const WEEKDAY_NAMES = [
@@ -70,6 +74,34 @@ function writeStandingStudyContextTagFilter(id: number | null): void {
   try {
     if (id === null) localStorage.removeItem(STANDING_STUDY_CONTEXT_TAG_FILTER_KEY);
     else localStorage.setItem(STANDING_STUDY_CONTEXT_TAG_FILTER_KEY, String(id));
+  } catch {
+    // As above.
+  }
+}
+
+// Which assignment groups are shut, per tab. Studying for one exam is a
+// fortnight's habit, so shutting what does not bear on it has to outlive the
+// visit. The closed ones are stored rather than the open ones, so a homework
+// added since arrives open instead of hidden.
+//
+// Keyed by tab as well as tag: a tag is unique on (field, name), so the
+// Homework 1 that 6801 and 6950 both show is one row, and shutting it in one
+// class must not shut it in the other.
+const CLOSED_ASSIGNMENT_GROUPS_KEY = "lightspeed.closed-assignment-groups";
+
+function readClosedAssignmentGroups(): Set<string> {
+  try {
+    const raw = JSON.parse(localStorage.getItem(CLOSED_ASSIGNMENT_GROUPS_KEY) ?? "[]");
+    return new Set(Array.isArray(raw) ? raw.map(String) : []);
+  } catch {
+    // Storage walled off, or written by something else. Everything opens.
+    return new Set();
+  }
+}
+
+function writeClosedAssignmentGroups(closed: Set<string>): void {
+  try {
+    localStorage.setItem(CLOSED_ASSIGNMENT_GROUPS_KEY, JSON.stringify([...closed]));
   } catch {
     // As above.
   }
@@ -332,9 +364,7 @@ function buildBankTable(body: HTMLElement): HTMLElement {
         h("th", { class: "col-select" }, []),
         h("th", { class: "col-label" }, ["no."]),
         h("th", {}, ["problem"]),
-        ...STUDY_CONTEXT_TAG_FIELDS.map((field) =>
-          h("th", { class: `col-field-${field}` }, [field]),
-        ),
+        ...TABLE_TAG_FIELDS.map((field) => h("th", { class: `col-field-${field}` }, [field])),
         h("th", { class: "col-credit" }, ["credit"]),
         h("th", { class: "col-last" }, ["last"]),
         h("th", { class: "col-streak" }, ["streak"]),
@@ -350,6 +380,13 @@ function buildBankTable(body: HTMLElement): HTMLElement {
 
 /** A class by id, every problem, or the ones free generate made. */
 type BankTabKey = number | "generated";
+
+/** One assignment's problems within the open tab, or those filed under none. */
+interface AssignmentGroup {
+  key: string;
+  tag: StudyContextTag | null;
+  problems: MathPracticeProblem[];
+}
 
 export async function renderBank(
   root: HTMLElement,
@@ -411,17 +448,18 @@ export async function renderBank(
   // -- and the next tab pressed rebuilds the bank instead of repainting it.
   let bankIsStale = false;
 
-  // Assignment narrows within the open tab, and is deliberately not remembered:
-  // which class is being worked is a week's habit, which homework is an
-  // afternoon's, and coming back to a stale one looks like an empty bank.
-  let assignmentTagId: number | null = null;
+  const closedGroups = readClosedAssignmentGroups();
 
-  const rowsById = new Map<number, { row: HTMLElement; box: HTMLInputElement }>();
+  // A list per id, since a problem set under two assignments is a row in each
+  // group, and a tick has to show on both.
+  const rowsById = new Map<number, { row: HTMLElement; box: HTMLInputElement }[]>();
+  // Each group's own tick box, repainted with the rows so it can read full,
+  // empty or part-ticked.
+  const groupHeaderBoxes: { box: HTMLInputElement; ids: number[] }[] = [];
 
   const bodyEl = h("tbody");
   const tableEl = buildBankTable(bodyEl);
   const emptyEl = h("div", { class: "bank-note" }, ["nothing filed under that"]);
-  const filterEl = h("div", { class: "study-context-tag-filter" });
 
   // One list per field: completing a source against the catalogue of classes
   // would offer names that cannot belong there.
@@ -465,10 +503,17 @@ export async function renderBank(
   });
 
   function paintTickState(): void {
-    for (const [id, entry] of rowsById) {
+    for (const [id, entries] of rowsById) {
       const on = ticked.has(id);
-      entry.row.classList.toggle("is-ticked", on);
-      entry.box.checked = on;
+      for (const entry of entries) {
+        entry.row.classList.toggle("is-ticked", on);
+        entry.box.checked = on;
+      }
+    }
+    for (const { box, ids } of groupHeaderBoxes) {
+      const count = ids.filter((id) => ticked.has(id)).length;
+      box.checked = count > 0 && count === ids.length;
+      box.indeterminate = count > 0 && count < ids.length;
     }
     practiceEl.disabled = ticked.size === 0;
     // The count rides on the button rather than a line beneath it: it is what
@@ -536,51 +581,9 @@ export async function renderBank(
             .map((tag) => h("option", { value: tag.name })),
         );
     }
-
-    // Assignment is a dropdown rather than a row of chips. The chips outgrew the
-    // page width one homework at a time, and the class that used to sit beside
-    // them is the tab now.
-    const here = inOpenTab(problems);
-
-    /** Only assignments something here actually carries: the list cannot point
-     * at an empty table. */
-    const assignmentsOf = (list: MathPracticeProblem[]): StudyContextTag[] => {
-      const carried = new Set<number>();
-      for (const problem of list) for (const id of problem.study_context_tag_ids) carried.add(id);
-      return tagCatalogue.filter((tag) => tag.field === "assignment" && carried.has(tag.id));
-    };
-    const optionFor = (tag: StudyContextTag) =>
-      h("option", { value: String(tag.id) }, [tag.name]);
-
-    // Flat, in every tab. A tag is unique on (field, name), so the Homework 1
-    // that 6111, 6801 and 6950 all show is one row all three point at -- there
-    // are not three of them to tell apart. Grouping this list under class
-    // headings would draw a distinction the data does not make.
-    //
-    // What makes the name unambiguous is the tab: inside 6801, class and
-    // assignment must both match, so Homework 1 means 6801's. In all, it
-    // honestly means every class's first homework.
-    const options: (Node | string)[] = [
-      h("option", { value: "" }, ["filter by assignment"]),
-      ...assignmentsOf(here).map(optionFor),
-    ];
-
-    const dropdownEl = h("select", { class: "assignment-dropdown" }, options);
-    // An assignment picked in one tab is gone in the next, so the value is
-    // asserted after the options are in rather than assumed to have survived.
-    dropdownEl.value = assignmentTagId === null ? "" : String(assignmentTagId);
-    if (dropdownEl.value === "" && assignmentTagId !== null) assignmentTagId = null;
-    dropdownEl.addEventListener("change", () => {
-      assignmentTagId = dropdownEl.value === "" ? null : Number(dropdownEl.value);
-      paintAll();
-    });
-
-    filterEl.replaceChildren(dropdownEl);
-    // The resting option is the label, so anything less than two is no choice.
-    filterEl.hidden = options.length < 2;
   }
 
-  /** The open tab's problems, before the assignment dropdown narrows them. */
+  /** The open tab's problems, open groups and shut alike. */
   function inOpenTab(list: MathPracticeProblem[]): MathPracticeProblem[] {
     // Free generate mints from a prompt, so its problems are already marked as
     // such on the way in -- the tab needs no flag of its own.
@@ -590,26 +593,60 @@ export async function renderBank(
     return list.filter((p) => p.study_context_tag_ids.includes(openTab as number));
   }
 
-  function shownIn(list: MathPracticeProblem[]): MathPracticeProblem[] {
-    const inTab = inOpenTab(list);
-    return assignmentTagId === null
-      ? inTab
-      : inTab.filter((p) => p.study_context_tag_ids.includes(assignmentTagId!));
+  const groupKeyOf = (tag: StudyContextTag | null) => `${openTab}:${tag?.id ?? "none"}`;
+  const isGroupOpen = (group: AssignmentGroup) => !closedGroups.has(group.key);
+
+  /**
+   * The open tab cut up by assignment: unvaried originals only, sorted for the
+   * bank within each group. Variants of a problem are reached by expanding it
+   * rather than listed beside it, so the bank stays as long as what was put in.
+   *
+   * Groups run in name order, numbers counted as numbers so Homework 10 comes
+   * after Homework 9, and the problems filed under no assignment come last.
+   * The run is served in this order, so a set started from here goes one
+   * assignment at a time.
+   */
+  function assignmentGroups(): AssignmentGroup[] {
+    const inTab = sortForBank(
+      inOpenTab(problems.filter((p) => !p.archived_at && p.parent_problem_varied_from === null)),
+    );
+    const byTag = new Map<number | null, AssignmentGroup>();
+    const groupFor = (tag: StudyContextTag | null) => {
+      let group = byTag.get(tag?.id ?? null);
+      if (!group) {
+        group = { key: groupKeyOf(tag), tag, problems: [] };
+        byTag.set(tag?.id ?? null, group);
+      }
+      return group;
+    };
+    for (const problem of inTab) {
+      const assignments = tagsOf(problem, "assignment");
+      if (!assignments.length) groupFor(null).problems.push(problem);
+      for (const tag of assignments) groupFor(tag).problems.push(problem);
+    }
+    return [...byTag.values()].sort((a, b) => {
+      if (!a.tag) return 1;
+      if (!b.tag) return -1;
+      return a.tag.name.localeCompare(b.tag.name, undefined, { numeric: true });
+    });
   }
 
   /**
-   * What the active table is currently showing: unvaried originals only, in the
-   * order they are painted. Variants of a problem are reached by expanding it
-   * rather than listed beside it, so the bank stays as long as what was put in.
+   * What the table is currently showing, in the order it is painted: every
+   * problem in an open group, once each even where it sits in two.
    */
   function shownProblems(): MathPracticeProblem[] {
-    return sortForBank(
-      shownIn(
-        problems.filter(
-          (p) => !p.archived_at && p.parent_problem_varied_from === null,
-        ),
-      ),
-    );
+    const seen = new Set<number>();
+    const shown: MathPracticeProblem[] = [];
+    for (const group of assignmentGroups()) {
+      if (!isGroupOpen(group)) continue;
+      for (const problem of group.problems) {
+        if (seen.has(problem.id)) continue;
+        seen.add(problem.id);
+        shown.push(problem);
+      }
+    }
+    return shown;
   }
 
   // Never-worked first -- those are the problems in the bank with no practice
@@ -634,22 +671,90 @@ export async function renderBank(
 
   /** Repaint the table from the local list. */
   function paintAll(): void {
-    const active = shownProblems();
+    const groups = assignmentGroups();
 
     rowsById.clear();
-    bodyEl.replaceChildren(...active.map(bankRow));
+    groupHeaderBoxes.length = 0;
+    bodyEl.replaceChildren(
+      ...groups.flatMap((group) => [
+        groupHeaderRow(group),
+        ...(isGroupOpen(group) ? group.problems.map(bankRow) : []),
+      ]),
+    );
 
-    tableEl.hidden = !active.length;
-    emptyEl.hidden = Boolean(active.length);
+    tableEl.hidden = !groups.length;
+    emptyEl.hidden = Boolean(groups.length);
 
     // Recoloured with the table, since a retag can move a problem between classes.
     const nextLedgerEl = renderRollingWeekPracticeLedger(trophies, problems, tagCatalogue);
     ledgerEl.replaceWith(nextLedgerEl);
     ledgerEl = nextLedgerEl;
 
-    // A tick the filter has just hidden is not a tick any more.
+    // A tick the tab or a shut group has just hidden is not a tick any more.
     for (const id of [...ticked]) if (!rowsById.has(id)) ticked.delete(id);
     paintTickState();
+  }
+
+  /**
+   * The heading an assignment's rows sit under, and the switch that shuts them.
+   *
+   * A shut group stays on the page as this one line, with its count and how
+   * much of it has gone cold, so what was set aside is still in view -- which
+   * a filter that simply hid it would not allow. The box ticks the lot.
+   */
+  function groupHeaderRow(group: AssignmentGroup): HTMLElement {
+    const open = isGroupOpen(group);
+    const ids = group.problems.map((p) => p.id);
+
+    // The same rule the rows use: never worked counts as gone cold.
+    const coldCount = group.problems.filter((p) => {
+      const at = standingOf(byProblem.get(p.id)).lastWorkedAt;
+      return !at || daysBetween(new Date(at), new Date()) >= GONE_COLD_AFTER_DAYS;
+    }).length;
+
+    const setOpen = (on: boolean) => {
+      if (on) closedGroups.delete(group.key);
+      else closedGroups.add(group.key);
+      writeClosedAssignmentGroups(closedGroups);
+    };
+
+    const boxEl = h("input", {
+      type: "checkbox",
+      "aria-label": `tick all of ${group.tag?.name ?? "no assignment"}`,
+    });
+    groupHeaderBoxes.push({ box: boxEl, ids });
+    boxEl.addEventListener("click", (event) => {
+      event.stopPropagation();
+      const on = boxEl.checked;
+      for (const id of ids) {
+        if (on) ticked.add(id);
+        else ticked.delete(id);
+      }
+      // Ticking a shut group opens it: a tick on a row nobody can see is one
+      // the practice count would have to own up to without showing.
+      if (on && !open) {
+        setOpen(true);
+        paintAll();
+      } else {
+        paintTickState();
+      }
+    });
+
+    const row = h("tr", { class: `assignment-group-row${open ? " is-open" : ""}` }, [
+      h("td", { class: "col-select" }, [boxEl]),
+      h("td", { colspan: TABLE_COLUMN_COUNT - 1 }, [
+        h("span", { class: "assignment-group-caret" }, [open ? "▾" : "▸"]),
+        h("span", { class: "assignment-group-name" }, [group.tag?.name ?? "no assignment"]),
+        h("span", { class: "assignment-group-rollup" }, [
+          `${ids.length}` + (coldCount ? ` · ${coldCount} cold` : ""),
+        ]),
+      ]),
+    ]);
+    row.addEventListener("click", () => {
+      setOpen(!open);
+      paintAll();
+    });
+    return row;
   }
 
   function bankRow(problem: MathPracticeProblem): HTMLElement {
@@ -677,17 +782,24 @@ export async function renderBank(
       setTicked(problem.id, boxEl.checked);
     });
 
-    const nameCell = h("td", { class: "problem-name", title: problem.statement_html }, [
+    const nameCellContents = () => [
       problem.name,
       // A problem with no table has nothing to reveal at the end of a run, so
       // the bank says so rather than letting it surprise you there.
       ...(problem.last_solved_by_llm_at
         ? []
         : [h("span", { class: "awaiting-solve" }, ["  · no table yet"])]),
-    ]);
+    ];
+    const nameCell = h(
+      "td",
+      { class: "problem-name", title: problem.statement_html },
+      nameCellContents(),
+    );
     const menuCell = h("td", { class: "col-menu" });
 
-    rowsById.set(problem.id, { row, box: boxEl });
+    const entries = rowsById.get(problem.id);
+    if (entries) entries.push({ row, box: boxEl });
+    else rowsById.set(problem.id, [{ row, box: boxEl }]);
 
     // The row is the tick target. Anything inside it that does something else
     // stops the click before it gets here.
@@ -732,6 +844,62 @@ export async function renderBank(
       input.addEventListener("blur", () => void finish(true));
     }
 
+    // ---- tags, edited where they sit ---------------------------------------
+    //
+    // The field's names as a comma list in whatever cell asked, completed from
+    // the catalogue. The class edits in its own cell; the assignment has no
+    // cell now that it heads the group, so it borrows the name's.
+    function editTagsInPlace(
+      host: HTMLElement,
+      field: StudyContextTagField,
+      restore: () => void,
+    ): void {
+      const before = tagsOf(problem, field).map((tag) => tag.name);
+      const input = h("input", {
+        class: "study-context-tag-input",
+        list: catalogueListId(field),
+        placeholder: field,
+        value: before.join(", "),
+      });
+      host.replaceChildren(input);
+      input.focus();
+      input.select();
+
+      let settled = false;
+      const finish = async (save: boolean): Promise<void> => {
+        if (settled) return;
+        settled = true;
+        const next = parseTagNames(input.value);
+        restore();
+        const unchanged =
+          next.length === before.length && next.every((n, i) => n === before[i]);
+        if (!save || unchanged) return;
+
+        try {
+          const result = await retagProblem(problem.id, field, next);
+          tagCatalogue = result.study_context_tags;
+          problem.study_context_tag_ids = result.study_context_tag_ids;
+          paintTagCatalogue();
+          paintAll();
+        } catch (err) {
+          setPracticeStatus(err instanceof Error ? err.message : String(err), true);
+          restore();
+        }
+      };
+
+      input.addEventListener("click", (event) => event.stopPropagation());
+      input.addEventListener("keydown", (event) => {
+        const key = (event as KeyboardEvent).key;
+        if (key === "Enter") {
+          event.preventDefault();
+          void finish(true);
+        } else if (key === "Escape") {
+          void finish(false);
+        }
+      });
+      input.addEventListener("blur", () => void finish(true));
+    }
+
     // ---- one cell per field ------------------------------------------------
     function fieldCell(field: StudyContextTagField): HTMLElement {
       const cell = h("td", { class: `study-context-tag-cell col-field-${field}` });
@@ -745,56 +913,10 @@ export async function renderBank(
         );
       }
 
-      function beginEdit(): void {
-        const before = tagsOf(problem, field).map((tag) => tag.name);
-        const input = h("input", {
-          class: "study-context-tag-input",
-          list: catalogueListId(field),
-          value: before.join(", "),
-        });
-        cell.replaceChildren(input);
-        input.focus();
-        input.select();
-
-        let settled = false;
-        const finish = async (save: boolean): Promise<void> => {
-          if (settled) return;
-          settled = true;
-          const next = parseTagNames(input.value);
-          paint();
-          const unchanged =
-            next.length === before.length && next.every((n, i) => n === before[i]);
-          if (!save || unchanged) return;
-
-          try {
-            const result = await retagProblem(problem.id, field, next);
-            tagCatalogue = result.study_context_tags;
-            problem.study_context_tag_ids = result.study_context_tag_ids;
-            paintTagCatalogue();
-            paintAll();
-          } catch (err) {
-            setPracticeStatus(err instanceof Error ? err.message : String(err), true);
-            paint();
-          }
-        };
-
-        input.addEventListener("click", (event) => event.stopPropagation());
-        input.addEventListener("keydown", (event) => {
-          const key = (event as KeyboardEvent).key;
-          if (key === "Enter") {
-            event.preventDefault();
-            void finish(true);
-          } else if (key === "Escape") {
-            void finish(false);
-          }
-        });
-        input.addEventListener("blur", () => void finish(true));
-      }
-
       paint();
       cell.addEventListener("click", (event) => {
         event.stopPropagation();
-        if (!cell.querySelector("input")) beginEdit();
+        if (!cell.querySelector("input")) editTagsInPlace(cell, field, paint);
       });
       return cell;
     }
@@ -925,6 +1047,11 @@ export async function renderBank(
         // nothing to show it against.
         item("view screenshot", () => openDetail("screenshot"), hasScreenshot()),
         item("rename", beginRename),
+        item("move to assignment…", () =>
+          editTagsInPlace(nameCell, "assignment", () =>
+            nameCell.replaceChildren(...nameCellContents()),
+          ),
+        ),
         // Straight through, with no table shown and nothing asked. "view
         // solution" is for a table that is wrong; this is for the maintenance
         // pass -- the instructions have changed and the tables written before
@@ -967,7 +1094,7 @@ export async function renderBank(
       h("td", { class: "col-select" }, [boxEl]),
       h("td", { class: "col-label" }, [problem.textbook_problem_number_label ?? ""]),
       nameCell,
-      ...STUDY_CONTEXT_TAG_FIELDS.map(fieldCell),
+      ...TABLE_TAG_FIELDS.map(fieldCell),
       h("td", { class: "col-credit" }, [creditText(standing.latest)]),
       h("td", { class: "col-last" }, [formatLastWorked(standing.lastWorkedAt)]),
       // Nothing rather than "+0": a row never worked should read as quiet, not
@@ -1019,7 +1146,7 @@ export async function renderBank(
     tickAllEl,
     untickAllEl,
   ]);
-  const bankPane = h("div", {}, [filterEl, tableEl, emptyEl, practiceLaunchEl, practiceStatusEl]);
+  const bankPane = h("div", {}, [tableEl, emptyEl, practiceLaunchEl, practiceStatusEl]);
 
   const freeGeneratePane = h("div", {}, [
     renderFreeGenerate(() => {
@@ -1058,10 +1185,6 @@ export async function renderBank(
     }
     openTab = key;
     writeStandingStudyContextTagFilter(typeof key === "number" ? key : null);
-    // A tab change drops the assignment. Homework 1 in 6801 is a different tag
-    // from Homework 1 in 6950, so carrying the id across would filter this tab
-    // by a tag belonging to another class -- an empty table with a lit filter.
-    assignmentTagId = null;
     tabEls.forEach((el, i) => el.classList.toggle("is-on", tabKeys[i] === key));
     // The ticks are dropped on the way in, or practice would act on a selection
     // made against a table that is no longer the one on screen.
