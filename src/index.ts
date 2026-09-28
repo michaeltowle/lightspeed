@@ -374,6 +374,24 @@ export default {
           );
           if (!built.length) return json({ error: "model returned no problems" }, 502);
 
+          // Every request is filed as an assignment of its own, so the
+          // generated tab groups by request the way a class tab groups by
+          // homework. Numbered on from the highest set there is, not from a
+          // count, so a set emptied by deletes does not hand its number on.
+          const { results: sets } = await db
+            .prepare(
+              `SELECT name FROM study_context_tag
+                WHERE field = 'assignment' AND name LIKE 'Generated Set %'`,
+            )
+            .all<{ name: string }>();
+          const setNumber =
+            1 +
+            Math.max(0, ...sets.map((row) => Number(row.name.slice("Generated Set ".length)) || 0));
+          const tagsByField = {
+            ...body.study_context_tags_by_field,
+            assignment: body.study_context_tags_by_field?.assignment ?? [`Generated Set ${setNumber}`],
+          };
+
           const minted: number[] = [];
           for (const problem of built.slice(0, 40)) {
             const id = await insertProblem(db, {
@@ -383,7 +401,7 @@ export default {
               origin: "built_to_order_from_a_prompt",
               mintedWith: promptText,
             });
-            await setAllTagFields(db, id, body.study_context_tags_by_field);
+            await setAllTagFields(db, id, tagsByField);
             minted.push(id);
           }
           return json({ problem_ids: minted });

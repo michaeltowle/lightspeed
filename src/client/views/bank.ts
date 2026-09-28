@@ -699,18 +699,19 @@ export async function renderBank(
   /**
    * The heading an assignment's rows sit under, and the switch that shuts them.
    *
-   * A shut group stays on the page as this one line, with its count and how
-   * much of it has gone cold, so what was set aside is still in view -- which
+   * A shut group stays on the page as this one line, with how much of it is
+   * green on the streak, so what was set aside is still in view -- which
    * a filter that simply hid it would not allow. The box ticks the lot.
    */
   function groupHeaderRow(group: AssignmentGroup): HTMLElement {
     const open = isGroupOpen(group);
     const ids = group.problems.map((p) => p.id);
 
-    // The same rule the rows use: never worked counts as gone cold.
-    const coldCount = group.problems.filter((p) => {
-      const at = standingOf(byProblem.get(p.id)).lastWorkedAt;
-      return !at || daysBetween(new Date(at), new Date()) >= GONE_COLD_AFTER_DAYS;
+    // How much of it is green on the streak -- a run of full marks got alone,
+    // the same test the row's badge colours by. Help or a miss is not green.
+    const greenCount = group.problems.filter((p) => {
+      const standing = standingOf(byProblem.get(p.id));
+      return standing.streak > 0 && streakBadgeClassFor(standing) === "is-last-attempt-unaided";
     }).length;
 
     const setOpen = (on: boolean) => {
@@ -746,9 +747,7 @@ export async function renderBank(
       h("td", { colspan: TABLE_COLUMN_COUNT - 1 }, [
         h("span", { class: "assignment-group-caret" }, [open ? "▾" : "▸"]),
         h("span", { class: "assignment-group-name" }, [group.tag?.name ?? "no assignment"]),
-        h("span", { class: "assignment-group-rollup" }, [
-          `${ids.length}` + (coldCount ? ` · ${coldCount} cold` : ""),
-        ]),
+        h("span", { class: "assignment-group-rollup" }, [`${greenCount}/${ids.length}`]),
       ]),
     ]);
     row.addEventListener("click", () => {

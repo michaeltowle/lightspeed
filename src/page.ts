@@ -293,9 +293,14 @@ export function indexPageDocument(env: Env): string {
   .assignment-group-row.is-open .assignment-group-name {
     font-weight: 600; opacity: 1;
   }
+  /* The share of the group that is green on the streak, in the streak's own
+     green -- so the heading reads as a sum of the badges beneath it. */
   .assignment-group-rollup {
-    margin-left: 0.6rem; font-size: 0.72rem; opacity: 0.5;
-    font-variant-numeric: tabular-nums;
+    margin-left: 0.6rem; font-size: 0.72rem; font-weight: 600;
+    font-variant-numeric: tabular-nums; color: #2f7d4a;
+  }
+  @media (prefers-color-scheme: dark) {
+    .assignment-group-rollup { color: #79c893; }
   }
 
   /* The same chip reads a row and, as a button, filters the table. */
@@ -369,16 +374,13 @@ ${chipColorPaletteCss}
   .row-menu button:disabled:hover { background: none; }
 
   /* What was worked on each of the last seven days. Floated into the bottom
-     right corner, stacked above the deploy badge, so the bank table has the
-     full width of the page to grow across -- it has columns to spare now and
-     no gutter to give up to a rail.
-
-     The offset clears the badge: two lines at 0.72rem/1.6 plus its padding and
-     border come to about 3.4rem, and 1rem of that is the badge's own bottom
-     margin. Static on a phone, where a floating panel would cover the table it
-     is meant to sit beside. */
+     right corner, so the bank table has the full width of the page to grow
+     across -- it has columns to spare now and no gutter to give up to a rail.
+     The deploy badge has the other corner, so this one sits right down in its
+     own. Static on a phone, where a floating panel would cover the table it is
+     meant to sit beside. */
   .rolling-week-practice-ledger {
-    position: fixed; right: 1rem; bottom: 5.1rem; z-index: 2;
+    position: fixed; right: 1rem; bottom: 1rem; z-index: 2;
     width: var(--corner-panel-width);
     padding: 0.55rem 0.65rem; font-size: 0.7rem;
     border: 1px solid rgba(128,128,128,0.3); border-radius: 8px;
@@ -637,8 +639,10 @@ ${chipColorPaletteCss}
   /* An attempt that leaned on the table is still an attempt; it just says so. */
   .took-help { font-size: 0.7rem; opacity: 0.7; color: #b06a2c; }
 
+  /* Bottom left, out of the ledger's corner: the two used to stack on the
+     right and reach half way up the table. */
   #deploy-badge {
-    position: fixed; right: 1rem; bottom: 1rem; z-index: 2;
+    position: fixed; left: 1rem; bottom: 1rem; z-index: 2;
     width: var(--corner-panel-width);
     padding: 0.5rem 0.75rem; border-radius: 8px;
     border: 1px solid rgba(128,128,128,0.3);
