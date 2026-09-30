@@ -61,9 +61,10 @@ const catalogueListId = (field: StudyContextTagField) => `tag-catalogue-${field}
 // pointed at the same class.
 const STANDING_STUDY_CONTEXT_TAG_FILTER_KEY = "lightspeed.standing-study-context-tag-filter";
 
-function readStandingStudyContextTagFilter(): number | null {
+function readStandingStudyContextTagFilter(): BankTabKey | null {
   try {
     const raw = localStorage.getItem(STANDING_STUDY_CONTEXT_TAG_FILTER_KEY);
+    if (raw === "generated") return raw;
     const id = raw === null ? NaN : Number(raw);
     return Number.isInteger(id) ? id : null;
   } catch {
@@ -72,10 +73,9 @@ function readStandingStudyContextTagFilter(): number | null {
   }
 }
 
-function writeStandingStudyContextTagFilter(id: number | null): void {
+function writeStandingStudyContextTagFilter(key: BankTabKey): void {
   try {
-    if (id === null) localStorage.removeItem(STANDING_STUDY_CONTEXT_TAG_FILTER_KEY);
-    else localStorage.setItem(STANDING_STUDY_CONTEXT_TAG_FILTER_KEY, String(id));
+    localStorage.setItem(STANDING_STUDY_CONTEXT_TAG_FILTER_KEY, String(key));
   } catch {
     // As above.
   }
@@ -440,10 +440,9 @@ export async function renderBank(
   const firstTab = (): BankTabKey => classTags()[0]?.id ?? "generated";
   let openTab: BankTabKey =
     startOn ??
-    (remembered !== null && classTags().some((tag) => tag.id === remembered)
-      ? remembered
+    (remembered === "generated" || classTags().some((tag) => tag.id === remembered)
+      ? remembered!
       : firstTab());
-  if (typeof openTab !== "number") writeStandingStudyContextTagFilter(null);
 
   // Problems added from a pane on this page, which the table has not seen.
   // The pane that added them stays put -- its "work it now" is the point of it
@@ -1309,7 +1308,7 @@ export async function renderBank(
       return;
     }
     openTab = key;
-    writeStandingStudyContextTagFilter(typeof key === "number" ? key : null);
+    writeStandingStudyContextTagFilter(key);
     tabEls.forEach((el, i) => el.classList.toggle("is-on", tabKeys[i] === key));
     // The ticks are dropped on the way in, or practice would act on a selection
     // made against a table that is no longer the one on screen.
