@@ -71,10 +71,15 @@ export const transcribeFromScreenshot = (
  * already there. Screenshots pasted with the request go to the model with it
  * and are not kept.
  */
-export const buildToOrderFromPrompt = (prompt: string, shots: UnsavedScreenshot[]) =>
+export const buildToOrderFromPrompt = (
+  prompt: string,
+  shots: UnsavedScreenshot[],
+  tagsByField: Partial<Record<StudyContextTagField, string[]>>,
+) =>
   post<{ problem_ids: number[] }>({
     action: "build_to_order_from_prompt",
     prompt,
+    study_context_tags_by_field: tagsByField,
     unsaved_screenshots: wireScreenshots(shots),
   });
 

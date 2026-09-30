@@ -603,9 +603,12 @@ export async function renderBank(
    * they came in within each group. Variants of a problem are reached by expanding it
    * rather than listed beside it, so the bank stays as long as what was put in.
    *
-   * Groups run in name order, numbers counted as numbers so Homework 10 comes
-   * after Homework 9, and the problems filed under no assignment come last.
-   * The run is served in this order, so a set started from here goes one
+   * Groups run most recently practised first, so the assignment being worked
+   * this week sits at the top. Practice on a variant counts for its original's
+   * assignments, since a variant wears what it was varied from. Groups never
+   * practised follow in name order, numbers counted as numbers so Homework 10
+   * comes after Homework 9, and the problems filed under no assignment come
+   * last. The run is served in this order, so a set started from here goes one
    * assignment at a time.
    */
   function assignmentGroups(): AssignmentGroup[] {
@@ -626,9 +629,22 @@ export async function renderBank(
       if (!assignments.length) groupFor(null).problems.push(problem);
       for (const tag of assignments) groupFor(tag).problems.push(problem);
     }
+    // Latest graded attempt per assignment, across every problem wearing it.
+    // ISO stamps, so the strings compare as the times do.
+    const lastPractisedAt = new Map<number, string>();
+    for (const problem of problems) {
+      const latest = byProblem.get(problem.id)?.at(-1)?.created_at;
+      if (!latest) continue;
+      for (const tag of tagsOf(problem, "assignment")) {
+        if (latest > (lastPractisedAt.get(tag.id) ?? "")) lastPractisedAt.set(tag.id, latest);
+      }
+    }
     return [...byTag.values()].sort((a, b) => {
       if (!a.tag) return 1;
       if (!b.tag) return -1;
+      const aAt = lastPractisedAt.get(a.tag.id) ?? "";
+      const bAt = lastPractisedAt.get(b.tag.id) ?? "";
+      if (aAt !== bAt) return aAt < bAt ? 1 : -1;
       return a.tag.name.localeCompare(b.tag.name, undefined, { numeric: true });
     });
   }
@@ -1254,11 +1270,14 @@ export async function renderBank(
   ]);
   const bankPane = h("div", {}, [tableEl, emptyEl, practiceLaunchEl, practiceStatusEl]);
 
-  const freeGeneratePane = h("div", {}, [
-    renderFreeGenerate(() => {
+  const freeGenerate = renderFreeGenerate(
+    () => {
       bankIsStale = true;
-    }, go),
-  ]);
+    },
+    () => tagCatalogue,
+    go,
+  );
+  const freeGeneratePane = h("div", {}, [freeGenerate.el]);
 
   const instructions = renderEditablePerJobInstructionsToLlm();
   const instructionsPane = h("div", {}, [instructions.el]);
@@ -1317,7 +1336,17 @@ export async function renderBank(
       },
       ["add assignment"],
     ),
-    h("button", { type: "button", onclick: () => showPane(freeGeneratePane) }, ["free generate"]),
+    h(
+      "button",
+      {
+        type: "button",
+        onclick: () => {
+          freeGenerate.refreshTagChips();
+          showPane(freeGeneratePane);
+        },
+      },
+      ["free generate"],
+    ),
     h(
       "button",
       {

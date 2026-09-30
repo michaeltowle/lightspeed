@@ -18,42 +18,22 @@ export function parseTagNames(raw: string): string[] {
 }
 
 /**
- * Adding a whole assignment at once.
+ * Which class, and which piece of work: the two tags a batch of new problems
+ * is filed under. Shared by the two panes that mint problems in bulk.
  *
- * The unit here is the assignment, not the problem: the class and the piece of
- * work are stated once at the top, every screenshot for the whole thing is
- * pasted under them, and one press turns the lot into problems wearing both
- * tags. That is the only grouping there is -- an assignment is a label its
- * problems wear, never a parent -- which is what lets the set be filtered back
- * out of the bank and served again weeks later without anything owning it.
- *
- * The press ends by offering the set straight back as a run, because the point
- * of adding a homework is to sit down and work it, not to go and find it again.
+ * One class, chosen rather than typed: the classes are known and few, and an
+ * assignment belongs to exactly one of them. A class that does not exist yet
+ * is still reachable -- the bank's own tag editing creates one by name.
  */
-export function renderAddAssignment(
-  onProblemsArrived: () => void,
+export function renderClassAndAssignmentFilingFields(
   getTagCatalogue: () => StudyContextTag[],
-  go: (view: View) => void,
-): { el: HTMLElement; refreshTagChips: () => void } {
+  assignmentPlaceholder = "",
+): {
+  el: HTMLElement;
+  tagsToApply: () => Partial<Record<StudyContextTagField, string[]>>;
+  refreshTagChips: () => void;
+} {
   let chosenClass: string | null = null;
-  // What the last read produced, kept so the set can be worked without being
-  // looked up again.
-  let justAdded: number[] = [];
-  // Screenshots the last read could make nothing of. They are gone from the
-  // server by the time this is set; re-pasting is the retry.
-  let unreadableScreenshotCount = 0;
-
-  const statusEl = h("div", { id: "out" });
-  const setStatus = (text: string, isError = false) => {
-    statusEl.textContent = text;
-    statusEl.className = isError ? "err" : "";
-  };
-
-  // ---- which class, and which piece of work ---------------------------------
-  //
-  // One class, chosen rather than typed: the classes are known and few, and an
-  // assignment belongs to exactly one of them. A class that does not exist yet
-  // is still reachable -- the bank's own tag editing creates one by name.
   const classChipsEl = h("div", { class: "compose-field-chips" });
 
   function paintClassChips(): void {
@@ -80,7 +60,7 @@ export function renderAddAssignment(
     );
   }
 
-  const assignmentEl = h("input", { type: "text" });
+  const assignmentEl = h("input", { type: "text", placeholder: assignmentPlaceholder });
 
   const tagsToApply = (): Partial<Record<StudyContextTagField, string[]>> => {
     const out: Partial<Record<StudyContextTagField, string[]>> = {};
@@ -89,6 +69,54 @@ export function renderAddAssignment(
     if (assignment) out.assignment = [assignment];
     return out;
   };
+
+  paintClassChips();
+
+  const el = h("div", { class: "compose-fields" }, [
+    // No label over the chips: 6801 names its own field, and the word only
+    // repeated what the chips already said.
+    h("div", { class: "compose-field" }, [classChipsEl]),
+    h("div", { class: "compose-field" }, [
+      h("span", { class: "compose-field-name" }, ["assignment name"]),
+      assignmentEl,
+    ]),
+  ]);
+
+  return { el, tagsToApply, refreshTagChips: paintClassChips };
+}
+
+/**
+ * Adding a whole assignment at once.
+ *
+ * The unit here is the assignment, not the problem: the class and the piece of
+ * work are stated once at the top, every screenshot for the whole thing is
+ * pasted under them, and one press turns the lot into problems wearing both
+ * tags. That is the only grouping there is -- an assignment is a label its
+ * problems wear, never a parent -- which is what lets the set be filtered back
+ * out of the bank and served again weeks later without anything owning it.
+ *
+ * The press ends by offering the set straight back as a run, because the point
+ * of adding a homework is to sit down and work it, not to go and find it again.
+ */
+export function renderAddAssignment(
+  onProblemsArrived: () => void,
+  getTagCatalogue: () => StudyContextTag[],
+  go: (view: View) => void,
+): { el: HTMLElement; refreshTagChips: () => void } {
+  // What the last read produced, kept so the set can be worked without being
+  // looked up again.
+  let justAdded: number[] = [];
+  // Screenshots the last read could make nothing of. They are gone from the
+  // server by the time this is set; re-pasting is the retry.
+  let unreadableScreenshotCount = 0;
+
+  const statusEl = h("div", { id: "out" });
+  const setStatus = (text: string, isError = false) => {
+    statusEl.textContent = text;
+    statusEl.className = isError ? "err" : "";
+  };
+
+  const fields = renderClassAndAssignmentFilingFields(getTagCatalogue);
 
   // ---- the screenshots ------------------------------------------------------
   const tray = renderUnsavedScreenshots((message) => setStatus(message, true));
@@ -147,11 +175,11 @@ export function renderAddAssignment(
 
   const readEl = h("button", { type: "button", id: "go" }, ["load problems"]);
   readEl.addEventListener("click", async () => {
-    if (!chosenClass) {
+    if (!fields.tagsToApply().class) {
       setStatus("pick a class first", true);
       return;
     }
-    if (!parseTagNames(assignmentEl.value).length) {
+    if (!fields.tagsToApply().assignment) {
       setStatus("name the assignment first", true);
       return;
     }
@@ -166,7 +194,7 @@ export function renderAddAssignment(
       const read = await transcribeFromScreenshot(
         tray.screenshots,
         noteEl.value,
-        tagsToApply(),
+        fields.tagsToApply(),
       );
       tray.empty();
       unreadableScreenshotCount = read.unreadable_screenshot_count;
@@ -178,19 +206,8 @@ export function renderAddAssignment(
     }
   });
 
-  paintClassChips();
-
   const el = h("div", {}, [
-    h("div", { class: "compose-fields" }, [
-      // No label over the chips: 6801 names its own field, and the word only
-      // repeated what the chips already said.
-      h("div", { class: "compose-field" }, [classChipsEl]),
-      h("div", { class: "compose-field" }, [
-        h("span", { class: "compose-field-name" }, ["assignment name"]),
-        assignmentEl,
-      ]),
-    ]),
-
+    fields.el,
     tray.el,
     noteEl,
     h("div", { class: "row" }, [readEl]),
@@ -199,5 +216,5 @@ export function renderAddAssignment(
     statusEl,
   ]);
 
-  return { el, refreshTagChips: paintClassChips };
+  return { el, refreshTagChips: fields.refreshTagChips };
 }

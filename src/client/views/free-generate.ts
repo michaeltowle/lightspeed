@@ -1,7 +1,8 @@
 import { solveEachStepByStep, buildToOrderFromPrompt, openPracticeRun } from "../api";
 import { h } from "../lib/dom";
 import { renderUnsavedScreenshots } from "../lib/unsaved-screenshots";
-import type { View } from "../types";
+import type { StudyContextTag, View } from "../types";
+import { renderClassAndAssignmentFilingFields } from "./add-assignment";
 
 /**
  * Free generate: a prompt window, and screenshots pasted under it.
@@ -9,18 +10,21 @@ import type { View } from "../types";
  * Say what to practice, in whatever words -- how many, how hard -- and the
  * model finds problems that fit or invents them. The bank does not go with it,
  * so a pasted screenshot is how a request points at a problem: "like this one"
- * points at a page rather than describing it. There is no count field and no
- * filing: the request carries the count, and each request is filed as a
- * generated set of its own.
+ * points at a page rather than describing it. There is no count field: the
+ * request carries the count. The class and the assignment are both optional;
+ * a request given no assignment is filed as a generated set of its own.
  *
  * The problems are solved as they land, so they are gradeable by the time they
  * are offered, and the press ends by offering them straight back as a run.
  */
 export function renderFreeGenerate(
   onProblemsArrived: () => void,
+  getTagCatalogue: () => StudyContextTag[],
   go: (view: View) => void,
-): HTMLElement {
+): { el: HTMLElement; refreshTagChips: () => void } {
   let justMade: number[] = [];
+
+  const fields = renderClassAndAssignmentFilingFields(getTagCatalogue, "blank files it as a generated set");
 
   const statusEl = h("div", { id: "out" });
   const setStatus = (text: string, isError = false) => {
@@ -67,7 +71,11 @@ export function renderFreeGenerate(
     workRowEl.hidden = true;
     setStatus("finding problems...");
     try {
-      const { problem_ids } = await buildToOrderFromPrompt(request, tray.screenshots);
+      const { problem_ids } = await buildToOrderFromPrompt(
+        request,
+        tray.screenshots,
+        fields.tagsToApply(),
+      );
       tray.empty();
       const n = problem_ids.length;
       const plural = n === 1 ? "" : "s";
@@ -94,8 +102,8 @@ export function renderFreeGenerate(
   }
 
   generateEl.addEventListener("click", () => void generate());
-  // The request is the only thing on the page, so sending it should not need
-  // the mouse.
+  // The request is the one thing on the page that must be filled, so sending
+  // it should not need the mouse.
   promptEl.addEventListener("keydown", (event) => {
     if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
       event.preventDefault();
@@ -103,11 +111,14 @@ export function renderFreeGenerate(
     }
   });
 
-  return h("div", {}, [
+  const el = h("div", {}, [
+    fields.el,
     promptEl,
     tray.el,
     h("div", { class: "row" }, [generateEl]),
     workRowEl,
     statusEl,
   ]);
+
+  return { el, refreshTagChips: fields.refreshTagChips };
 }
