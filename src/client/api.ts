@@ -203,7 +203,6 @@ export const openPracticeRun = (problemIds: number[]) =>
 export const recordProblemWorked = (
   runId: number,
   ordinal: number,
-  elapsedMs: number,
   neededHelp: boolean,
   // Never compulsory: null is "did not say", not "average".
   workingSpeed: "slow" | "mid" | "fast" | null,
@@ -213,7 +212,6 @@ export const recordProblemWorked = (
     run_id: runId,
     id: ordinal,
     self_reported_working_speed: workingSpeed ?? "",
-    elapsed_ms: elapsedMs,
     needed_help: neededHelp,
   });
 
@@ -225,10 +223,17 @@ export const recordProblemWorked = (
 export const peekAtManeuvers = (problemId: number) =>
   post<{ maneuvers: Maneuver[] }>({ action: "peek_at_maneuvers", id: problemId });
 
-export const revealAnswers = (runId: number) =>
-  post<{ rows: AnswerRow[]; maneuvers: Maneuver[]; marks: PerManeuverCreditMark[] }>({
+/** The whole run, which closes it -- or one attempt, graded mid-run, which does not. */
+export const revealAnswers = (runId: number, attemptId?: number) =>
+  post<{
+    rows: AnswerRow[];
+    maneuvers: Maneuver[];
+    marks: PerManeuverCreditMark[];
+    run: { created_at: string; completed_at: string | null };
+  }>({
     action: "reveal_answers",
     run_id: runId,
+    ...(attemptId === undefined ? {} : { attempt_id: attemptId }),
   });
 
 /**

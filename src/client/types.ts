@@ -57,7 +57,6 @@ export interface PerManeuverCreditMark {
 export interface AnswerRow {
   attempt_id: number;
   ordinal: number;
-  elapsed_ms: number | null;
   outcome: AttemptOutcome | null;
   // The credit earned, as a fraction in two pieces. Both null until graded.
   count_of_maneuvers_got: number | null;
@@ -134,10 +133,9 @@ export interface UnsavedScreenshot {
 export type View =
   | { name: "bank" }
   | {
-      name: "problem";
+      name: "continuous_scroll_practice_run";
       runId: number;
       problems: ServedProblem[];
-      index: number;
     }
   | { name: "answers"; runId: number };
 

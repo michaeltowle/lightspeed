@@ -497,7 +497,7 @@ export async function renderBank(
       const order = shownProblems().filter((p) => ticked.has(p.id)).map((p) => p.id);
       const run = await openPracticeRun(order);
       if (!run.problems.length) throw new Error("nothing to serve");
-      go({ name: "problem", runId: run.run_id, problems: run.problems, index: 0 });
+      go({ name: "continuous_scroll_practice_run", runId: run.run_id, problems: run.problems });
     } catch (err) {
       setPracticeStatus(err instanceof Error ? err.message : String(err), true);
       practiceEl.disabled = false;

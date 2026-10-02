@@ -1,7 +1,7 @@
 import { h } from "./lib/dom";
 import { renderAnswers } from "./views/answers";
 import { renderBank } from "./views/bank";
-import { renderProblem } from "./views/problem";
+import { renderContinuousScrollPracticeRun } from "./views/continuous-scroll-practice-run";
 import { mountTrophyWall, refreshTrophyWall, setTrophyWallVisible } from "./views/trophy-wall";
 import type { View } from "./types";
 
@@ -16,9 +16,9 @@ function go(view: View): void {
       setTrophyWallVisible(false);
       void renderBank(root, go);
       break;
-    case "problem":
+    case "continuous_scroll_practice_run":
       setTrophyWallVisible(true);
-      renderProblem(root, view.runId, view.problems, view.index, go);
+      renderContinuousScrollPracticeRun(root, view.runId, view.problems, go);
       break;
     case "answers":
       setTrophyWallVisible(true);

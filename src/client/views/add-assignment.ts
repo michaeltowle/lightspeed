@@ -135,7 +135,7 @@ export function renderAddAssignment(
       // Exactly what was just added, in the order it was read off the page.
       const run = await openPracticeRun(justAdded);
       if (!run.problems.length) throw new Error("nothing to serve");
-      go({ name: "problem", runId: run.run_id, problems: run.problems, index: 0 });
+      go({ name: "continuous_scroll_practice_run", runId: run.run_id, problems: run.problems });
     } catch (err) {
       setStatus(err instanceof Error ? err.message : String(err), true);
       workEl.disabled = false;

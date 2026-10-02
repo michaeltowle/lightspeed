@@ -166,7 +166,6 @@ export default {
       attempt_id?: number;
       maneuver_id?: number;
       got_it?: boolean;
-      elapsed_ms?: number;
       needed_help?: boolean;
       marked?: boolean;
       default_service_style?: string;
@@ -752,6 +751,9 @@ export default {
           });
         }
 
+        // Help and speed, saved as they are said. The set is timed rather
+        // than its problems, so elapsed_ms is no longer written; older
+        // attempts keep theirs.
         case "record_problem_worked": {
           // Never compulsory, so anything that is not one of the three words is
           // no answer rather than a bad one.
@@ -761,36 +763,54 @@ export default {
           await db
             .prepare(
               `UPDATE problem_attempt
-                  SET elapsed_ms = ?, needed_help_during_attempt = ?,
-                      self_reported_working_speed = ?
+                  SET needed_help_during_attempt = ?, self_reported_working_speed = ?
                 WHERE practice_run_id = ? AND ordinal = ?`,
             )
-            .bind(
-              Math.max(0, Math.round(Number(body.elapsed_ms) || 0)),
-              body.needed_help ? 1 : 0,
-              speed,
-              body.run_id,
-              body.id,
-            )
+            .bind(body.needed_help ? 1 : 0, speed, body.run_id, body.id)
             .run();
           return json({ ok: true });
         }
 
         // The maneuver table is held back until the run asks for it, rather
         // than shipped with the problems and hidden in the DOM.
+        //
+        // With an attempt id, only that one problem is revealed: graded as it
+        // is worked, in the middle of a run. The run is not over for that, so
+        // it is left open; the answers page closes it.
         case "reveal_answers": {
-          await db
-            .prepare(
-              `UPDATE practice_run
-                  SET completed_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
-                WHERE id = ? AND completed_at IS NULL`,
-            )
+          const oneAttempt = body.attempt_id ?? null;
+          if (oneAttempt === null) {
+            // Done stops the set's clock, once: the answers page is rebuilt
+            // after a re-solve, and that is not the set finishing again.
+            const closed = await db
+              .prepare(
+                `UPDATE practice_run
+                    SET completed_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+                  WHERE id = ? AND completed_at IS NULL`,
+              )
+              .bind(body.run_id)
+              .run();
+            // Saying nothing about the speed is saying mid. With no moving on
+            // from one problem to the next, done is the last chance to say it.
+            if (closed.meta.changes) {
+              await db
+                .prepare(
+                  `UPDATE problem_attempt SET self_reported_working_speed = 'mid'
+                    WHERE practice_run_id = ? AND self_reported_working_speed IS NULL
+                      AND outcome IS NOT 'skipped'`,
+                )
+                .bind(body.run_id)
+                .run();
+            }
+          }
+          const run = await db
+            .prepare(`SELECT created_at, completed_at FROM practice_run WHERE id = ?`)
             .bind(body.run_id)
-            .run();
+            .first();
 
           const { results: rows } = await db
             .prepare(
-              `SELECT a.id AS attempt_id, a.ordinal, a.elapsed_ms, a.outcome,
+              `SELECT a.id AS attempt_id, a.ordinal, a.outcome,
                       a.needed_help_during_attempt, a.marked_for_further_practice,
                       a.count_of_maneuvers_got, a.count_of_maneuvers_faced,
                       a.why_this_one_went_wrong,
@@ -799,10 +819,10 @@ export default {
                       p.editable_per_problem_instructions_to_llm
                  FROM problem_attempt a
                  JOIN math_practice_problem p ON p.id = a.math_practice_problem_id
-                WHERE a.practice_run_id = ?
+                WHERE a.practice_run_id = ?1 AND (?2 IS NULL OR a.id = ?2)
                 ORDER BY a.ordinal`,
             )
-            .bind(body.run_id)
+            .bind(body.run_id, oneAttempt)
             .all<{ attempt_id: number; problem_id: number }>();
 
           const { results: maneuvers } = await db
@@ -815,10 +835,10 @@ export default {
                  FROM maneuver m
                 WHERE m.math_practice_problem_id IN (
                         SELECT math_practice_problem_id FROM problem_attempt
-                         WHERE practice_run_id = ?)
+                         WHERE practice_run_id = ?1 AND (?2 IS NULL OR id = ?2))
                 ORDER BY m.math_practice_problem_id, m.ordinal`,
             )
-            .bind(body.run_id)
+            .bind(body.run_id, oneAttempt)
             .all<{ math_practice_problem_id: number }>();
 
           const { results: marks } = await db
@@ -826,12 +846,12 @@ export default {
               `SELECT c.problem_attempt_id, c.maneuver_id, c.got_it
                  FROM per_maneuver_credit_mark c
                  JOIN problem_attempt a ON a.id = c.problem_attempt_id
-                WHERE a.practice_run_id = ?`,
+                WHERE a.practice_run_id = ?1 AND (?2 IS NULL OR a.id = ?2)`,
             )
-            .bind(body.run_id)
+            .bind(body.run_id, oneAttempt)
             .all();
 
-          return json({ rows, maneuvers, marks });
+          return json({ rows, maneuvers, marks, run });
         }
 
         // Grading is per maneuver; the attempt's own outcome is a rollup of

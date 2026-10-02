@@ -20,13 +20,19 @@ import type {
 } from "../types";
 
 
-function answerRow(
+/**
+ * One attempt, graded. On the answers page it is a whole list item. Graded in
+ * the middle of a run it sits under the statement already on screen, so it
+ * leaves out the meta line and the statement and says what it rolled up to.
+ */
+export function answerRow(
   row: AnswerRow,
   maneuvers: Maneuver[],
   marks: PerManeuverCreditMark[],
   onReSolved: () => void,
+  inline?: { onOutcome: (outcome: AttemptOutcome | null) => void },
 ): HTMLElement {
-  const item = h("li", {});
+  const item = h(inline ? "div" : "li", { class: inline ? "graded-inline" : "" });
   let marked = row.marked_for_further_practice === 1;
   let outcome: AttemptOutcome | null = row.outcome;
 
@@ -154,6 +160,7 @@ function answerRow(
               outcome = result.outcome;
               takeMarks(result.marks);
               paintOutcome();
+              inline?.onOutcome(outcome);
               void refreshTrophyWall();
               // A missed step is almost always something to practise again, so
               // it ticks the box for you. Changing the grade afterwards does not
@@ -199,21 +206,22 @@ function answerRow(
 
   paintMark();
   paintOutcome();
-  item.append(
-    h("div", { class: "meta" }, [
+  const heading = inline
+    ? []
+    : [h("div", { class: "meta" }, [
       `#${row.ordinal + 1}`,
       ...(row.textbook_problem_number_label
         ? ["  ·  ", h("span", { class: "textbook-problem-number-label" }, [
             row.textbook_problem_number_label,
           ])]
         : []),
-      "  ·  ",
-      row.elapsed_ms === null ? "not worked" : formatElapsed(row.elapsed_ms),
       ...(row.needed_help_during_attempt === 1
         ? ["  ·  ", h("span", { class: "took-help" }, ["took help"])]
         : []),
     ]),
-    problemEl,
+    problemEl];
+  item.append(
+    ...heading,
     answerEl,
     tableEl,
     whyEl,
@@ -238,8 +246,9 @@ export async function renderAnswers(
   let rows: AnswerRow[];
   let maneuvers: Maneuver[];
   let marks: PerManeuverCreditMark[];
+  let run: { created_at: string; completed_at: string | null };
   try {
-    ({ rows, maneuvers, marks } = await revealAnswers(runId));
+    ({ rows, maneuvers, marks, run } = await revealAnswers(runId));
   } catch (err) {
     root.replaceChildren(
       h("div", { id: "out", class: "err" }, [
@@ -254,23 +263,40 @@ export async function renderAnswers(
   const marksOf = (attemptId: number) =>
     marks.filter((m) => m.problem_attempt_id === attemptId);
 
-  const worked = rows.filter((row) => row.elapsed_ms !== null);
-  const total = worked.reduce((sum, row) => sum + (row.elapsed_ms ?? 0), 0);
+  // The set is timed, opening to done, and not the problems in it.
+  const total = run.completed_at
+    ? Date.parse(run.completed_at) - Date.parse(run.created_at)
+    : null;
 
   // Solving a problem from this page changes what there is to grade, so the
   // page is rebuilt from the worker rather than patched in place.
   const again = () => void renderAnswers(root, runId, go);
 
+  const rowEl = (row: AnswerRow) =>
+    answerRow(row, maneuversOf(row.problem_id), marksOf(row.attempt_id), again);
+
+  // What was graded as it was worked, and what was passed over, has had its
+  // reveal already. The page leads with what is left, and keeps the rest
+  // folded underneath, there to go back to but not in the way.
+  const left = rows.filter((row) => row.outcome === null);
+  const settled = rows.filter((row) => row.outcome !== null);
+
   root.replaceChildren(
     h("h1", {}, ["answers"]),
     h("div", { class: "meta" }, [
-      `${rows.length} problems  ·  ${formatElapsed(total)} total`,
+      `${rows.length} problems`,
+      ...(total === null ? [] : [`  ·  ${formatElapsed(total)}`]),
+      ...(settled.length ? [`  ·  ${left.length} left to grade`] : []),
     ]),
-    h(
-      "ul",
-      { id: "saved" },
-      rows.map((row) => answerRow(row, maneuversOf(row.problem_id), marksOf(row.attempt_id), again)),
-    ),
+    h("ul", { class: "answer-list" }, left.map(rowEl)),
+    ...(settled.length
+      ? [
+          h("details", { class: "already-graded-or-skipped" }, [
+            h("summary", {}, [`already graded or skipped (${settled.length})`]),
+            h("ul", { class: "answer-list" }, settled.map(rowEl)),
+          ]),
+        ]
+      : []),
     h("div", { class: "row" }, [
       h("button", { type: "button", id: "go", onclick: () => go({ name: "bank" }) }, ["home"]),
     ]),

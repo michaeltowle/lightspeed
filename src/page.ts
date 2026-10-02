@@ -483,6 +483,8 @@ ${chipColorPaletteCss}
   /* Instructions to the model, so it wears a dashed edge -- a different kind
      of writing from the why box above it. */
   .editable-per-problem-instructions-to-llm-box { border-style: dashed; }
+  /* One line means one line: the page-wide textarea floor is for prompts. */
+  .why-it-went-wrong-box, .editable-per-problem-instructions-to-llm-box { min-height: 2rem; }
 
   /* Free generate is one box, so it can afford to be a generous one. */
   .free-generate-prompt { margin: 1rem 0 0.5rem; font-size: 0.95rem; }
@@ -524,15 +526,27 @@ ${chipColorPaletteCss}
   .textbook-problem-number-label {
     font-weight: 600; opacity: 0.85; font-variant-numeric: tabular-nums;
   }
+  /* Set in the maths font, so the words and the symbols read as one page of
+     an exam rather than prose with formulas dropped into it. */
   .problem-body {
-    font-size: 1.15rem; padding: 1.25rem; margin-bottom: 1rem;
+    font-family: KaTeX_Main, "Times New Roman", serif;
+    font-size: 1.08rem; line-height: 1.4; padding: 0.9rem 1rem; margin-bottom: 0.6rem;
     border: 1px solid rgba(128,128,128,0.35); border-radius: 8px;
     background: rgba(127,127,127,0.05);
   }
+  .problem-body p { margin: 0 0 0.35em; }
+  .problem-body p:last-child { margin-bottom: 0; }
+  .problem-body .katex-display { margin: 0.35em 0; }
+  /* In a run, and on the answers page, the problem is the page: no card. */
+  .continuous-scroll-practice-run .problem-body,
+  .answer-list .problem-body {
+    padding: 0; margin-bottom: 0.25rem; border: none; background: none;
+  }
   .final-answer {
-    font-size: 1.35rem; font-weight: 600;
-    padding: 0.85rem 1.1rem; margin-bottom: 0.5rem;
-    border: 1px solid rgba(120,170,110,0.55); border-radius: 8px;
+    font-family: KaTeX_Main, "Times New Roman", serif;
+    font-size: 1.05rem; font-weight: 600;
+    padding: 0.35rem 0.7rem; margin: 0.4rem 0 0.3rem;
+    border: 1px solid rgba(120,170,110,0.55); border-radius: 6px;
     background: rgba(120,170,110,0.12);
   }
 
@@ -541,8 +555,8 @@ ${chipColorPaletteCss}
      produces. The result cells are the grading surface -- click one to say you
      got it, click again to say you did not. */
   .maneuver-table {
-    width: 100%; border-collapse: collapse; margin: 0.5rem 0 0;
-    font-size: 0.85rem;
+    width: 100%; border-collapse: collapse; margin: 0.4rem 0 0;
+    font-size: 0.8rem; line-height: 1.35;
   }
   .maneuver-table th {
     text-align: left; font-weight: 500; font-size: 0.68rem; opacity: 0.5;
@@ -550,7 +564,7 @@ ${chipColorPaletteCss}
     border-bottom: 1px solid rgba(128,128,128,0.35);
   }
   .maneuver-table td {
-    padding: 0.45rem 0.5rem; vertical-align: top;
+    padding: 0.25rem 0.45rem; vertical-align: top;
     border-bottom: 1px solid rgba(128,128,128,0.18);
   }
   .maneuver-name { font-weight: 600; width: 11rem; }
@@ -614,16 +628,17 @@ ${chipColorPaletteCss}
   #out:empty { display: none; }
   #out.err { border-color: #c0392b; color: #c0392b; }
 
-  #saved { list-style: none; margin: 0; padding: 0; }
-  #saved > li {
+  .answer-list { list-style: none; margin: 0; padding: 0; }
+  .answer-list > li {
     border: 1px solid rgba(128,128,128,0.35); border-radius: 8px;
-    padding: 0.75rem 0.9rem; margin-bottom: 0.75rem;
+    padding: 0.6rem 0.8rem; margin-bottom: 0.5rem;
     background: rgba(127,127,127,0.03);
   }
   .acts {
     display: flex; gap: 0.4rem; align-items: center;
     flex-wrap: wrap; margin-top: 0.6rem;
   }
+  .acts button { padding: 0.2rem 0.75rem; font-size: 0.8rem; }
   .acts .outcome-readout { font-size: 0.75rem; opacity: 0.7; }
   .acts .outcome-readout strong { opacity: 1; }
   .mark {
@@ -631,13 +646,71 @@ ${chipColorPaletteCss}
     font-size: 0.75rem; opacity: 0.7; cursor: pointer; user-select: none;
   }
   .mark input { accent-color: #b06a2c; margin: 0; }
-  #saved > li.marked {
+  .answer-list > li.marked {
     border-color: rgba(176,106,44,0.65);
     background: rgba(176,106,44,0.06);
   }
-  #saved > li.marked .mark { opacity: 1; font-weight: 600; }
+  .answer-list > li.marked .mark { opacity: 1; font-weight: 600; }
   /* An attempt that leaned on the table is still an attempt; it just says so. */
   .took-help { font-size: 0.7rem; opacity: 0.7; color: #b06a2c; }
+
+  /* ---- the run, on one page ----------------------------------------------
+     Set like an exam paper rather than a chat: the statement in the maths
+     font, the number hanging in the margin, and no card round each problem.
+     Problems alternate between paper and a faint grey so the eye can hold its
+     place, and both are opaque -- the wall stays behind the page, not under
+     the writing. */
+  .continuous-scroll-practice-run { list-style: none; margin: 0 0 1rem; padding: 0; }
+  .continuous-scroll-practice-run > li {
+    display: grid; grid-template-columns: 2.6rem 1fr; gap: 0 0.4rem;
+    padding: 0.75rem 0.9rem 0.6rem 0.5rem;
+    background: Canvas;
+  }
+  .continuous-scroll-practice-run > li:nth-child(even) {
+    background: color-mix(in srgb, Canvas 92%, gray);
+  }
+  .continuous-scroll-practice-run > li.is-skipped .continuous-scroll-practice-run-content > .problem-body {
+    opacity: 0.4;
+  }
+  .continuous-scroll-practice-run-number {
+    font-family: KaTeX_Main, "Times New Roman", serif;
+    font-weight: 700; font-size: 1.05rem; text-align: right;
+    display: flex; flex-direction: column; align-items: flex-end; gap: 0.1rem;
+  }
+  .continuous-scroll-practice-run-number .textbook-problem-number-label {
+    font-family: system-ui, -apple-system, sans-serif;
+    font-size: 0.65rem; font-weight: 600; opacity: 0.6;
+  }
+  .continuous-scroll-practice-run-content { min-width: 0; }
+  @media (max-width: 30rem) {
+    .continuous-scroll-practice-run > li { grid-template-columns: 1.9rem 1fr; padding-right: 0.5rem; }
+  }
+  .continuous-scroll-practice-run-controls { gap: 0.35rem; margin-top: 0.35rem; }
+  .continuous-scroll-practice-run-controls button:not(.speed-report-button) {
+    padding: 0.2rem 0.75rem; font-size: 0.8rem;
+  }
+  /* The end of the set, and of its clock. Pinned bottom right, so it is in
+     reach from any problem on the page. */
+  .continuous-scroll-practice-run-done {
+    position: fixed; right: 1.25rem; bottom: 1.25rem; z-index: 3;
+    padding: 0.8rem 2.2rem; font-size: 1.1rem; font-weight: 700;
+    border: 2px solid #b06a2c; border-radius: 10px;
+    background: #b06a2c; color: #fff;
+    box-shadow: 0 4px 14px rgba(0,0,0,0.18);
+  }
+  .continuous-scroll-practice-run-done:hover { background: #9a5a22; border-color: #9a5a22; }
+  .continuous-scroll-practice-run-status { font-size: 0.75rem; opacity: 0.6; }
+  .continuous-scroll-practice-run-status.err { color: #c0392b; opacity: 1; }
+  /* Graded where it sits: the same answer, table and boxes as the answers
+     page, minus the statement already above it. */
+  .graded-inline { margin-top: 0.5rem; }
+  .graded-inline.marked .mark { opacity: 1; font-weight: 600; }
+
+  /* What was graded as it was worked, folded under what is left. */
+  .already-graded-or-skipped { margin: 0.5rem 0 1rem; }
+  .already-graded-or-skipped > summary {
+    cursor: pointer; font-size: 0.8rem; opacity: 0.65; margin-bottom: 0.5rem;
+  }
 
   /* Bottom left, out of the ledger's corner: the two used to stack on the
      right and reach half way up the table. */
