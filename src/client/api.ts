@@ -161,6 +161,22 @@ export const retagProblem = (
     study_context_tag_names: names,
   });
 
+/** Many at once, with their variants. Hands back every problem it touched. */
+export const retagProblems = (
+  ids: number[],
+  field: StudyContextTagField,
+  names: string[],
+) =>
+  post<{
+    study_context_tags: StudyContextTag[];
+    study_context_tag_ids_by_problem: Record<number, number[]>;
+  }>({
+    action: "retag_problems",
+    problem_ids: ids,
+    field,
+    study_context_tag_names: names,
+  });
+
 export const renameProblem = (id: number, name: string) =>
   post<{ ok: true; name: string }>({ action: "rename_problem", id, name });
 

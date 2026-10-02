@@ -540,6 +540,44 @@ export default {
           });
         }
 
+        // A whole assignment group in one request, so forty problems are not
+        // forty. A variant wears what it was varied from, so it goes too.
+        case "retag_problems": {
+          if (!isStudyContextTagField(body.field)) {
+            return json({ error: `bad field: ${String(body.field)}` }, 400);
+          }
+          const requested = (body.problem_ids ?? []).filter((id) => Number.isInteger(id));
+          if (!requested.length) return json({ error: "no problems given" }, 400);
+          const placeholders = requested.map(() => "?").join(", ");
+          const { results: targets } = await db
+            .prepare(
+              `SELECT id FROM math_practice_problem
+                WHERE id IN (${placeholders}) OR parent_problem_varied_from IN (${placeholders})`,
+            )
+            .bind(...requested, ...requested)
+            .all<{ id: number }>();
+          const names = normalizeTagNames(body.study_context_tag_names ?? []);
+          for (const { id } of targets) await setTagsForField(db, id, body.field, names);
+
+          const ids = targets.map((t) => t.id);
+          const { results } = await db
+            .prepare(
+              `SELECT math_practice_problem_id AS id, study_context_tag_id AS tag_id
+                 FROM study_context_tag_membership
+                WHERE math_practice_problem_id IN (${ids.map(() => "?").join(", ")})`,
+            )
+            .bind(...ids)
+            .all<{ id: number; tag_id: number }>();
+          const tagIdsByProblem: Record<number, number[]> = Object.fromEntries(
+            ids.map((id) => [id, []]),
+          );
+          for (const row of results) tagIdsByProblem[row.id].push(row.tag_id);
+          return json({
+            study_context_tags: await tagCatalogue(db),
+            study_context_tag_ids_by_problem: tagIdsByProblem,
+          });
+        }
+
         case "rename_study_context_tag": {
           // The tag row itself, so every problem wearing it follows -- in every
           // class, since a tag is one row per (field, name) and not one per class.

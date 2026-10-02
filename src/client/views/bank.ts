@@ -4,6 +4,7 @@ import {
   listTheBank,
   openPracticeRun,
   renameStudyContextTag,
+  retagProblems,
   peekAtManeuvers,
   renameProblem,
   retagProblem,
@@ -766,9 +767,66 @@ export async function renderBank(
       paintAll();
     });
 
-    // "no assignment" is the absence of a tag, so there is nothing to rename.
+    // "no assignment" is the absence of a tag, so there is nothing to rename --
+    // but its problems can still be moved.
     const tag = group.tag;
-    if (!tag) return row;
+
+    // ---- move to class -------------------------------------------------------
+    // Every problem in the group at once, typed where the group's name sits.
+    // Starts on the class they share, if they share one, so a slip is easy to
+    // see; a group across classes starts blank.
+    function beginMoveToClass(): void {
+      closeOpenMenu?.();
+      const classSets = group.problems.map((p) =>
+        tagsOf(p, "class").map((t) => t.name).join(", "),
+      );
+      const shared = classSets.every((s) => s === classSets[0]) ? classSets[0] ?? "" : "";
+      const input = h("input", {
+        class: "study-context-tag-input",
+        list: catalogueListId("class"),
+        placeholder: "class",
+        value: shared,
+      });
+      nameEl.replaceChildren(input);
+      input.focus();
+      input.select();
+
+      let settled = false;
+      const finish = async (save: boolean): Promise<void> => {
+        if (settled) return;
+        settled = true;
+        const next = parseTagNames(input.value);
+        nameEl.replaceChildren(group.tag?.name ?? "no assignment");
+        if (!save || next.join(", ") === shared) return;
+        try {
+          const result = await retagProblems(ids, "class", next);
+          tagCatalogue = result.study_context_tags;
+          for (const problem of problems) {
+            const moved = result.study_context_tag_ids_by_problem[problem.id];
+            if (moved) problem.study_context_tag_ids = moved;
+          }
+          paintTagCatalogue();
+          paintAll();
+          setPracticeStatus(
+            `moved ${ids.length} to ${next.length ? next.join(", ") : "no class"}`,
+          );
+        } catch (err) {
+          setPracticeStatus(err instanceof Error ? err.message : String(err), true);
+        }
+      };
+
+      input.addEventListener("click", (event) => event.stopPropagation());
+      input.addEventListener("keydown", (event) => {
+        const key = (event as KeyboardEvent).key;
+        if (key === "Enter") {
+          event.preventDefault();
+          void finish(true);
+        } else if (key === "Escape") {
+          void finish(false);
+        }
+      });
+      input.addEventListener("blur", () => void finish(true));
+    }
 
     // ---- rename ------------------------------------------------------------
     // The tag itself, so every problem wearing it follows -- in every class
@@ -813,7 +871,10 @@ export async function renderBank(
     function openMenu(): void {
       closeOpenMenu?.();
       const menu = h("div", { class: "row-menu" }, [
-        h("button", { type: "button", onclick: () => beginRename(tag!) }, ["rename"]),
+        ...(tag
+          ? [h("button", { type: "button", onclick: () => beginRename(tag) }, ["rename"])]
+          : []),
+        h("button", { type: "button", onclick: beginMoveToClass }, ["move to class…"]),
       ]);
       menuCell.append(menu);
       closeOpenMenu = () => {
