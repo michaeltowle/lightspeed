@@ -487,7 +487,7 @@ ${chipColorPaletteCss}
   .why-it-went-wrong-box, .editable-per-problem-instructions-to-llm-box { min-height: 2rem; }
 
   /* Free generate is one box, so it can afford to be a generous one. */
-  .free-generate-prompt { margin: 1rem 0 0.5rem; font-size: 0.95rem; }
+  .free-generate-prompt { margin: 1rem 0 0.5rem; font-size: 0.95rem; min-height: 50vh; }
 
   /* The instructions, one box per call. Monospace and unwrapped by the page's
      own width, because these are edited a phrase at a time and the eye needs
