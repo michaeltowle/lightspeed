@@ -4,6 +4,50 @@ import { renderUnsavedScreenshots } from "../lib/unsaved-screenshots";
 import type { StudyContextTag, View } from "../types";
 import { renderClassAndAssignmentFilingFields } from "./add-assignment";
 
+// The browser tab's own title, while a request is out and once it is back. A
+// request runs long enough to go and do something else, and then the tab is
+// the only part of the page in view. Module scope, because the pane can be
+// rebuilt while a request is still out and the title is the page's, not the
+// pane's.
+const RESTING_TITLE = "lightspeed";
+let titleEllipsisTimer: number | undefined;
+let stopWaitingToBeSeen: (() => void) | null = null;
+
+function showGeneratingInTitle(): void {
+  stopWaitingToBeSeen?.();
+  window.clearInterval(titleEllipsisTimer);
+  let dots = 0;
+  const paint = () => {
+    dots = (dots % 4) + 1;
+    document.title = `${RESTING_TITLE} — generating${".".repeat(dots)}`;
+  };
+  paint();
+  titleEllipsisTimer = window.setInterval(paint, 450);
+}
+
+/**
+ * Held until the page is come back to: the tab clicked from another tab, the
+ * window from another app, or a click in the page if it never went away.
+ */
+function showGenerationEndInTitle(how: "complete" | "failed"): void {
+  window.clearInterval(titleEllipsisTimer);
+  document.title = `${RESTING_TITLE} — generation ${how}`;
+  const seen = () => {
+    if (document.visibilityState !== "visible") return;
+    stopWaitingToBeSeen?.();
+    document.title = RESTING_TITLE;
+  };
+  window.addEventListener("focus", seen);
+  document.addEventListener("visibilitychange", seen);
+  document.addEventListener("pointerdown", seen);
+  stopWaitingToBeSeen = () => {
+    window.removeEventListener("focus", seen);
+    document.removeEventListener("visibilitychange", seen);
+    document.removeEventListener("pointerdown", seen);
+    stopWaitingToBeSeen = null;
+  };
+}
+
 /**
  * Free generate: a prompt window, and screenshots pasted under it.
  *
@@ -70,6 +114,7 @@ export function renderFreeGenerate(
     generateEl.disabled = true;
     workRowEl.hidden = true;
     setStatus("finding problems...");
+    showGeneratingInTitle();
     try {
       const { problem_ids } = await buildToOrderFromPrompt(
         request,
@@ -94,8 +139,10 @@ export function renderFreeGenerate(
       );
       workRowEl.hidden = false;
       workEl.disabled = false;
+      showGenerationEndInTitle("complete");
     } catch (err) {
       setStatus(err instanceof Error ? err.message : String(err), true);
+      showGenerationEndInTitle("failed");
     } finally {
       generateEl.disabled = false;
     }

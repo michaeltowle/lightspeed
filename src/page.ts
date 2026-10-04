@@ -180,6 +180,7 @@ export function indexPageDocument(env: Env): string {
   }
   .col-last { width: 6rem; font-variant-numeric: tabular-nums; opacity: 0.8; }
   .col-speed { width: 4rem; opacity: 0.8; }
+  .col-priority { width: 5.5rem; opacity: 0.8; }
   .col-flags { width: 6rem; }
   .col-why { min-width: 11rem; opacity: 0.8; }
   .col-menu { width: 1.8rem; position: relative; }
@@ -201,13 +202,15 @@ export function indexPageDocument(env: Env): string {
   /* The phone selects what to practise; it does not tag and it does not read the
      record. Six columns at 390px leave the name -- the one column you actually
      select on -- a few characters a line, so everything but the class goes.
-     The assignment needs no column anywhere: it heads the group. */
+     Priority goes with the rest: the phone sets it from the run, and picks by
+     it from the priority tab. The assignment needs no column anywhere: it
+     heads the group. */
   @media (max-width: 40rem) {
     .bank-table { font-size: 0.78rem; }
     .bank-table th, .bank-table td {
       padding-left: 0.2rem; padding-right: 0.2rem;
     }
-    .col-speed, .col-flags, .col-why {
+    .col-priority, .col-speed, .col-flags, .col-why {
       display: none;
     }
     td.problem-name { min-width: 0; }
@@ -400,6 +403,9 @@ ${chipColorPaletteCss}
   .row-menu button:hover { background: rgba(127,127,127,0.12); }
   .row-menu button:disabled { opacity: 0.4; cursor: default; }
   .row-menu button:disabled:hover { background: none; }
+  /* The priority the problem has now, among the three offered. */
+  .row-menu button.is-on { font-weight: 600; }
+  .row-menu button.is-on::after { content: " ✓"; }
 
   /* What was worked on each of the last seven days. Floated into the bottom
      right corner, so the bank table has the full width of the page to grow

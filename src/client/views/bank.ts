@@ -8,6 +8,7 @@ import {
   peekAtManeuvers,
   renameProblem,
   retagProblem,
+  setProblemPriority,
   trophyWall,
 } from "../api";
 import { h } from "../lib/dom";
@@ -20,6 +21,7 @@ import { renderEditablePerJobInstructionsToLlm } from "./editable-per-job-instru
 import { PROBLEM_PRIORITIES, STUDY_CONTEXT_TAG_FIELDS } from "../types";
 import type {
   MathPracticeProblem,
+  ProblemPriority,
   StudyContextTag,
   StudyContextTagField,
   Trophy,
@@ -38,10 +40,10 @@ const GOING_COLD_AFTER_DAYS = 2;
 // assignment, so a column of it would only repeat the heading above.
 const TABLE_TAG_FIELDS = STUDY_CONTEXT_TAG_FIELDS.filter((field) => field !== "assignment");
 
-// select, label, problem, the tag fields, credit, last, streak, speed, flags,
-// why, menu. Derived so a field added or dropped cannot leave the detail row
-// spanning the wrong width.
-const TABLE_COLUMN_COUNT = 10 + TABLE_TAG_FIELDS.length;
+// select, label, problem, the tag fields, priority, credit, last, streak,
+// speed, flags, why, menu. Derived so a field added or dropped cannot leave the
+// detail row spanning the wrong width.
+const TABLE_COLUMN_COUNT = 11 + TABLE_TAG_FIELDS.length;
 
 
 const WEEKDAY_NAMES = [
@@ -410,6 +412,7 @@ function buildBankTable(body: HTMLElement): HTMLElement {
         h("th", { class: "col-label" }, ["no."]),
         h("th", {}, ["problem"]),
         ...TABLE_TAG_FIELDS.map((field) => h("th", { class: `col-field-${field}` }, [field])),
+        h("th", { class: "col-priority" }, ["priority"]),
         h("th", { class: "col-credit" }, ["credit"]),
         h("th", { class: "col-last" }, ["last"]),
         h("th", { class: "col-streak" }, ["streak"]),
@@ -1298,6 +1301,42 @@ export async function renderBank(
       }
     }
 
+    // ---- set priority ------------------------------------------------------
+    //
+    // The menu turns into the three priorities where it stands, the current
+    // one marked. Choosing the marked one again unranks it, the way the run
+    // does. On the priority tab the row then moves to its new heading, or
+    // leaves the tab if it was unranked.
+    function showPriorityChoices(menu: HTMLElement): void {
+      menu.replaceChildren(
+        ...PROBLEM_PRIORITIES.map((each) =>
+          h(
+            "button",
+            {
+              type: "button",
+              class: problem.priority === each ? "is-on" : "",
+              onclick: (event: Event) => {
+                event.stopPropagation();
+                void setPriority(problem.priority === each ? null : each);
+              },
+            },
+            [each],
+          ),
+        ),
+      );
+    }
+
+    async function setPriority(next: ProblemPriority | null): Promise<void> {
+      closeOpenMenu?.();
+      try {
+        await setProblemPriority(problem.id, next);
+        problem.priority = next;
+        paintAll();
+      } catch (err) {
+        setPracticeStatus(err instanceof Error ? err.message : String(err), true);
+      }
+    }
+
     // ---- menu --------------------------------------------------------------
     function openMenu(): void {
       closeOpenMenu?.();
@@ -1311,6 +1350,19 @@ export async function renderBank(
         // nothing to show it against.
         item("view screenshot", () => openDetail("screenshot"), hasScreenshot()),
         item("rename", beginRename),
+        h(
+          "button",
+          {
+            type: "button",
+            // Not the row's tick, and not the document listener, which would
+            // shut the menu before it could offer the choices.
+            onclick: (event: Event) => {
+              event.stopPropagation();
+              showPriorityChoices(menu);
+            },
+          },
+          ["set priority"],
+        ),
         item("move to assignment…", () =>
           editTagsInPlace(nameCell, "assignment", () =>
             nameCell.replaceChildren(...nameCellContents()),
@@ -1360,6 +1412,7 @@ export async function renderBank(
       h("td", { class: "col-label" }, [problem.textbook_problem_number_label ?? ""]),
       nameCell,
       ...TABLE_TAG_FIELDS.map(fieldCell),
+      h("td", { class: "col-priority" }, [problem.priority ?? ""]),
       h("td", { class: "col-credit" }, [creditText(standing.latest)]),
       h("td", { class: "col-last" }, [formatLastWorked(standing.lastWorkedAt)]),
       // Nothing rather than "+0": a row never worked should read as quiet, not
