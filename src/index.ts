@@ -169,6 +169,7 @@ export default {
       needed_help?: boolean;
       marked?: boolean;
       default_service_style?: string;
+      priority?: unknown;
       self_reported_working_speed?: string;
       why_this_one_went_wrong?: string;
       llm_job?: unknown;
@@ -608,6 +609,19 @@ export default {
           return json({ ok: true, name });
         }
 
+        // Clicking the lit one again unranks it, so anything that is not one
+        // of the three words is no priority rather than a bad one.
+        case "set_problem_priority": {
+          const priority = ["primary", "secondary", "tertiary"].includes(String(body.priority))
+            ? String(body.priority)
+            : null;
+          await db
+            .prepare(`UPDATE math_practice_problem SET priority = ? WHERE id = ?`)
+            .bind(priority, body.id)
+            .run();
+          return json({ ok: true });
+        }
+
         case "set_default_service_style": {
           if (!["exact", "variant"].includes(String(body.default_service_style))) {
             return json({ error: `bad service style: ${body.default_service_style}` }, 400);
@@ -701,7 +715,7 @@ export default {
           const { results: found } = await db
             .prepare(
               `SELECT id, name, textbook_problem_number_label, statement_html,
-                      last_solved_by_llm_at
+                      last_solved_by_llm_at, priority
                  FROM math_practice_problem WHERE id IN (${placeholders})`,
             )
             .bind(...ids)

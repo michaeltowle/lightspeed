@@ -293,12 +293,15 @@ export function indexPageDocument(env: Env): string {
   .assignment-group-row.is-open .assignment-group-name {
     font-weight: 600; opacity: 1;
   }
-  /* The share of the group that is green on the streak, in the streak's own
-     green -- so the heading reads as a sum of the badges beneath it. */
+  /* How much of the group has been tried, then how much is green on the
+     streak. The second is in the streak's own green, so it reads as a sum of
+     the badges beneath it; the first is greyed, since trying earns no colour. */
   .assignment-group-rollup {
     margin-left: 0.6rem; font-size: 0.72rem; font-weight: 600;
     font-variant-numeric: tabular-nums; color: #2f7d4a;
   }
+  .assignment-group-rollup > span { white-space: nowrap; }
+  .assignment-group-rollup > span:first-child { color: CanvasText; opacity: 0.5; }
   @media (prefers-color-scheme: dark) {
     .assignment-group-rollup { color: #79c893; }
   }
@@ -667,7 +670,9 @@ ${chipColorPaletteCss}
      Problems alternate between paper and a faint grey so the eye can hold its
      place, and both are opaque -- the wall stays behind the page, not under
      the writing. */
-  .continuous-scroll-practice-run { list-style: none; margin: 0 0 1rem; padding: 0; }
+  /* The room at the foot is for the pinned pause and done: grade sits at the
+     right end of each row, and the last one has to be able to scroll clear. */
+  .continuous-scroll-practice-run { list-style: none; margin: 0 0 4rem; padding: 0; }
   .continuous-scroll-practice-run > li {
     display: grid; grid-template-columns: 2.6rem 1fr; gap: 0 0.4rem;
     padding: 0.75rem 0.9rem 0.6rem 0.5rem;
@@ -696,17 +701,35 @@ ${chipColorPaletteCss}
   .continuous-scroll-practice-run-controls button:not(.speed-report-button) {
     padding: 0.2rem 0.75rem; font-size: 0.8rem;
   }
-  /* The end of the set, and of its clock. Pinned bottom right, so it is in
-     reach from any problem on the page. */
-  .continuous-scroll-practice-run-done {
+  /* The set's clock: pause above, done below. Pinned bottom right, so both
+     are in reach from any problem on the page. */
+  .continuous-scroll-practice-run-corner {
     position: fixed; right: 1.25rem; bottom: 1.25rem; z-index: 3;
+    display: flex; flex-direction: column; align-items: stretch; gap: 0.5rem;
+  }
+  .continuous-scroll-practice-run-pause {
+    padding: 0.45rem 1rem; font-size: 0.9rem; font-weight: 600;
+    border: 2px solid #b06a2c; border-radius: 10px;
+    background: Canvas; color: #b06a2c;
+    box-shadow: 0 4px 14px rgba(0,0,0,0.12);
+  }
+  @media (prefers-color-scheme: dark) {
+    .continuous-scroll-practice-run-pause { color: #d99a5b; }
+  }
+  .continuous-scroll-practice-run-done {
     padding: 0.8rem 2.2rem; font-size: 1.1rem; font-weight: 700;
     border: 2px solid #b06a2c; border-radius: 10px;
     background: #b06a2c; color: #fff;
     box-shadow: 0 4px 14px rgba(0,0,0,0.18);
   }
   .continuous-scroll-practice-run-done:hover { background: #9a5a22; border-color: #9a5a22; }
-  .continuous-scroll-practice-run-status { font-size: 0.75rem; opacity: 0.6; }
+  /* Grade sits alone at the right end of the row; the status rides with it,
+     so a "skipped" or an error lands where grade was. */
+  .continuous-scroll-practice-run-status { font-size: 0.75rem; opacity: 0.6; margin-left: auto; }
+  .priority-choices { display: inline-flex; gap: 0.35rem; }
+  .priority-choice.is-on {
+    font-weight: 600; border-color: currentColor; background: rgba(127,127,127,0.18);
+  }
   .continuous-scroll-practice-run-status.err { color: #c0392b; opacity: 1; }
   /* Graded where it sits: the same answer, table and boxes as the answers
      page, minus the statement already above it. */

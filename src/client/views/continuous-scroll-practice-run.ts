@@ -1,20 +1,29 @@
-import { peekAtManeuvers, recordProblemWorked, revealAnswers, skipAttempt } from "../api";
+import {
+  deleteProblem,
+  peekAtManeuvers,
+  recordProblemWorked,
+  revealAnswers,
+  setProblemPriority,
+  skipAttempt,
+} from "../api";
 import { h } from "../lib/dom";
 import { renderMathHtml } from "../lib/katex-boot";
 import { renderManeuverTable } from "../lib/maneuver-table";
 import { refreshTrophyWall } from "./trophy-wall";
 import { answerRow } from "./answers";
-import type { ServedProblem, View } from "../types";
+import type { ProblemPriority, ServedProblem, View } from "../types";
 
 type Speed = "slow" | "fast";
+
+const PRIORITIES: ProblemPriority[] = ["primary", "secondary", "tertiary"];
 
 /**
  * The whole run on one page, worked down like an exam paper. Mike works on
  * paper, so this is still display-only: no answer input.
  *
  * The set is timed, not the problems in it: the clock runs from the run
- * opening to done. With every problem on screen there is no moment a single
- * problem starts, so a per-problem time would be a guess.
+ * opening to done, less any time paused. With every problem on screen there
+ * is no moment a single problem starts, so a per-problem time would be a guess.
  *
  * Grading here is optional, and open on any problem at any time: its answer
  * is revealed and graded where it sits. Whatever is neither graded nor skipped
@@ -26,6 +35,20 @@ export function renderContinuousScrollPracticeRun(
   problems: ServedProblem[],
   go: (view: View) => void,
 ): void {
+  const metaEl = h("div", { class: "meta" }, [`${problems.length} problems`]);
+  const listEl = h("ol", { class: "continuous-scroll-practice-run" });
+
+  // A deleted problem leaves the page, and the rest close up behind it. Only
+  // the numbers shown move: each attempt keeps the ordinal it was opened with.
+  function renumber(): void {
+    const items = Array.from(listEl.children);
+    items.forEach((item, i) => {
+      const number = item.querySelector(".continuous-scroll-practice-run-number")?.firstChild;
+      if (number) number.textContent = `${i + 1}.`;
+    });
+    metaEl.textContent = `${items.length} problems`;
+  }
+
   function problemItem(problem: ServedProblem, index: number): HTMLElement {
     let skipped = false;
     let grading = false;
@@ -102,6 +125,56 @@ export function renderContinuousScrollPracticeRun(
       }
     });
 
+    // For good, the same as from the bank: every attempt at it goes too, this
+    // run's included, so it drops out of the answers page as well.
+    const deleteEl = h("button", { type: "button" }, ["delete"]);
+    deleteEl.addEventListener("click", async () => {
+      if (busy) return;
+      if (!confirm(`delete "${problem.name}" and every attempt at it? this cannot be undone.`)) {
+        return;
+      }
+      busy = true;
+      try {
+        await deleteProblem(problem.id);
+        el.remove();
+        renumber();
+        void refreshTrophyWall();
+      } catch (err) {
+        fail(err);
+      } finally {
+        busy = false;
+      }
+    });
+
+    // Opens sideways into the three it can be, and shuts on a choice. The lit
+    // one clicked again unranks it, the way a speed is taken back.
+    let priority = problem.priority;
+    const priorityEl = h("button", { type: "button" });
+    const priorityChoiceEls = PRIORITIES.map((each) => {
+      const button = h("button", { type: "button", class: "priority-choice" }, [each]);
+      button.addEventListener("click", async () => {
+        const next = priority === each ? null : each;
+        try {
+          await setProblemPriority(problem.id, next);
+          priority = next;
+          priorityChoicesEl.hidden = true;
+          paintPriority();
+        } catch (err) {
+          fail(err);
+        }
+      });
+      return button;
+    });
+    const priorityChoicesEl = h("span", { class: "priority-choices", hidden: true }, priorityChoiceEls);
+    priorityEl.addEventListener("click", () => {
+      priorityChoicesEl.hidden = !priorityChoicesEl.hidden;
+    });
+    function paintPriority(): void {
+      priorityEl.textContent = priority ? `priority: ${priority}` : "priority";
+      priorityChoiceEls.forEach((each, i) => each.classList.toggle("is-on", priority === PRIORITIES[i]));
+    }
+    paintPriority();
+
     const gradeEl = h("button", { type: "button", class: "grade" }, ["grade"]);
     async function openGrading(): Promise<void> {
       if (problem.problem_attempt_id === null) return;
@@ -155,8 +228,12 @@ export function renderContinuousScrollPracticeRun(
           ...speedEls,
           helpEl,
           skipEl,
-          gradeEl,
+          deleteEl,
+          priorityEl,
+          priorityChoicesEl,
+          // Pushed right, taking grade with it.
           statusEl,
+          gradeEl,
         ]),
         helpPanelEl,
         gradePanelEl,
@@ -170,11 +247,33 @@ export function renderContinuousScrollPracticeRun(
   const doneEl = h("button", { type: "button", class: "continuous-scroll-practice-run-done" }, [
     "done",
   ]);
-  doneEl.addEventListener("click", () => go({ name: "answers", runId }));
+  // Stops the set's clock and nothing else: the page stays as it is. Kept on
+  // the client and handed to the answers page, which takes it off the time.
+  let msSpentPaused = 0;
+  let pausedAt: number | null = null;
+  const pauseEl = h("button", { type: "button", class: "continuous-scroll-practice-run-pause" }, [
+    "pause",
+  ]);
+  pauseEl.addEventListener("click", () => {
+    if (pausedAt === null) {
+      pausedAt = Date.now();
+    } else {
+      msSpentPaused += Date.now() - pausedAt;
+      pausedAt = null;
+    }
+    pauseEl.textContent = pausedAt === null ? "pause" : "unpause";
+  });
 
+  // Done while paused stops the clock where the pause did.
+  doneEl.addEventListener("click", () => {
+    if (pausedAt !== null) msSpentPaused += Date.now() - pausedAt;
+    go({ name: "answers", runId, msSpentPaused });
+  });
+
+  listEl.append(...problems.map(problemItem));
   root.replaceChildren(
-    h("div", { class: "meta" }, [`${problems.length} problems`]),
-    h("ol", { class: "continuous-scroll-practice-run" }, problems.map(problemItem)),
-    doneEl,
+    metaEl,
+    listEl,
+    h("div", { class: "continuous-scroll-practice-run-corner" }, [pauseEl, doneEl]),
   );
 }

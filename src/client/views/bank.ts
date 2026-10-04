@@ -755,12 +755,16 @@ export async function renderBank(
     const open = isGroupOpen(group);
     const ids = group.problems.map((p) => p.id);
 
-    // How much of it is green on the streak -- a run of full marks got alone,
-    // the same test the row's badge colours by. Help or a miss is not green.
-    const greenCount = group.problems.filter((p) => {
-      const standing = standingOf(byProblem.get(p.id));
-      return standing.streak > 0 && streakBadgeClassFor(standing) === "is-last-attempt-unaided";
-    }).length;
+    // Attempted is answered at least once; skips never reach the trophies, so
+    // passing one over doesn't count. Correct is green on the streak -- a run
+    // of full marks got alone, the same test the row's badge colours by. Help
+    // or a miss is not green.
+    const standings = group.problems.map((p) => standingOf(byProblem.get(p.id)));
+    const attemptedCount = standings.filter((standing) => standing.latest).length;
+    const greenCount = standings.filter(
+      (standing) =>
+        standing.streak > 0 && streakBadgeClassFor(standing) === "is-last-attempt-unaided",
+    ).length;
 
     const setOpen = (on: boolean) => {
       if (on) closedGroups.delete(group.key);
@@ -800,7 +804,11 @@ export async function renderBank(
       h("td", { colspan: TABLE_COLUMN_COUNT - 2 }, [
         h("span", { class: "assignment-group-caret" }, [open ? "▾" : "▸"]),
         nameEl,
-        h("span", { class: "assignment-group-rollup" }, [`${greenCount}/${ids.length}`]),
+        h("span", { class: "assignment-group-rollup" }, [
+          h("span", {}, [`${attemptedCount}/${ids.length} attempted`]),
+          " ",
+          h("span", {}, [`${greenCount}/${ids.length} correct`]),
+        ]),
       ]),
       menuCell,
     ]);

@@ -82,7 +82,10 @@ export interface ServedProblem {
   textbook_problem_number_label: string | null;
   statement_html: string;
   last_solved_by_llm_at: string | null;
+  priority: ProblemPriority | null;
 }
+
+export type ProblemPriority = "primary" | "secondary" | "tertiary";
 
 export interface Trophy {
   id: number;
@@ -137,7 +140,9 @@ export type View =
       runId: number;
       problems: ServedProblem[];
     }
-  | { name: "answers"; runId: number };
+  // Time the run spent paused, held only on the client and taken off the
+  // set's time when it is shown.
+  | { name: "answers"; runId: number; msSpentPaused?: number };
 
 /** The model calls whose words Mike edits. Named after the actions that make them. */
 export type LlmJob =

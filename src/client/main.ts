@@ -19,10 +19,13 @@ function go(view: View): void {
     case "continuous_scroll_practice_run":
       setTrophyWallVisible(true);
       renderContinuousScrollPracticeRun(root, view.runId, view.problems, go);
+      // Views swap in place, so the run would open wherever the bank was
+      // scrolled to -- the bottom, since that is where practice is pressed.
+      window.scrollTo(0, 0);
       break;
     case "answers":
       setTrophyWallVisible(true);
-      void renderAnswers(root, view.runId, go);
+      void renderAnswers(root, view.runId, go, view.msSpentPaused ?? 0);
       break;
   }
 }

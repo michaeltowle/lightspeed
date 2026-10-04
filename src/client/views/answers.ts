@@ -240,6 +240,7 @@ export async function renderAnswers(
   root: HTMLElement,
   runId: number,
   go: (view: View) => void,
+  msSpentPaused = 0,
 ): Promise<void> {
   root.replaceChildren(h("div", { id: "out" }, ["loading answers..."]));
 
@@ -263,14 +264,15 @@ export async function renderAnswers(
   const marksOf = (attemptId: number) =>
     marks.filter((m) => m.problem_attempt_id === attemptId);
 
-  // The set is timed, opening to done, and not the problems in it.
+  // The set is timed, opening to done less any time paused, and not the
+  // problems in it.
   const total = run.completed_at
-    ? Date.parse(run.completed_at) - Date.parse(run.created_at)
+    ? Date.parse(run.completed_at) - Date.parse(run.created_at) - msSpentPaused
     : null;
 
   // Solving a problem from this page changes what there is to grade, so the
   // page is rebuilt from the worker rather than patched in place.
-  const again = () => void renderAnswers(root, runId, go);
+  const again = () => void renderAnswers(root, runId, go, msSpentPaused);
 
   const rowEl = (row: AnswerRow) =>
     answerRow(row, maneuversOf(row.problem_id), marksOf(row.attempt_id), again);

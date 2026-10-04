@@ -5,6 +5,7 @@ import type {
   Maneuver,
   MathPracticeProblem,
   PerManeuverCreditMark,
+  ProblemPriority,
   ServedProblem,
   StudyContextTag,
   StudyContextTagField,
@@ -186,6 +187,10 @@ export const setDefaultServiceStyle = (id: number, style: DefaultServiceStyle) =
 /** For good, with its table, attempts, tags and any screenshot nothing else uses. */
 export const deleteProblem = (id: number) =>
   post<{ ok: true }>({ action: "delete_problem", id });
+
+/** Null unranks it. */
+export const setProblemPriority = (id: number, priority: ProblemPriority | null) =>
+  post<{ ok: true }>({ action: "set_problem_priority", id, priority });
 
 /** Both directions, the way a mark is set and cleared. */
 export const archiveProblem = (id: number, archived: boolean) =>
