@@ -250,6 +250,22 @@ export function indexPageDocument(env: Env): string {
     opacity: 1; font-weight: 600;
     background: Canvas; border-bottom: 1px solid Canvas;
   }
+  /* Gold, since it is the one tab that is not a class: it cuts across all of
+     them. Gold even when lit, laid over the pane's own ground so the bottom
+     edge still opens into the pane, and dimmed less when not, or the gold
+     would wash out to the same grey as the rest. */
+  .tab.is-priority {
+    color: #8a6410; border-color: rgba(184,134,11,0.55);
+    background: rgba(218,165,32,0.2); opacity: 0.85;
+  }
+  .tab.is-priority:hover { opacity: 1; }
+  .tab.is-priority.is-on {
+    opacity: 1;
+    background: linear-gradient(rgba(218,165,32,0.28), rgba(218,165,32,0.28)), Canvas;
+  }
+  @media (prefers-color-scheme: dark) {
+    .tab.is-priority { color: #e3bc55; border-color: rgba(227,188,85,0.5); }
+  }
 
   .compose-fields {
     display: grid; gap: 0.7rem; align-items: start;

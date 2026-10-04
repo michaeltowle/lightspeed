@@ -191,7 +191,7 @@ export default {
                       how_this_problem_came_to_be, parent_problem_varied_from,
                       text_that_minted_this_problem, editable_per_problem_instructions_to_llm,
                       default_service_style, last_solved_by_llm_at,
-                      created_at, archived_at
+                      created_at, archived_at, priority
                  FROM math_practice_problem
                 ORDER BY id DESC`,
             )

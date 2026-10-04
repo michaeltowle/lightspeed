@@ -11,11 +11,10 @@ import { renderMathHtml } from "../lib/katex-boot";
 import { renderManeuverTable } from "../lib/maneuver-table";
 import { refreshTrophyWall } from "./trophy-wall";
 import { answerRow } from "./answers";
-import type { ProblemPriority, ServedProblem, View } from "../types";
+import { PROBLEM_PRIORITIES } from "../types";
+import type { ServedProblem, View } from "../types";
 
 type Speed = "slow" | "fast";
-
-const PRIORITIES: ProblemPriority[] = ["primary", "secondary", "tertiary"];
 
 /**
  * The whole run on one page, worked down like an exam paper. Mike works on
@@ -150,7 +149,7 @@ export function renderContinuousScrollPracticeRun(
     // one clicked again unranks it, the way a speed is taken back.
     let priority = problem.priority;
     const priorityEl = h("button", { type: "button" });
-    const priorityChoiceEls = PRIORITIES.map((each) => {
+    const priorityChoiceEls = PROBLEM_PRIORITIES.map((each) => {
       const button = h("button", { type: "button", class: "priority-choice" }, [each]);
       button.addEventListener("click", async () => {
         const next = priority === each ? null : each;
@@ -171,7 +170,7 @@ export function renderContinuousScrollPracticeRun(
     });
     function paintPriority(): void {
       priorityEl.textContent = priority ? `priority: ${priority}` : "priority";
-      priorityChoiceEls.forEach((each, i) => each.classList.toggle("is-on", priority === PRIORITIES[i]));
+      priorityChoiceEls.forEach((each, i) => each.classList.toggle("is-on", priority === PROBLEM_PRIORITIES[i]));
     }
     paintPriority();
 

@@ -17,7 +17,7 @@ import { renderReSolveControls } from "../lib/re-solve";
 import { parseTagNames, renderAddAssignment } from "./add-assignment";
 import { renderFreeGenerate } from "./free-generate";
 import { renderEditablePerJobInstructionsToLlm } from "./editable-per-job-instructions-to-llm";
-import { STUDY_CONTEXT_TAG_FIELDS } from "../types";
+import { PROBLEM_PRIORITIES, STUDY_CONTEXT_TAG_FIELDS } from "../types";
 import type {
   MathPracticeProblem,
   StudyContextTag,
@@ -65,7 +65,7 @@ const STANDING_STUDY_CONTEXT_TAG_FILTER_KEY = "lightspeed.standing-study-context
 function readStandingStudyContextTagFilter(): BankTabKey | null {
   try {
     const raw = localStorage.getItem(STANDING_STUDY_CONTEXT_TAG_FILTER_KEY);
-    if (raw === "generated") return raw;
+    if (raw === "generated" || raw === "priority") return raw;
     const id = raw === null ? NaN : Number(raw);
     return Number.isInteger(id) ? id : null;
   } catch {
@@ -423,13 +423,20 @@ function buildBankTable(body: HTMLElement): HTMLElement {
   ]);
 }
 
-/** A class by id, every problem, or the ones free generate made. */
-type BankTabKey = number | "generated";
+/** A class by id, the ones free generate made, or every one given a priority. */
+type BankTabKey = number | "generated" | "priority";
 
-/** One assignment's problems within the open tab, or those filed under none. */
+/**
+ * One assignment's problems within the open tab, or those filed under none.
+ * On the priority tab, one priority's problems instead: the heading changes,
+ * the switch that shuts it does not.
+ */
 interface AssignmentGroup {
   key: string;
+  // Null for "no assignment", and for every priority -- neither is a tag, so
+  // neither has a name to rename.
   tag: StudyContextTag | null;
+  name: string;
   problems: MathPracticeProblem[];
 }
 
@@ -477,13 +484,17 @@ export async function renderBank(
   // The open tab is the class filter: every problem 6801 has, or the ones
   // written to a prompt rather than filed off a page. There is no tab for all
   // of them -- a bank of every class at once is a list to scroll, not one to
-  // pick from, and picking is what this page is for. A class retired since the
-  // last visit falls to the first class still standing.
+  // pick from, and picking is what this page is for. Priority is the one tab
+  // that runs across classes, and it stays short by holding only what was
+  // ranked. A class retired since the last visit falls to the first class
+  // still standing.
   const remembered = readStandingStudyContextTagFilter();
   const firstTab = (): BankTabKey => classTags()[0]?.id ?? "generated";
   let openTab: BankTabKey =
     startOn ??
-    (remembered === "generated" || classTags().some((tag) => tag.id === remembered)
+    (remembered === "generated" ||
+    remembered === "priority" ||
+    classTags().some((tag) => tag.id === remembered)
       ? remembered!
       : firstTab());
 
@@ -634,6 +645,8 @@ export async function renderBank(
     if (openTab === "generated") {
       return list.filter((p) => p.how_this_problem_came_to_be === "built_to_order_from_a_prompt");
     }
+    // Unranked is left off: it is most of the bank, and not what this tab is for.
+    if (openTab === "priority") return list.filter((p) => p.priority !== null);
     return list.filter((p) => p.study_context_tag_ids.includes(openTab as number));
   }
 
@@ -652,16 +665,27 @@ export async function renderBank(
    * comes after Homework 9, and the problems filed under no assignment come
    * last. The run is served in this order, so a set started from here goes one
    * assignment at a time.
+   *
+   * The priority tab is cut by priority instead, most pressing first whatever
+   * was practised last: the order is what ranking them was for.
    */
   function assignmentGroups(): AssignmentGroup[] {
     const inTab = inOrderTheyCameIn(
       inOpenTab(problems.filter((p) => !p.archived_at && p.parent_problem_varied_from === null)),
     );
+    if (openTab === "priority") {
+      return PROBLEM_PRIORITIES.map((priority) => ({
+        key: `${openTab}:${priority}`,
+        tag: null,
+        name: priority,
+        problems: inTab.filter((p) => p.priority === priority),
+      })).filter((group) => group.problems.length);
+    }
     const byTag = new Map<number | null, AssignmentGroup>();
     const groupFor = (tag: StudyContextTag | null) => {
       let group = byTag.get(tag?.id ?? null);
       if (!group) {
-        group = { key: groupKeyOf(tag), tag, problems: [] };
+        group = { key: groupKeyOf(tag), tag, name: tag?.name ?? "no assignment", problems: [] };
         byTag.set(tag?.id ?? null, group);
       }
       return group;
@@ -786,7 +810,7 @@ export async function renderBank(
 
     const boxEl = h("input", {
       type: "checkbox",
-      "aria-label": `tick all of ${group.tag?.name ?? "no assignment"}`,
+      "aria-label": `tick all of ${group.name}`,
     });
     groupHeaderBoxes.push({ box: boxEl, ids });
     boxEl.addEventListener("click", (event) => {
@@ -806,9 +830,7 @@ export async function renderBank(
       }
     });
 
-    const nameEl = h("span", { class: "assignment-group-name" }, [
-      group.tag?.name ?? "no assignment",
-    ]);
+    const nameEl = h("span", { class: "assignment-group-name" }, [group.name]);
     const menuCell = h("td", { class: "col-menu" });
 
     const row = h("tr", { class: `assignment-group-row${open ? " is-open" : ""}` }, [
@@ -829,8 +851,8 @@ export async function renderBank(
       paintAll();
     });
 
-    // "no assignment" is the absence of a tag, so there is nothing to rename --
-    // but its problems can still be moved.
+    // "no assignment" is the absence of a tag, and a priority is not one, so
+    // there is nothing to rename -- but their problems can still be moved.
     const tag = group.tag;
 
     // ---- move to class -------------------------------------------------------
@@ -858,7 +880,7 @@ export async function renderBank(
         if (settled) return;
         settled = true;
         const next = parseTagNames(input.value);
-        nameEl.replaceChildren(group.tag?.name ?? "no assignment");
+        nameEl.replaceChildren(group.name);
         if (!save || next.join(", ") === shared) return;
         try {
           const result = await retagProblems(ids, "class", next);
@@ -1422,11 +1444,15 @@ export async function renderBank(
     if (!onBank) for (const el of tabEls) el.classList.remove("is-on");
   }
 
-  // ---- tabs: one per class, then generated ----------------------------------
-  const tabKeys: BankTabKey[] = [...classTags().map((tag) => tag.id), "generated"];
+  // ---- tabs: priority, one per class, then generated -------------------------
+  const tabKeys: BankTabKey[] = ["priority", ...classTags().map((tag) => tag.id), "generated"];
   const labelOf = (key: BankTabKey): string =>
     typeof key === "number" ? (classTags().find((tag) => tag.id === key)?.name ?? "?") : key;
-  const tabEls = tabKeys.map((key) => h("button", { type: "button", class: "tab" }, [labelOf(key)]));
+  const tabEls = tabKeys.map((key) =>
+    h("button", { type: "button", class: key === "priority" ? "tab is-priority" : "tab" }, [
+      labelOf(key),
+    ]),
+  );
   const tabStripEl = h("div", { class: "tab-strip" }, tabEls);
 
   function openTabAt(key: BankTabKey): void {

@@ -30,6 +30,7 @@ export interface MathPracticeProblem {
   last_solved_by_llm_at: string | null;
   created_at: string;
   archived_at: string | null;
+  priority: ProblemPriority | null;
   study_context_tag_ids: number[];
   screenshot_of_record_ids: number[];
   maneuver_count: number;
@@ -85,7 +86,10 @@ export interface ServedProblem {
   priority: ProblemPriority | null;
 }
 
-export type ProblemPriority = "primary" | "secondary" | "tertiary";
+// Most pressing first, which is the order they are offered and grouped in.
+export const PROBLEM_PRIORITIES = ["primary", "secondary", "tertiary"] as const;
+
+export type ProblemPriority = (typeof PROBLEM_PRIORITIES)[number];
 
 export interface Trophy {
   id: number;
