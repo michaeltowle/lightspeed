@@ -537,6 +537,13 @@ ${chipColorPaletteCss}
   .problem-body p { margin: 0 0 0.35em; }
   .problem-body p:last-child { margin-bottom: 0; }
   .problem-body .katex-display { margin: 0.35em 0; }
+  /* The bank's hover card: the same card as an opened row's statement, but
+     floating over the table, so it needs a ground of its own to hide it. */
+  .bank-row-statement-peek-card {
+    position: fixed; z-index: 50; margin: 0; max-width: min(34rem, calc(100vw - 12px));
+    background: Canvas; pointer-events: none;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.18);
+  }
   /* In a run, and on the answers page, the problem is the page: no card. */
   .continuous-scroll-practice-run .problem-body,
   .answer-list .problem-body {

@@ -116,6 +116,48 @@ function writeClosedAssignmentGroups(closed: Set<string>): void {
 let closeOpenMenu: (() => void) | null = null;
 document.addEventListener("click", () => closeOpenMenu?.());
 
+// The statement, typeset, on hovering a problem's name. A title attribute
+// can only hold plain text, so it showed the model's HTML and LaTeX as
+// source. One card for the whole page, on the body and fixed, so no table
+// cell has to hold it and a repaint of the table can't strand a copy.
+const bankRowStatementPeekCard = h("div", {
+  class: "problem-body bank-row-statement-peek-card",
+  hidden: true,
+});
+document.body.append(bankRowStatementPeekCard);
+let bankRowStatementPeekCardTimer: number | undefined;
+
+function hideBankRowStatementPeekCard(): void {
+  window.clearTimeout(bankRowStatementPeekCardTimer);
+  bankRowStatementPeekCard.hidden = true;
+}
+document.addEventListener("scroll", hideBankRowStatementPeekCard, true);
+
+function showBankRowStatementPeekCard(anchor: HTMLElement, statementHtml: string): void {
+  window.clearTimeout(bankRowStatementPeekCardTimer);
+  // A short wait, as a native tooltip has, so sweeping the pointer down the
+  // table doesn't flash a card at every row it crosses.
+  bankRowStatementPeekCardTimer = window.setTimeout(() => {
+    // The name may have gone into rename, or the table repainted, while waiting.
+    if (!anchor.isConnected || anchor.querySelector("input")) return;
+    renderMathHtml(bankRowStatementPeekCard, statementHtml);
+    bankRowStatementPeekCard.hidden = false;
+
+    const gap = 6;
+    const cell = anchor.getBoundingClientRect();
+    const card = bankRowStatementPeekCard.getBoundingClientRect();
+    // Under the name, unless that runs off the bottom and there is more room above.
+    const fitsBelow = cell.bottom + gap + card.height <= window.innerHeight;
+    const top =
+      fitsBelow || cell.top < window.innerHeight - cell.bottom
+        ? cell.bottom + gap
+        : cell.top - gap - card.height;
+    const left = Math.min(cell.left, window.innerWidth - card.width - gap);
+    bankRowStatementPeekCard.style.top = `${Math.max(gap, top)}px`;
+    bankRowStatementPeekCard.style.left = `${Math.max(gap, left)}px`;
+  }, 350);
+}
+
 /** The most recent graded attempt against a problem, and the squares to show. */
 /**
  * Full marks on one attempt.
@@ -944,11 +986,15 @@ export async function renderBank(
         ? []
         : [h("span", { class: "awaiting-solve" }, ["  · no table yet"])]),
     ];
-    const nameCell = h(
-      "td",
-      { class: "problem-name", title: problem.statement_html },
-      nameCellContents(),
-    );
+    const nameCell = h("td", { class: "problem-name" }, nameCellContents());
+    // Mouse only: on the phone a tap is a tick, and it would fire this too.
+    nameCell.addEventListener("pointerenter", (event) => {
+      if ((event as PointerEvent).pointerType === "mouse") {
+        showBankRowStatementPeekCard(nameCell, problem.statement_html);
+      }
+    });
+    nameCell.addEventListener("pointerleave", hideBankRowStatementPeekCard);
+    nameCell.addEventListener("pointerdown", hideBankRowStatementPeekCard);
     const menuCell = h("td", { class: "col-menu" });
 
     const entries = rowsById.get(problem.id);
