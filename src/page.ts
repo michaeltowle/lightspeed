@@ -293,17 +293,26 @@ export function indexPageDocument(env: Env): string {
   .assignment-group-row.is-open .assignment-group-name {
     font-weight: 600; opacity: 1;
   }
-  /* How much of the group has been tried, then how much is green on the
-     streak. The second is in the streak's own green, so it reads as a sum of
-     the badges beneath it; the first is greyed, since trying earns no colour. */
+  /* How much of the group has been tried, then how much of that is green on
+     the streak. The first is greyed, since trying earns no colour. */
   .assignment-group-rollup {
     margin-left: 0.6rem; font-size: 0.72rem; font-weight: 600;
-    font-variant-numeric: tabular-nums; color: #2f7d4a;
+    font-variant-numeric: tabular-nums;
   }
   .assignment-group-rollup > span { white-space: nowrap; }
-  .assignment-group-rollup > span:first-child { color: CanvasText; opacity: 0.5; }
+  .assignment-group-rollup > span:first-child { opacity: 0.5; }
+  /* The hit rate in the streak badges' own green, yellow and red, so the
+     heading reads in the same colours as the rows beneath it. Blue is for no
+     rate at all: nothing attempted is not the same as everything missed. */
+  .assignment-group-rollup .is-rate-high     { color: #2f7d4a; }
+  .assignment-group-rollup .is-rate-middling { color: #9a7113; }
+  .assignment-group-rollup .is-rate-low      { color: #b3303f; }
+  .assignment-group-rollup .is-none-attempted { color: #2f6db5; }
   @media (prefers-color-scheme: dark) {
-    .assignment-group-rollup { color: #79c893; }
+    .assignment-group-rollup .is-rate-high     { color: #79c893; }
+    .assignment-group-rollup .is-rate-middling { color: #d9b455; }
+    .assignment-group-rollup .is-rate-low      { color: #f0a099; }
+    .assignment-group-rollup .is-none-attempted { color: #8ab8ea; }
   }
 
   /* The same chip reads a row and, as a button, filters the table. */

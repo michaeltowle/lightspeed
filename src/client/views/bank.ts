@@ -765,6 +765,18 @@ export async function renderBank(
       (standing) =>
         standing.streak > 0 && streakBadgeClassFor(standing) === "is-last-attempt-unaided",
     ).length;
+    // Correct is out of what was attempted, so the colour is a hit rate. With
+    // nothing attempted there is no rate, and it gets a colour of its own
+    // rather than a red it hasn't earned.
+    const rate = attemptedCount ? greenCount / attemptedCount : null;
+    const rateClass =
+      rate === null
+        ? "is-none-attempted"
+        : rate >= 0.9
+          ? "is-rate-high"
+          : rate >= 0.6
+            ? "is-rate-middling"
+            : "is-rate-low";
 
     const setOpen = (on: boolean) => {
       if (on) closedGroups.delete(group.key);
@@ -805,9 +817,9 @@ export async function renderBank(
         h("span", { class: "assignment-group-caret" }, [open ? "▾" : "▸"]),
         nameEl,
         h("span", { class: "assignment-group-rollup" }, [
-          h("span", {}, [`${attemptedCount}/${ids.length} attempted`]),
+          h("span", {}, [`${attemptedCount}/${ids.length} attempted,`]),
           " ",
-          h("span", {}, [`${greenCount}/${ids.length} correct`]),
+          h("span", { class: rateClass }, [`${greenCount}/${attemptedCount} correct`]),
         ]),
       ]),
       menuCell,
