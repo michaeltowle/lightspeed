@@ -406,6 +406,10 @@ ${chipColorPaletteCss}
   /* The priority the problem has now, among the three offered. */
   .row-menu button.is-on { font-weight: 600; }
   .row-menu button.is-on::after { content: " ✓"; }
+  /* A class tab's menu: on the page rather than in a cell, so it sits where the
+     tab was right-clicked. */
+  .row-menu.tab-menu { position: fixed; right: auto; max-height: 70vh; overflow-y: auto; }
+  .tab-menu-heading { font-size: 0.7rem; opacity: 0.6; padding: 0.45rem 0.7rem 0.2rem; }
 
   /* What was worked on each of the last seven days. Floated into the bottom
      right corner, so the bank table has the full width of the page to grow

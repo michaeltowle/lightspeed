@@ -153,6 +153,7 @@ export default {
     const body = await request.json<{
       action?: string;
       id?: number;
+      into_id?: number;
       name?: string;
       note?: string;
       prompt?: string;
@@ -599,6 +600,66 @@ export default {
           return json({ study_context_tags: await tagCatalogue(db) });
         }
 
+        // Everything filed under the one moves to the other, and the one goes.
+        // A problem already wearing both just keeps the one it is left with.
+        case "merge_study_context_tag": {
+          const from = Number(body.id);
+          const into = Number(body.into_id);
+          if (!Number.isInteger(from) || !Number.isInteger(into) || from === into) {
+            return json({ error: "merge which into which?" }, 400);
+          }
+          const sameField = await db
+            .prepare(
+              `SELECT 1 FROM study_context_tag a JOIN study_context_tag b
+                  ON a.field = b.field WHERE a.id = ?1 AND b.id = ?2`,
+            )
+            .bind(from, into)
+            .first();
+          if (!sameField) return json({ error: "those two cannot be merged" }, 400);
+          await db.batch([
+            db
+              .prepare(
+                `INSERT OR IGNORE INTO study_context_tag_membership
+                   (math_practice_problem_id, study_context_tag_id)
+                 SELECT math_practice_problem_id, ?2 FROM study_context_tag_membership
+                  WHERE study_context_tag_id = ?1`,
+              )
+              .bind(from, into),
+            db.prepare(`DELETE FROM study_context_tag_membership WHERE study_context_tag_id = ?1`).bind(from),
+            db.prepare(`DELETE FROM study_context_tag WHERE id = ?1`).bind(from),
+          ]);
+          return json({ study_context_tags: await tagCatalogue(db) });
+        }
+
+        // The tag and, for good, every problem filed under it and under no
+        // other tag of its field -- killing a class kills what was only in that
+        // class. A problem in a second class stays there and just loses this
+        // one. One batch, so a failure part way kills nothing.
+        case "delete_study_context_tag": {
+          const id = Number(body.id);
+          if (!Number.isInteger(id)) return json({ error: "which tag?" }, 400);
+          const { results: doomed } = await db
+            .prepare(
+              `SELECT m.math_practice_problem_id AS id
+                 FROM study_context_tag_membership m
+                WHERE m.study_context_tag_id = ?1
+                  AND NOT EXISTS (
+                    SELECT 1 FROM study_context_tag_membership other
+                      JOIN study_context_tag t ON t.id = other.study_context_tag_id
+                     WHERE other.math_practice_problem_id = m.math_practice_problem_id
+                       AND other.study_context_tag_id <> ?1
+                       AND t.field = (SELECT field FROM study_context_tag WHERE id = ?1))`,
+            )
+            .bind(id)
+            .all<{ id: number }>();
+          await db.batch([
+            ...statementsThatDeleteProblemsForGood(db, doomed.map((d) => d.id)),
+            db.prepare(`DELETE FROM study_context_tag_membership WHERE study_context_tag_id = ?1`).bind(id),
+            db.prepare(`DELETE FROM study_context_tag WHERE id = ?1`).bind(id),
+          ]);
+          return json({ study_context_tags: await tagCatalogue(db), deleted: doomed.length });
+        }
+
         case "rename_problem": {
           const name = tidy(body.name, MAX_NAME_LENGTH);
           if (!name) return json({ error: "a problem needs a name" }, 400);
@@ -648,60 +709,9 @@ export default {
         }
 
         case "delete_problem": {
-          // Gone for good, with everything hung off it: its table, its attempts
-          // and their marks, its tags, and any screenshot no other problem was
-          // read off. Children are named one by one rather than left to the
-          // cascades, and in one batch so a failure part way leaves nothing
-          // half-deleted. A page shared with the other parts of a multi-part
-          // problem stays, since they still stand on it.
           const id = Number(body.id);
           if (!Number.isInteger(id)) return json({ error: "which problem?" }, 400);
-          const orphanedScreenshots = `
-            SELECT screenshot_of_record_id FROM screenshot_of_record_attachment
-             WHERE math_practice_problem_id = ?1
-               AND screenshot_of_record_id NOT IN
-                   (SELECT screenshot_of_record_id FROM screenshot_of_record_attachment
-                     WHERE math_practice_problem_id <> ?1)`;
-          await db.batch([
-            db
-              .prepare(
-                `DELETE FROM per_maneuver_credit_mark
-                  WHERE problem_attempt_id IN
-                        (SELECT id FROM problem_attempt WHERE math_practice_problem_id = ?1)
-                     OR maneuver_id IN
-                        (SELECT id FROM maneuver WHERE math_practice_problem_id = ?1)`,
-              )
-              .bind(id),
-            db.prepare(`DELETE FROM problem_attempt WHERE math_practice_problem_id = ?1`).bind(id),
-            // Lineage pointing in from elsewhere is let go rather than blocking
-            // the delete: a variant outlives what it was varied from.
-            db
-              .prepare(
-                `UPDATE math_practice_problem SET parent_problem_varied_from = NULL
-                  WHERE parent_problem_varied_from = ?1`,
-              )
-              .bind(id),
-            db
-              .prepare(
-                `UPDATE math_practice_problem SET the_maneuver_it_was_isolated_from = NULL
-                  WHERE the_maneuver_it_was_isolated_from IN
-                        (SELECT id FROM maneuver WHERE math_practice_problem_id = ?1)`,
-              )
-              .bind(id),
-            db.prepare(`DELETE FROM maneuver WHERE math_practice_problem_id = ?1`).bind(id),
-            db
-              .prepare(
-                `DELETE FROM study_context_tag_membership WHERE math_practice_problem_id = ?1`,
-              )
-              .bind(id),
-            db.prepare(`DELETE FROM screenshot_of_record WHERE id IN (${orphanedScreenshots})`).bind(id),
-            db
-              .prepare(
-                `DELETE FROM screenshot_of_record_attachment WHERE math_practice_problem_id = ?1`,
-              )
-              .bind(id),
-            db.prepare(`DELETE FROM math_practice_problem WHERE id = ?1`).bind(id),
-          ]);
+          await db.batch(statementsThatDeleteProblemsForGood(db, [id]));
           return json({ ok: true });
         }
 
@@ -977,6 +987,51 @@ export default {
     }
   },
 };
+
+/**
+ * Problems gone for good, with everything hung off them: their tables, their
+ * attempts and those attempts' marks, their tags, and any screenshot no
+ * surviving problem was read off. Children are named one by one rather than
+ * left to the cascades, and handed back as one batch so a failure part way
+ * leaves nothing half-deleted. A page shared with a part that survives stays,
+ * since it still stands on it.
+ *
+ * The ids ride in as one JSON array rather than a placeholder each: a class
+ * killed whole can hold more problems than D1 allows bound parameters, and a
+ * batch per problem would run past the queries one request is allowed.
+ */
+function statementsThatDeleteProblemsForGood(
+  db: D1Database,
+  ids: number[],
+): D1PreparedStatement[] {
+  const doomed = `SELECT value FROM json_each(?1)`;
+  const orphanedScreenshots = `
+    SELECT screenshot_of_record_id FROM screenshot_of_record_attachment
+     WHERE math_practice_problem_id IN (${doomed})
+       AND screenshot_of_record_id NOT IN
+           (SELECT screenshot_of_record_id FROM screenshot_of_record_attachment
+             WHERE math_practice_problem_id NOT IN (${doomed}))`;
+  return [
+    `DELETE FROM per_maneuver_credit_mark
+      WHERE problem_attempt_id IN
+            (SELECT id FROM problem_attempt WHERE math_practice_problem_id IN (${doomed}))
+         OR maneuver_id IN
+            (SELECT id FROM maneuver WHERE math_practice_problem_id IN (${doomed}))`,
+    `DELETE FROM problem_attempt WHERE math_practice_problem_id IN (${doomed})`,
+    // Lineage pointing in from elsewhere is let go rather than blocking the
+    // delete: a variant outlives what it was varied from.
+    `UPDATE math_practice_problem SET parent_problem_varied_from = NULL
+      WHERE parent_problem_varied_from IN (${doomed})`,
+    `UPDATE math_practice_problem SET the_maneuver_it_was_isolated_from = NULL
+      WHERE the_maneuver_it_was_isolated_from IN
+            (SELECT id FROM maneuver WHERE math_practice_problem_id IN (${doomed}))`,
+    `DELETE FROM maneuver WHERE math_practice_problem_id IN (${doomed})`,
+    `DELETE FROM study_context_tag_membership WHERE math_practice_problem_id IN (${doomed})`,
+    `DELETE FROM screenshot_of_record WHERE id IN (${orphanedScreenshots})`,
+    `DELETE FROM screenshot_of_record_attachment WHERE math_practice_problem_id IN (${doomed})`,
+    `DELETE FROM math_practice_problem WHERE id IN (${doomed})`,
+  ].map((sql) => db.prepare(sql).bind(JSON.stringify(ids)));
+}
 
 /**
  * Recompute an attempt's outcome from its maneuver marks, and hand back the

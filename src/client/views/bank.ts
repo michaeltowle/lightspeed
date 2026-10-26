@@ -1,5 +1,7 @@
 import {
   deleteProblem,
+  deleteStudyContextTag,
+  mergeStudyContextTag,
   solveStepByStep,
   listTheBank,
   openPracticeRun,
@@ -1524,6 +1526,95 @@ export async function renderBank(
     showPane(bankPane);
   }
   tabEls.forEach((el, i) => el.addEventListener("click", () => openTabAt(tabKeys[i])));
+
+  // ---- a class tab's own menu -------------------------------------------------
+  // Right-click a class to fold it into another or kill it. Either way the bank
+  // is rebuilt, since the strip is drawn once from the classes there are.
+  // Priority and generated are not classes, so they have no menu.
+  function openTabMenu(key: number, event: MouseEvent): void {
+    closeOpenMenu?.();
+    const name = labelOf(key);
+    // Where it was asked for, kept off the right edge so it is never cut off.
+    const menu = h("div", { class: "row-menu tab-menu" });
+    menu.style.left = `${Math.min(event.clientX, window.innerWidth - 176)}px`;
+    menu.style.top = `${event.clientY}px`;
+    // A click inside is the menu's own -- the heading is not a way to shut it.
+    menu.addEventListener("click", (e) => e.stopPropagation());
+
+    async function mergeInto(into: StudyContextTag): Promise<void> {
+      closeOpenMenu?.();
+      const count = problems.filter((p) => p.study_context_tag_ids.includes(key)).length;
+      if (
+        count &&
+        !confirm(`merge ${name} into ${into.name}? its ${count} problems move across and ${name} goes.`)
+      ) {
+        return;
+      }
+      try {
+        await mergeStudyContextTag(key, into.id);
+        void renderBank(root, go, openTab === key ? into.id : openTab);
+      } catch (err) {
+        setPracticeStatus(err instanceof Error ? err.message : String(err), true);
+      }
+    }
+
+    // Asked only when there is something to lose: an empty class goes quietly.
+    async function kill(): Promise<void> {
+      closeOpenMenu?.();
+      const byId = tagById();
+      const doomed = problems.filter(
+        (p) =>
+          p.study_context_tag_ids.includes(key) &&
+          p.study_context_tag_ids.every((id) => id === key || byId.get(id)?.field !== "class"),
+      ).length;
+      if (
+        doomed &&
+        !confirm(
+          `kill ${name} and delete the ${doomed} problem${doomed === 1 ? "" : "s"} filed only under it, with every attempt at them? this cannot be undone.`,
+        )
+      ) {
+        return;
+      }
+      try {
+        await deleteStudyContextTag(key);
+        // A killed open tab falls to the first class standing, the way a class
+        // retired between visits does.
+        void renderBank(root, go, openTab === key ? undefined : openTab);
+      } catch (err) {
+        setPracticeStatus(err instanceof Error ? err.message : String(err), true);
+      }
+    }
+
+    // The menu turns into the other classes where it stands, the way a row's
+    // turns into the priorities.
+    const showMergeChoices = () =>
+      menu.replaceChildren(
+        h("div", { class: "tab-menu-heading" }, [`merge ${name} into`]),
+        ...classTags()
+          .filter((tag) => tag.id !== key)
+          .map((tag) =>
+            h("button", { type: "button", onclick: () => void mergeInto(tag) }, [tag.name]),
+          ),
+      );
+
+    menu.append(
+      h("button", { type: "button", onclick: showMergeChoices }, ["merge into…"]),
+      h("button", { type: "button", onclick: () => void kill() }, ["kill"]),
+    );
+    document.body.append(menu);
+    closeOpenMenu = () => {
+      menu.remove();
+      closeOpenMenu = null;
+    };
+  }
+  tabEls.forEach((el, i) => {
+    const key = tabKeys[i];
+    if (typeof key !== "number") return;
+    el.addEventListener("contextmenu", (event) => {
+      event.preventDefault();
+      openTabMenu(key, event as MouseEvent);
+    });
+  });
 
   // ---- the corner menu ------------------------------------------------------
   // Authoring, both of them: done rarely, never mid-practice. Out of the way of

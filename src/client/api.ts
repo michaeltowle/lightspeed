@@ -150,6 +150,21 @@ export const renameStudyContextTag = (id: number, name: string) =>
     name,
   });
 
+/** Everything filed under the one moves to the other, and the one goes. */
+export const mergeStudyContextTag = (id: number, intoId: number) =>
+  post<{ study_context_tags: StudyContextTag[] }>({
+    action: "merge_study_context_tag",
+    id,
+    into_id: intoId,
+  });
+
+/** For good, with every problem filed under it and nothing else of its field. */
+export const deleteStudyContextTag = (id: number) =>
+  post<{ study_context_tags: StudyContextTag[]; deleted: number }>({
+    action: "delete_study_context_tag",
+    id,
+  });
+
 export const retagProblem = (
   id: number,
   field: StudyContextTagField,
