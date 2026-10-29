@@ -39,13 +39,17 @@ const GONE_COLD_AFTER_DAYS = 7;
 const GOING_COLD_AFTER_DAYS = 2;
 
 // Every field gets a column but assignment: the rows are grouped under their
-// assignment, so a column of it would only repeat the heading above.
-const TABLE_TAG_FIELDS = STUDY_CONTEXT_TAG_FIELDS.filter((field) => field !== "assignment");
+// assignment, so a column of it would only repeat the heading above. Wrongs is
+// one list with no headings, so there the assignment gets its column back.
+const tableTagFieldsFor = (tab: BankTabKey): readonly StudyContextTagField[] =>
+  tab === "wrongs"
+    ? STUDY_CONTEXT_TAG_FIELDS
+    : STUDY_CONTEXT_TAG_FIELDS.filter((field) => field !== "assignment");
 
 // select, label, problem, the tag fields, priority, credit, last, streak,
 // speed, flags, why, menu. Derived so a field added or dropped cannot leave the
 // detail row spanning the wrong width.
-const TABLE_COLUMN_COUNT = 11 + TABLE_TAG_FIELDS.length;
+const tableColumnCountFor = (tab: BankTabKey): number => 11 + tableTagFieldsFor(tab).length;
 
 
 const WEEKDAY_NAMES = [
@@ -69,7 +73,7 @@ const STANDING_STUDY_CONTEXT_TAG_FILTER_KEY = "lightspeed.standing-study-context
 function readStandingStudyContextTagFilter(): BankTabKey | null {
   try {
     const raw = localStorage.getItem(STANDING_STUDY_CONTEXT_TAG_FILTER_KEY);
-    if (raw === "generated" || raw === "priority") return raw;
+    if (raw === "generated" || raw === "priority" || raw === "wrongs") return raw;
     const id = raw === null ? NaN : Number(raw);
     return Number.isInteger(id) ? id : null;
   } catch {
@@ -215,6 +219,14 @@ function streakBadgeClassFor(standing: { streak: number; latest: Trophy | null }
   return standing.latest?.needed_help_during_attempt === 1
     ? "is-last-attempt-helped"
     : "is-last-attempt-unaided";
+}
+
+/**
+ * Green on the streak: a run of full marks got alone. Help or a miss is not
+ * green, and nor is a problem never answered -- it has no mark at all.
+ */
+function isGreen(standing: { streak: number; latest: Trophy | null }): boolean {
+  return standing.streak > 0 && streakBadgeClassFor(standing) === "is-last-attempt-unaided";
 }
 
 /** The credit of the most recent graded attempt, unreduced. */
@@ -406,30 +418,30 @@ function renderRollingWeekPracticeLedger(
   ]);
 }
 
-function buildBankTable(body: HTMLElement): HTMLElement {
-  return h("table", { class: "bank-table" }, [
-    h("thead", {}, [
-      h("tr", {}, [
-        h("th", { class: "col-select" }, []),
-        h("th", { class: "col-label" }, ["no."]),
-        h("th", {}, ["problem"]),
-        ...TABLE_TAG_FIELDS.map((field) => h("th", { class: `col-field-${field}` }, [field])),
-        h("th", { class: "col-priority" }, ["priority"]),
-        h("th", { class: "col-credit" }, ["credit"]),
-        h("th", { class: "col-last" }, ["last"]),
-        h("th", { class: "col-streak" }, ["streak"]),
-        h("th", { class: "col-speed" }, ["speed"]),
-        h("th", { class: "col-flags" }, ["flags"]),
-        h("th", { class: "col-why" }, ["why"]),
-        h("th", { class: "col-menu" }, []),
-      ]),
-    ]),
-    body,
+// Its own row rather than built with the table, since which fields get a
+// column turns on the tab.
+function bankTableHeadRow(tab: BankTabKey): HTMLElement {
+  return h("tr", {}, [
+    h("th", { class: "col-select" }, []),
+    h("th", { class: "col-label" }, ["no."]),
+    h("th", {}, ["problem"]),
+    ...tableTagFieldsFor(tab).map((field) => h("th", { class: `col-field-${field}` }, [field])),
+    h("th", { class: "col-priority" }, ["priority"]),
+    h("th", { class: "col-credit" }, ["credit"]),
+    h("th", { class: "col-last" }, ["last"]),
+    h("th", { class: "col-streak" }, ["streak"]),
+    h("th", { class: "col-speed" }, ["speed"]),
+    h("th", { class: "col-flags" }, ["flags"]),
+    h("th", { class: "col-why" }, ["why"]),
+    h("th", { class: "col-menu" }, []),
   ]);
 }
 
-/** A class by id, the ones free generate made, or every one given a priority. */
-type BankTabKey = number | "generated" | "priority";
+/**
+ * A class by id, the ones free generate made, every one given a priority, or
+ * every one whose last answer was not green.
+ */
+type BankTabKey = number | "generated" | "priority" | "wrongs";
 
 /**
  * One assignment's problems within the open tab, or those filed under none.
@@ -489,9 +501,9 @@ export async function renderBank(
   // The open tab is the class filter: every problem 6801 has, or the ones
   // written to a prompt rather than filed off a page. There is no tab for all
   // of them -- a bank of every class at once is a list to scroll, not one to
-  // pick from, and picking is what this page is for. Priority is the one tab
-  // that runs across classes, and it stays short by holding only what was
-  // ranked. A class retired since the last visit falls to the first class
+  // pick from, and picking is what this page is for. Priority and wrongs are
+  // the tabs that run across classes, and they stay short by holding only what
+  // was ranked, or only what last went wrong. A class retired since the last visit falls to the first class
   // still standing.
   const remembered = readStandingStudyContextTagFilter();
   const firstTab = (): BankTabKey => classTags()[0]?.id ?? "generated";
@@ -499,6 +511,7 @@ export async function renderBank(
     startOn ??
     (remembered === "generated" ||
     remembered === "priority" ||
+    remembered === "wrongs" ||
     classTags().some((tag) => tag.id === remembered)
       ? remembered!
       : firstTab());
@@ -517,8 +530,9 @@ export async function renderBank(
   // empty or part-ticked.
   const groupHeaderBoxes: { box: HTMLInputElement; ids: number[] }[] = [];
 
+  const headEl = h("thead");
   const bodyEl = h("tbody");
-  const tableEl = buildBankTable(bodyEl);
+  const tableEl = h("table", { class: "bank-table" }, [headEl, bodyEl]);
   const emptyEl = h("div", { class: "bank-note" }, ["nothing filed under that"]);
 
   // One list per field: completing a source against the catalogue of classes
@@ -652,6 +666,12 @@ export async function renderBank(
     }
     // Unranked is left off: it is most of the bank, and not what this tab is for.
     if (openTab === "priority") return list.filter((p) => p.priority !== null);
+    if (openTab === "wrongs") {
+      return list.filter((p) => {
+        const standing = standingOf(byProblem.get(p.id));
+        return standing.latest !== null && !isGreen(standing);
+      });
+    }
     return list.filter((p) => p.study_context_tag_ids.includes(openTab as number));
   }
 
@@ -721,10 +741,27 @@ export async function renderBank(
   }
 
   /**
+   * The wrongs tab, ungrouped: unvaried originals answered and not green, the
+   * most recently answered first, so what just went wrong is at the top.
+   */
+  function wrongsInOrder(): MathPracticeProblem[] {
+    const latestAt = (p: MathPracticeProblem) => byProblem.get(p.id)?.at(-1)?.created_at ?? "";
+    return inOpenTab(
+      problems.filter((p) => !p.archived_at && p.parent_problem_varied_from === null),
+    ).sort((a, b) => {
+      const aAt = latestAt(a);
+      const bAt = latestAt(b);
+      if (aAt !== bAt) return aAt < bAt ? 1 : -1;
+      return a.id - b.id;
+    });
+  }
+
+  /**
    * What the table is currently showing, in the order it is painted: every
    * problem in an open group, once each even where it sits in two.
    */
   function shownProblems(): MathPracticeProblem[] {
+    if (openTab === "wrongs") return wrongsInOrder();
     const seen = new Set<number>();
     const shown: MathPracticeProblem[] = [];
     for (const group of assignmentGroups()) {
@@ -749,19 +786,21 @@ export async function renderBank(
 
   /** Repaint the table from the local list. */
   function paintAll(): void {
-    const groups = assignmentGroups();
-
     rowsById.clear();
     groupHeaderBoxes.length = 0;
+    headEl.replaceChildren(bankTableHeadRow(openTab));
     bodyEl.replaceChildren(
-      ...groups.flatMap((group) => [
-        groupHeaderRow(group),
-        ...(isGroupOpen(group) ? group.problems.map(bankRow) : []),
-      ]),
+      ...(openTab === "wrongs"
+        ? wrongsInOrder().map(bankRow)
+        : assignmentGroups().flatMap((group) => [
+            groupHeaderRow(group),
+            ...(isGroupOpen(group) ? group.problems.map(bankRow) : []),
+          ])),
     );
 
-    tableEl.hidden = !groups.length;
-    emptyEl.hidden = Boolean(groups.length);
+    const anything = bodyEl.childElementCount > 0;
+    tableEl.hidden = !anything;
+    emptyEl.hidden = anything;
 
     // Recoloured with the table, since a retag can move a problem between classes.
     const nextLedgerEl = renderRollingWeekPracticeLedger(trophies, problems, tagCatalogue);
@@ -785,15 +824,11 @@ export async function renderBank(
     const ids = group.problems.map((p) => p.id);
 
     // Attempted is answered at least once; skips never reach the trophies, so
-    // passing one over doesn't count. Correct is green on the streak -- a run
-    // of full marks got alone, the same test the row's badge colours by. Help
-    // or a miss is not green.
+    // passing one over doesn't count. Correct is green on the streak, the same
+    // test the row's badge colours by.
     const standings = group.problems.map((p) => standingOf(byProblem.get(p.id)));
     const attemptedCount = standings.filter((standing) => standing.latest).length;
-    const greenCount = standings.filter(
-      (standing) =>
-        standing.streak > 0 && streakBadgeClassFor(standing) === "is-last-attempt-unaided",
-    ).length;
+    const greenCount = standings.filter(isGreen).length;
     // Correct is out of what was attempted, so the colour is a hit rate. With
     // nothing attempted there is no rate, and it gets a colour of its own
     // rather than a red it hasn't earned.
@@ -840,7 +875,7 @@ export async function renderBank(
 
     const row = h("tr", { class: `assignment-group-row${open ? " is-open" : ""}` }, [
       h("td", { class: "col-select" }, [boxEl]),
-      h("td", { colspan: TABLE_COLUMN_COUNT - 2 }, [
+      h("td", { colspan: tableColumnCountFor(openTab) - 2 }, [
         h("span", { class: "assignment-group-caret" }, [open ? "▾" : "▸"]),
         nameEl,
         h("span", { class: "assignment-group-rollup" }, [
@@ -1095,7 +1130,7 @@ export async function renderBank(
     //
     // The field's names as a comma list in whatever cell asked, completed from
     // the catalogue. The class edits in its own cell; the assignment has no
-    // cell now that it heads the group, so it borrows the name's.
+    // cell where it heads the group, so there it borrows the name's.
     function editTagsInPlace(
       host: HTMLElement,
       field: StudyContextTagField,
@@ -1249,7 +1284,7 @@ export async function renderBank(
       }
 
       const detailRow = h("tr", { class: "detail-row" }, [
-        h("td", { colspan: TABLE_COLUMN_COUNT }, [
+        h("td", { colspan: tableColumnCountFor(openTab) }, [
           ...shown,
           h("div", { class: "acts" }, [
             ...acts,
@@ -1413,7 +1448,7 @@ export async function renderBank(
       h("td", { class: "col-select" }, [boxEl]),
       h("td", { class: "col-label" }, [problem.textbook_problem_number_label ?? ""]),
       nameCell,
-      ...TABLE_TAG_FIELDS.map(fieldCell),
+      ...tableTagFieldsFor(openTab).map(fieldCell),
       h("td", { class: "col-priority" }, [problem.priority ?? ""]),
       h("td", { class: "col-credit" }, [creditText(standing.latest)]),
       h("td", { class: "col-last" }, [formatLastWorked(standing.lastWorkedAt)]),
@@ -1499,8 +1534,13 @@ export async function renderBank(
     if (!onBank) for (const el of tabEls) el.classList.remove("is-on");
   }
 
-  // ---- tabs: priority, one per class, then generated -------------------------
-  const tabKeys: BankTabKey[] = ["priority", ...classTags().map((tag) => tag.id), "generated"];
+  // ---- tabs: priority, wrongs, one per class, then generated -----------------
+  const tabKeys: BankTabKey[] = [
+    "priority",
+    "wrongs",
+    ...classTags().map((tag) => tag.id),
+    "generated",
+  ];
   const labelOf = (key: BankTabKey): string =>
     typeof key === "number" ? (classTags().find((tag) => tag.id === key)?.name ?? "?") : key;
   const tabEls = tabKeys.map((key) =>
@@ -1530,7 +1570,7 @@ export async function renderBank(
   // ---- a class tab's own menu -------------------------------------------------
   // Right-click a class to fold it into another or kill it. Either way the bank
   // is rebuilt, since the strip is drawn once from the classes there are.
-  // Priority and generated are not classes, so they have no menu.
+  // Priority, wrongs and generated are not classes, so they have no menu.
   function openTabMenu(key: number, event: MouseEvent): void {
     closeOpenMenu?.();
     const name = labelOf(key);
